@@ -1,0 +1,8 @@
+2025-09-24 15:49:45,346 - INFO - ====== WebDriver manager ======
+2025-09-24 15:49:46,377 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-24 15:49:47,059 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-24 15:49:47,786 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-24 16:22:41,229 - INFO - ====== WebDriver manager ======
+2025-09-24 16:22:42,254 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-24 16:22:42,946 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-24 16:22:43,626 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache

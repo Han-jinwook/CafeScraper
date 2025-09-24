@@ -1,0 +1,769 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>네이버 카페 스크래퍼</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            font-size: 1.2em;
+            opacity: 0.9;
+        }
+        
+        .content {
+            padding: 40px;
+        }
+        
+        .section {
+            margin-bottom: 40px;
+            padding: 30px;
+            border: 1px solid #e0e0e0;
+            border-radius: 10px;
+            background: #fafafa;
+        }
+        
+        .section h2 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 1.5em;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #555;
+        }
+        
+        input, textarea, select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+        
+        input:focus, textarea:focus, select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s;
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+        }
+        
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .btn-secondary {
+            background: #6c757d;
+        }
+        
+        .btn-success {
+            background: #28a745;
+        }
+        
+        .btn-danger {
+            background: #dc3545;
+        }
+        
+        .progress-container {
+            margin-top: 20px;
+            display: none;
+        }
+        
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background: #e0e0e0;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            width: 0%;
+            transition: width 0.3s;
+        }
+        
+        .progress-text {
+            text-align: center;
+            margin-top: 10px;
+            font-weight: 600;
+        }
+        
+        .results {
+            margin-top: 20px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            display: none;
+        }
+        
+        .log-container {
+            background: #1e1e1e;
+            color: #00ff00;
+            padding: 20px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            max-height: 300px;
+            overflow-y: auto;
+            margin-top: 20px;
+            display: none;
+        }
+        
+        .status {
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            font-weight: 600;
+        }
+        
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin: 20px 0;
+        }
+        
+        .card {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            padding: 20px;
+        }
+        
+        .card h3 {
+            margin: 0 0 15px 0;
+            color: #495057;
+            font-size: 1.1em;
+        }
+        
+        @media (max-width: 768px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        .status.warning {
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+        }
+        
+        .card {
+            background: white;
+            border: 1px solid #e0e0e0;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .card h3 {
+            color: #333;
+            margin-bottom: 15px;
+        }
+        
+        .stats {
+            display: flex;
+            justify-content: space-around;
+            margin: 20px 0;
+        }
+        
+        .stat-item {
+            text-align: center;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            min-width: 100px;
+        }
+        
+        .stat-number {
+            font-size: 2em;
+            font-weight: bold;
+            color: #667eea;
+        }
+        
+        .stat-label {
+            color: #666;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 네이버 카페 스크래퍼</h1>
+            <p>게시글, 댓글, 이미지를 수집하여 CSV로 저장</p>
+        </div>
+        
+        <div class="content">
+            <!-- 로그인 섹션 -->
+            <div class="section">
+                <h2>🔐 로그인</h2>
+                <p>네이버에 로그인하여 스크래핑을 시작하세요.</p>
+                <button class="btn" onclick="startLogin()">로그인 시작</button>
+                <div id="loginStatus"></div>
+            </div>
+            
+            <!-- 카페 설정 -->
+            <div class="section">
+                <h2>🏪 카페 설정</h2>
+                <div class="form-group">
+                    <label for="cafeUrl">카페 URL:</label>
+                    <input type="url" id="cafeUrl" placeholder="https://cafe.naver.com/yourcafe">
+                </div>
+                <div class="form-group">
+                    <label for="cafeName">카페 이름:</label>
+                    <input type="text" id="cafeName" placeholder="예: 선드림 카페">
+                </div>
+                <div style="margin: 20px 0;">
+                    <button class="btn" onclick="saveCafeSettings()">카페 설정 저장</button>
+                    <button class="btn btn-success" onclick="loadCafeBoards()">게시판 목록 불러오기</button>
+                </div>
+                <div id="cafeResult"></div>
+            </div>
+            
+            <!-- 배치 크롤링 설정 -->
+            <div class="section">
+                <h2>🔄 배치 크롤링</h2>
+                <p>대용량 데이터를 체계적으로 수집합니다.</p>
+                
+                <div class="grid">
+                    <!-- 왼쪽: 크롤링 설정 -->
+                    <div class="card">
+                        <h3>📝 크롤링 설정</h3>
+                        
+                        <!-- 게시판 선택 방식 -->
+                        <div class="form-group">
+                            <label>게시판 선택 방식:</label>
+                            <div style="margin: 10px 0;">
+                                <input type="radio" id="allBoards" name="boardSelection" value="all" checked>
+                                <label for="allBoards" style="display: inline; margin-left: 5px;">전체 게시판</label>
+                            </div>
+                            <div style="margin: 10px 0;">
+                                <input type="radio" id="specificBoards" name="boardSelection" value="specific">
+                                <label for="specificBoards" style="display: inline; margin-left: 5px;">특정 게시판 선택</label>
+                            </div>
+                        </div>
+                        
+                        <!-- 게시판 목록 (특정 게시판 선택 시) -->
+                        <div id="boardSelection" style="display: none;">
+                            <div class="form-group">
+                                <label>선택할 게시판:</label>
+                                <div id="boardList" style="max-height: 200px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; margin: 10px 0;">
+                                    <!-- 게시판 목록이 여기에 표시됩니다 -->
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- 키워드 검색 -->
+                        <div class="form-group">
+                            <label for="searchKeywords">검색 키워드 (줄바꿈으로 구분):</label>
+                            <textarea id="searchKeywords" rows="3" placeholder="백반증&#10;치료&#10;호전"></textarea>
+                        </div>
+                        
+                        <!-- 작성자 필터 -->
+                        <div class="form-group">
+                            <label for="postAuthors">게시글 작성자 별명 (1~2개):</label>
+                            <textarea id="postAuthors" rows="2" placeholder="멀린&#10;큐레이터"></textarea>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="commentAuthors">댓글 작성자 별명 (1~2개):</label>
+                            <textarea id="commentAuthors" rows="2" placeholder="전문가닉네임&#10;상담사"></textarea>
+                        </div>
+                    </div>
+                    
+                    <!-- 오른쪽: 수집 설정 -->
+                    <div class="card">
+                        <h3>⚙️ 수집 설정</h3>
+                        
+                        <!-- 수집 기간 -->
+                        <div class="form-group">
+                            <label>수집 기간:</label>
+                            <div style="margin: 10px 0;">
+                                <input type="radio" id="periodAll" name="period" value="all" checked>
+                                <label for="periodAll" style="display: inline; margin-left: 5px;">전체</label>
+                            </div>
+                            <div style="margin: 10px 0;">
+                                <input type="radio" id="period1Month" name="period" value="1month">
+                                <label for="period1Month" style="display: inline; margin-left: 5px;">최근 1개월</label>
+                            </div>
+                            <div style="margin: 10px 0;">
+                                <input type="radio" id="period6Months" name="period" value="6months">
+                                <label for="period6Months" style="display: inline; margin-left: 5px;">최근 6개월</label>
+                            </div>
+                            <div style="margin: 10px 0;">
+                                <input type="radio" id="period1Year" name="period" value="1year">
+                                <label for="period1Year" style="display: inline; margin-left: 5px;">최근 1년</label>
+                            </div>
+                            <div style="margin: 10px 0;">
+                                <input type="radio" id="periodCustom" name="period" value="custom">
+                                <label for="periodCustom" style="display: inline; margin-left: 5px;">사용자 지정</label>
+                            </div>
+                        </div>
+                        
+                        <!-- 최대 수집 게시글 수 -->
+                        <div class="form-group">
+                            <label for="maxArticles">최대 수집 게시글 수:</label>
+                            <input type="number" id="maxArticles" value="1000" min="1" max="10000">
+                        </div>
+                        
+                        <!-- 이미지 처리 방식 -->
+                        <div class="form-group">
+                            <label>이미지 처리 방식:</label>
+                            <div style="margin: 10px 0;">
+                                <input type="radio" id="imageNone" name="imageProcessing" value="none">
+                                <label for="imageNone" style="display: inline; margin-left: 5px;">없음</label>
+                            </div>
+                            <div style="margin: 10px 0;">
+                                <input type="radio" id="imageBase64" name="imageProcessing" value="base64" checked>
+                                <label for="imageBase64" style="display: inline; margin-left: 5px;">Base64 인베딩 (GPTs 지식베이스용)</label>
+                            </div>
+                            <div style="margin: 10px 0;">
+                                <input type="radio" id="imageServer" name="imageProcessing" value="server">
+                                <label for="imageServer" style="display: inline; margin-left: 5px;">서버 저장 (백업용)</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 고급 설정 -->
+                <div class="form-group">
+                    <details>
+                        <summary style="cursor: pointer; font-weight: bold; margin: 20px 0;">
+                            > 고급 설정
+                        </summary>
+                        <div style="margin: 20px 0; padding: 20px; background: #f8f9fa; border-radius: 8px;">
+                            <div class="form-group">
+                                <label for="maxPages">최대 페이지 수:</label>
+                                <select id="maxPages">
+                                    <option value="1">1페이지</option>
+                                    <option value="3" selected>3페이지</option>
+                                    <option value="5">5페이지</option>
+                                    <option value="10">10페이지</option>
+                                    <option value="20">20페이지</option>
+                                </select>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="delayBetweenRequests">요청 간 지연 시간 (초):</label>
+                                <input type="number" id="delayBetweenRequests" value="3" min="1" max="10">
+                            </div>
+                        </div>
+                    </details>
+                </div>
+                
+                <button class="btn btn-success" onclick="startBatchScraping()">배치 크롤링 시작</button>
+                <div id="scrapingResult"></div>
+            </div>
+            
+            <!-- 여러 게시글 스크래핑 -->
+            <div class="section">
+                <h2>🔄 여러 게시글 스크래핑</h2>
+                <div class="form-group">
+                    <label for="articleUrls">게시글 URL들 (한 줄에 하나씩):</label>
+                    <textarea id="articleUrls" rows="5" placeholder="https://cafe.naver.com/yourcafe/ArticleRead.nhn?clubid=12345678&articleid=123456&#10;https://cafe.naver.com/yourcafe/ArticleRead.nhn?clubid=12345678&articleid=123457"></textarea>
+                </div>
+                <button class="btn btn-success" onclick="scrapeMultipleArticles()">여러 게시글 스크래핑</button>
+                <div id="multipleResult"></div>
+            </div>
+            
+            <!-- 진행률 표시 -->
+            <div class="progress-container" id="progressContainer">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <div class="progress-text" id="progressText">준비 중...</div>
+            </div>
+            
+            <!-- 결과 표시 -->
+            <div class="results" id="results">
+                <h3>📊 스크래핑 결과</h3>
+                <div class="stats" id="stats">
+                    <!-- 통계가 여기에 표시됩니다 -->
+                </div>
+                <div id="resultDetails"></div>
+            </div>
+            
+            <!-- 로그 표시 -->
+            <div class="log-container" id="logContainer">
+                <div id="logContent"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000';
+        
+        // 로그인 시작
+        async function startLogin() {
+            const statusDiv = document.getElementById('loginStatus');
+            statusDiv.innerHTML = '<div class="status warning">로그인 중... 브라우저가 열립니다.</div>';
+            
+            try {
+                const response = await fetch(`${API_BASE}/login/start`, {
+                    method: 'POST'
+                });
+                
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    statusDiv.innerHTML = '<div class="status success">✅ 로그인 성공! 쿠키가 저장되었습니다.</div>';
+                } else {
+                    statusDiv.innerHTML = `<div class="status error">❌ 로그인 실패: ${result.message}</div>`;
+                }
+            } catch (error) {
+                statusDiv.innerHTML = `<div class="status error">❌ 오류: ${error.message}</div>`;
+            }
+        }
+        
+        // 카페 설정 저장
+        function saveCafeSettings() {
+            const cafeUrl = document.getElementById('cafeUrl').value;
+            const cafeName = document.getElementById('cafeName').value;
+            
+            if (!cafeUrl) {
+                alert('카페 URL을 입력하세요.');
+                return;
+            }
+            
+            // 로컬 스토리지에 저장
+            const cafeSettings = {
+                url: cafeUrl,
+                name: cafeName || '카페',
+                saved_at: new Date().toISOString()
+            };
+            
+            localStorage.setItem('cafeSettings', JSON.stringify(cafeSettings));
+            
+            document.getElementById('cafeResult').innerHTML = 
+                `<div class="status success">✅ 카페 설정이 저장되었습니다.</div>`;
+        }
+        
+        // 저장된 카페 설정 불러오기
+        function loadSavedCafeSettings() {
+            const saved = localStorage.getItem('cafeSettings');
+            if (saved) {
+                const settings = JSON.parse(saved);
+                document.getElementById('cafeUrl').value = settings.url;
+                document.getElementById('cafeName').value = settings.name;
+            }
+        }
+        
+        // 카페 게시판 목록 불러오기
+        async function loadCafeBoards() {
+            const cafeUrl = document.getElementById('cafeUrl').value;
+            const cafeName = document.getElementById('cafeName').value;
+            
+            if (!cafeUrl) {
+                alert('카페 URL을 입력하세요.');
+                return;
+            }
+            
+            showProgress('게시판 목록 불러오는 중...');
+            
+            try {
+                const response = await fetch(`${API_BASE}/cafe/boards`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        cafe_url: cafeUrl,
+                        cafe_name: cafeName || null
+                    })
+                });
+                
+                const result = await response.json();
+                if (result.status === 'success') {
+                    displayBoardList(result.boards);
+                    document.getElementById('cafeResult').innerHTML = 
+                        `<div class="status success">✅ 게시판 목록을 불러왔습니다. (${result.boards.length}개)</div>`;
+                } else {
+                    showError(result.message, 'cafeResult');
+                }
+            } catch (error) {
+                showError(error.message, 'cafeResult');
+            }
+        }
+        
+        // 게시판 목록 표시
+        function displayBoardList(boards) {
+            const boardListDiv = document.getElementById('boardList');
+            boardListDiv.innerHTML = '';
+            
+            boards.forEach((board, index) => {
+                const boardItem = document.createElement('div');
+                boardItem.style.marginBottom = '10px';
+                boardItem.innerHTML = `
+                    <label style="display: flex; align-items: center; cursor: pointer;">
+                        <input type="checkbox" id="board_${index}" value="${board.menu_id}" style="margin-right: 10px;">
+                        <span>${board.menu_name} (ID: ${board.menu_id})</span>
+                    </label>
+                `;
+                boardListDiv.appendChild(boardItem);
+            });
+        }
+        
+        // 게시판 선택 방식 변경
+        function toggleBoardSelection() {
+            const specificBoards = document.getElementById('specificBoards');
+            const boardSelection = document.getElementById('boardSelection');
+            
+            if (specificBoards.checked) {
+                boardSelection.style.display = 'block';
+            } else {
+                boardSelection.style.display = 'none';
+            }
+        }
+        
+        // 배치 크롤링 시작
+        async function startBatchScraping() {
+            const cafeUrl = document.getElementById('cafeUrl').value;
+            const maxPages = parseInt(document.getElementById('maxPages').value);
+            const allBoards = document.getElementById('allBoards').checked;
+            
+            if (!cafeUrl) {
+                alert('카페 URL을 입력하세요.');
+                return;
+            }
+            
+            // 설정 수집
+            const searchKeywords = document.getElementById('searchKeywords').value
+                .split('\n').filter(k => k.trim()).map(k => k.trim());
+            
+            const postAuthors = document.getElementById('postAuthors').value
+                .split('\n').filter(a => a.trim()).map(a => a.trim());
+            
+            const commentAuthors = document.getElementById('commentAuthors').value
+                .split('\n').filter(a => a.trim()).map(a => a.trim());
+            
+            const maxArticles = parseInt(document.getElementById('maxArticles').value);
+            const imageProcessing = document.querySelector('input[name="imageProcessing"]:checked').value;
+            const period = document.querySelector('input[name="period"]:checked').value;
+            const delay = parseInt(document.getElementById('delayBetweenRequests').value);
+            
+            let selectedBoards = [];
+            
+            if (!allBoards) {
+                // 특정 게시판 선택된 경우
+                const checkboxes = document.querySelectorAll('#boardList input[type="checkbox"]:checked');
+                selectedBoards = Array.from(checkboxes).map(cb => cb.value);
+                
+                if (selectedBoards.length === 0) {
+                    alert('스크래핑할 게시판을 선택하세요.');
+                    return;
+                }
+            }
+            
+            showProgress('배치 크롤링 중...');
+            
+            try {
+                const response = await fetch(`${API_BASE}/scrape/batch`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        cafe_url: cafeUrl,
+                        max_pages: maxPages,
+                        all_boards: allBoards,
+                        selected_boards: selectedBoards,
+                        search_keywords: searchKeywords,
+                        post_authors: postAuthors,
+                        comment_authors: commentAuthors,
+                        max_articles: maxArticles,
+                        image_processing: imageProcessing,
+                        period: period,
+                        delay_between_requests: delay
+                    })
+                });
+                
+                const result = await response.json();
+                showResult(result, 'scrapingResult');
+            } catch (error) {
+                showError(error.message, 'scrapingResult');
+            }
+        }
+        
+        // 여러 게시글 스크래핑
+        async function scrapeMultipleArticles() {
+            const urlsText = document.getElementById('articleUrls').value;
+            const urls = urlsText.split('\n').filter(url => url.trim());
+            
+            if (urls.length === 0) {
+                alert('게시글 URL을 입력하세요.');
+                return;
+            }
+            
+            showProgress('여러 게시글 스크래핑 중...');
+            
+            try {
+                const response = await fetch(`${API_BASE}/scrape/multiple`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        article_urls: urls
+                    })
+                });
+                
+                const result = await response.json();
+                showResult(result, 'multipleResult');
+            } catch (error) {
+                showError(error.message, 'multipleResult');
+            }
+        }
+        
+        // 진행률 표시
+        function showProgress(message) {
+            document.getElementById('progressContainer').style.display = 'block';
+            document.getElementById('progressText').textContent = message;
+            document.getElementById('progressFill').style.width = '0%';
+        }
+        
+        // 결과 표시
+        function showResult(result, containerId) {
+            const container = document.getElementById(containerId);
+            const resultsDiv = document.getElementById('results');
+            const statsDiv = document.getElementById('stats');
+            
+            if (result.status === 'success') {
+                container.innerHTML = `<div class="status success">✅ ${result.message}</div>`;
+                
+                // 통계 표시
+                if (result.articles_scraped !== undefined) {
+                    statsDiv.innerHTML = `
+                        <div class="stat-item">
+                            <div class="stat-number">${result.articles_found || 0}</div>
+                            <div class="stat-label">발견된 게시글</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-number">${result.articles_scraped || 0}</div>
+                            <div class="stat-label">스크래핑 성공</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-number">${result.articles_failed || 0}</div>
+                            <div class="stat-label">스크래핑 실패</div>
+                        </div>
+                    `;
+                }
+                
+                resultsDiv.style.display = 'block';
+            } else {
+                container.innerHTML = `<div class="status error">❌ ${result.message}</div>`;
+            }
+            
+            // 진행률 숨기기
+            document.getElementById('progressContainer').style.display = 'none';
+        }
+        
+        // 에러 표시
+        function showError(message, containerId) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = `<div class="status error">❌ 오류: ${message}</div>`;
+            document.getElementById('progressContainer').style.display = 'none';
+        }
+        
+        // 페이지 로드 시 API 상태 확인
+        window.onload = async function() {
+            try {
+                const response = await fetch(`${API_BASE}/health`);
+                if (response.ok) {
+                    console.log('API 서버 연결 성공');
+                } else {
+                    alert('API 서버에 연결할 수 없습니다. 서버가 실행 중인지 확인하세요.');
+                }
+            } catch (error) {
+                alert('API 서버에 연결할 수 없습니다. 서버가 실행 중인지 확인하세요.');
+            }
+            
+            // 게시판 선택 방식 이벤트 리스너 추가
+            document.getElementById('allBoards').addEventListener('change', toggleBoardSelection);
+            document.getElementById('specificBoards').addEventListener('change', toggleBoardSelection);
+            
+            // 저장된 카페 설정 불러오기
+            loadSavedCafeSettings();
+        };
+    </script>
+</body>
+</html>

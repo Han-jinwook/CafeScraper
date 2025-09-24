@@ -6,9 +6,13 @@
 
 - 🔐 **수동 로그인**: 브라우저에서 직접 로그인하여 쿠키 저장
 - 📝 **게시글 수집**: 제목, 내용, 작성자, 작성일시
+- 📊 **게시판 스크래핑**: 게시판별 다중 페이지 게시글 수집
+- 🔄 **배치 처리**: 여러 게시글 동시 스크래핑
 - 💬 **댓글 필터링**: 특정 닉네임만 포함/제외 가능
 - 🖼️ **이미지 처리**: Base64로 변환하여 CSV에 직접 저장
 - 💾 **CSV 저장**: 한 게시글당 하나의 행으로 저장
+- 📈 **진행률 표시**: 실시간 스크래핑 진행상황 확인
+- 🔄 **재시도 로직**: 실패 시 자동 재시도
 
 ## 설치 및 실행
 
@@ -44,13 +48,40 @@ uvicorn app.main:app --reload
 - 로그인 완료 후 터미널에서 Enter 키 입력
 - 쿠키가 `sessions/` 폴더에 저장됨
 
-### 2. 게시글 스크래핑
-- API 엔드포인트: `POST /scrape/article`
+### 2. 카페 스크래핑 (주요 기능!)
+
+#### 카페 게시판 목록 조회
+- API 엔드포인트: `POST /cafe/boards`
 - 요청 예시:
 ```json
 {
-  "url": "https://cafe.naver.com/yourcafe/123456",
-  "cafe_id": "yourcafe",
+  "cafe_url": "https://cafe.naver.com/yourcafe",
+  "cafe_name": "선드림 카페"
+}
+```
+
+#### 카페 전체/특정 게시판 스크래핑
+- API 엔드포인트: `POST /scrape/cafe`
+- **전체 게시판** 스크래핑:
+```json
+{
+  "cafe_url": "https://cafe.naver.com/yourcafe",
+  "max_pages": 5,
+  "all_boards": true,
+  "comment_filter": {
+    "include": ["멀린", "큐레이터"],
+    "exclude": ["관리자"]
+  }
+}
+```
+
+- **특정 게시판** 스크래핑:
+```json
+{
+  "cafe_url": "https://cafe.naver.com/yourcafe",
+  "max_pages": 5,
+  "all_boards": false,
+  "selected_boards": ["126", "185"],
   "comment_filter": {
     "include": ["멀린", "큐레이터"],
     "exclude": ["관리자"]
