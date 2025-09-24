@@ -1,0 +1,12 @@
+{
+  "sync": {
+    "enabled": true,
+    "chatHistory": true,
+    "settings": true,
+    "extensions": true
+  },
+  "chat": {
+    "persistHistory": true,
+    "syncAcrossDevices": true
+  }
+}
