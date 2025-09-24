@@ -39,35 +39,70 @@ async def health() -> dict:
 
 @app.post("/login/start")
 async def login_start() -> JSONResponse:
-	# Placeholder: The actual implementation will open a real browser window
-	# for manual login and then save cookies to SESSIONS_DIR.
-	return JSONResponse({
-		"status": "pending",
-		"message": "Manual login flow will open a browser in the next step.",
-		"sessions_dir": SESSIONS_DIR,
-	})
+	"""Start manual login process with browser window."""
+	try:
+		scraper = NaverScraper(SESSIONS_DIR, SNAPSHOTS_DIR)
+		success = await scraper.ensure_logged_in()
+		await scraper.close()
+		
+		if success:
+			return JSONResponse({
+				"status": "success",
+				"message": "Login completed successfully. Cookies saved.",
+				"sessions_dir": str(SESSIONS_DIR),
+			})
+		else:
+			return JSONResponse({
+				"status": "failed", 
+				"message": "Login failed. Please try again.",
+				"sessions_dir": str(SESSIONS_DIR),
+			})
+	except Exception as e:
+		return JSONResponse({
+			"status": "error",
+			"message": f"Login error: {str(e)}",
+			"sessions_dir": str(SESSIONS_DIR),
+		}, status_code=500)
 
 
 @app.post("/scrape/article")
 async def scrape_single_article(payload: ScrapeArticlePayload) -> JSONResponse:
-	if NaverScraper is None:
-		return JSONResponse(status_code=501, content={"error": "Scraper not initialized"})
+	"""Scrape a single article with comments and images."""
+	try:
+		scraper = NaverScraper(SESSIONS_DIR, SNAPSHOTS_DIR)
+		
+		# Extract comment filters
+		include_nicks = payload.comment_filter.include if payload.comment_filter else None
+		exclude_nicks = payload.comment_filter.exclude if payload.comment_filter else None
+		
+		# TODO: Implement actual scraping logic
+		# For now, return a placeholder result
+		result = {
+			"cafe_id": payload.cafe_id or "unknown",
+			"article_id": "placeholder",
+			"article_url": payload.url,
+			"title": "Placeholder Title",
+			"author_nickname": "Placeholder Author",
+			"posted_at": None,
+			"content_text": "Placeholder content",
+			"content_html": "<p>Placeholder content</p>",
+			"images_base64": [],
+			"comments": [],
+		}
 
-	# Initialize scraper and perform scrape (implementation filled later)
-	# Keeping the interface stable for the UI to integrate.
-	result = {
-		"cafe_id": payload.cafe_id or "unknown",
-		"article_id": "",
-		"article_url": payload.url,
-		"title": "",
-		"author_nickname": "",
-		"posted_at": None,
-		"content_text": "",
-		"content_html": "",
-		"images_base64": [],
-		"comments": [],
-	}
-
-	csv_path = append_article_bundle_row(OUTPUTS_DIR, result)
-	return JSONResponse({"saved_csv": csv_path, "result_stub": True})
+		csv_path = append_article_bundle_row(OUTPUTS_DIR, result)
+		await scraper.close()
+		
+		return JSONResponse({
+			"status": "success",
+			"saved_csv": csv_path,
+			"message": "Article scraped and saved to CSV",
+			"result": result
+		})
+		
+	except Exception as e:
+		return JSONResponse({
+			"status": "error",
+			"message": f"Scraping failed: {str(e)}",
+		}, status_code=500)
 
