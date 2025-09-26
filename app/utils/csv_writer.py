@@ -26,10 +26,26 @@ def _ensure_today_output_dir(base_dir: str) -> str:
 	return target
 
 
-def append_article_bundle_row(base_dir: str, bundle: Dict[str, Any]) -> str:
+def append_article_bundle_row(base_dir: str, bundle: Dict[str, Any], batch_id: str = None) -> str:
 	out_dir = _ensure_today_output_dir(base_dir)
-	csv_name = datetime.now().strftime("articles_%Y%m%d.csv")
+	
+	# 배치 스크래핑인 경우 하나의 파일로 통합
+	if batch_id:
+		base_name = f"batch_articles_{batch_id}"
+	else:
+		# 파일명 중복 방지를 위한 고유 파일명 생성
+		base_name = datetime.now().strftime("articles_%Y%m%d")
+	
+	csv_name = f"{base_name}.csv"
 	csv_path = os.path.join(out_dir, csv_name)
+	
+	# 파일이 이미 존재하면 번호를 추가하여 고유한 파일명 생성 (배치가 아닌 경우만)
+	if not batch_id:
+		counter = 1
+		while os.path.exists(csv_path):
+			csv_name = f"{base_name}_{counter:03d}.csv"
+			csv_path = os.path.join(out_dir, csv_name)
+			counter += 1
 
 	row = {
 		"cafe_id": bundle.get("cafe_id", ""),

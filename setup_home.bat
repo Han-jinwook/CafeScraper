@@ -12,3 +12,5 @@ echo 🚀 서버 시작 중...
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 pause
+
+

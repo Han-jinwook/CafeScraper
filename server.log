@@ -6,3 +6,427 @@
 2025-09-24 16:22:42,254 - INFO - Get LATEST chromedriver version for google-chrome
 2025-09-24 16:22:42,946 - INFO - Get LATEST chromedriver version for google-chrome
 2025-09-24 16:22:43,626 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 10:46:27,240 - INFO - ====== WebDriver manager ======
+2025-09-25 10:46:28,187 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 10:46:28,839 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 10:46:29,379 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 10:46:30,575 - INFO - WebDriver version 140.0.7339.207 selected
+2025-09-25 10:46:30,581 - INFO - Modern chrome version https://storage.googleapis.com/chrome-for-testing-public/140.0.7339.207/win32/chromedriver-win32.zip
+2025-09-25 10:46:30,582 - INFO - About to download new driver from https://storage.googleapis.com/chrome-for-testing-public/140.0.7339.207/win32/chromedriver-win32.zip
+2025-09-25 10:46:31,129 - INFO - Driver downloading response is 200
+2025-09-25 10:46:31,931 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 10:46:33,371 - INFO - Driver has been saved in cache [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207]
+2025-09-25 10:56:38,810 - INFO - ====== WebDriver manager ======
+2025-09-25 10:56:40,145 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 10:56:40,963 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 10:56:41,824 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 11:17:39,074 - INFO - ====== WebDriver manager ======
+2025-09-25 11:17:39,955 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 11:17:40,486 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 11:17:41,010 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 11:19:21,707 - INFO - ====== WebDriver manager ======
+2025-09-25 11:19:22,614 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 11:19:23,140 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 11:19:23,664 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 11:19:51,934 - ERROR - ❌ 실패: https://cafe.naver.com/sundreamd - Login required but failed
+2025-09-25 11:19:51,937 - INFO - ====== WebDriver manager ======
+2025-09-25 11:19:52,820 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 11:19:53,355 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 11:19:53,889 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 11:21:41,636 - ERROR - ❌ 실패: https://cafe.naver.com/sundreamd - Login required but failed
+2025-09-25 11:40:12,860 - INFO - ====== WebDriver manager ======
+2025-09-25 11:40:13,751 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 11:40:14,300 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 11:40:14,833 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 11:40:19,493 - ERROR - ❌ 실패: https://cafe.naver.com/sundreamd - Login required but failed
+2025-09-25 11:43:35,140 - INFO - ====== WebDriver manager ======
+2025-09-25 11:43:36,081 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 11:43:36,623 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 11:43:37,161 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 11:43:43,556 - INFO - ✅ 성공: 게시판 0개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 11:45:19,932 - INFO - ====== WebDriver manager ======
+2025-09-25 11:45:20,801 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 11:45:21,348 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 11:45:21,883 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 11:45:29,218 - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 11:53:01,445 - INFO - ====== WebDriver manager ======
+2025-09-25 11:53:02,337 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 11:53:02,890 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 11:53:03,425 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 11:53:10,864 - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 11:56:45,621 - INFO - ====== WebDriver manager ======
+2025-09-25 11:56:46,520 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 11:56:47,060 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 11:56:47,600 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 11:56:54,951 - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 12:01:15,573 - INFO - ====== WebDriver manager ======
+2025-09-25 12:01:16,454 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 12:01:16,987 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 12:01:17,519 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 12:01:24,785 - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 12:09:58,278 - INFO - ====== WebDriver manager ======
+2025-09-25 12:09:59,164 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 12:09:59,717 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 12:10:00,255 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 12:10:07,588 - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 12:12:05,326 - INFO - ====== WebDriver manager ======
+2025-09-25 12:12:06,250 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 12:12:06,815 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 12:12:07,361 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 12:12:14,561 - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 12:20:02,320 - INFO - ====== WebDriver manager ======
+2025-09-25 12:20:03,312 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 12:20:03,848 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 12:20:04,393 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 12:20:11,607 - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 12:26:51,641 - INFO - ====== WebDriver manager ======
+2025-09-25 12:26:52,519 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 12:26:53,057 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 12:26:53,593 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 12:27:00,852 - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 12:28:16,962 - INFO - ====== WebDriver manager ======
+2025-09-25 12:28:17,817 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 12:28:18,345 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 12:28:18,870 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 12:44:28,817 - INFO - ====== WebDriver manager ======
+2025-09-25 12:44:29,735 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 12:44:30,320 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 12:44:30,871 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 12:58:39,883 - INFO - ====== WebDriver manager ======
+2025-09-25 12:58:40,769 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 12:58:41,319 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 12:58:41,860 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 12:58:50,467 - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 12:59:37,290 - INFO - ====== WebDriver manager ======
+2025-09-25 12:59:38,156 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 12:59:38,680 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 12:59:39,214 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 12:59:42,962 - ERROR - ❌ 실패: https://cafe.naver.com/sundreamd - Message: invalid session id
+Stacktrace:
+	GetHandleVerifier [0x0x105c333+65459]
+	GetHandleVerifier [0x0x105c374+65524]
+	(No symbol) [0x0xe7d7c0]
+	(No symbol) [0x0xeba663]
+	(No symbol) [0x0xee9cb6]
+	(No symbol) [0x0xee555e]
+	(No symbol) [0x0xee4ad3]
+	(No symbol) [0x0xe4e73d]
+	(No symbol) [0x0xe4ecbe]
+	(No symbol) [0x0xe4f15d]
+	GetHandleVerifier [0x0x12deda3+2697763]
+	GetHandleVerifier [0x0x12d9ec7+2677575]
+	GetHandleVerifier [0x0x1084194+228884]
+	GetHandleVerifier [0x0x10749f8+165496]
+	GetHandleVerifier [0x0x107b18d+192013]
+	(No symbol) [0x0xe4e3f2]
+	(No symbol) [0x0xe4db72]
+	GetHandleVerifier [0x0x143340c+4092044]
+	BaseThreadInitThunk [0x0x759efcc9+25]
+	RtlGetAppContainerNamedObjectPath [0x0x77bc82ae+286]
+	RtlGetAppContainerNamedObjectPath [0x0x77bc827e+238]
+
+2025-09-25 13:00:18,973 - INFO - ====== WebDriver manager ======
+2025-09-25 13:00:19,848 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 13:00:26,433 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 13:00:26,958 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 13:00:38,211 - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 13:10:57,957 - INFO - ====== WebDriver manager ======
+2025-09-25 13:10:58,824 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 13:10:59,378 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 13:10:59,907 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 13:11:11,577 - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 13:17:00,430 - INFO - ====== WebDriver manager ======
+2025-09-25 13:17:01,484 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 13:17:02,090 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 13:17:02,673 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 13:17:14,237 - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 13:18:51,685 - INFO - ====== WebDriver manager ======
+2025-09-25 13:18:52,571 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 13:18:57,257 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 13:18:57,799 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 13:19:34,795 - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 13:19:34,796 - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 2개)
+2025-09-25 13:19:34,797 - INFO - 📄 [  1/  2] ( 50.0%) 매니저 치유기록
+2025-09-25 13:24:17,273 - ERROR - ❌ 실패: 매니저 치유기록 - Login required but failed
+2025-09-25 13:24:17,274 - INFO - 📄 [  2/  2] (100.0%) 비타민D 샤워갤러리
+2025-09-25 13:24:17,449 - ERROR - ❌ 실패: 비타민D 샤워갤러리 - Message: invalid session id
+Stacktrace:
+	GetHandleVerifier [0x0x105c333+65459]
+	GetHandleVerifier [0x0x105c374+65524]
+	(No symbol) [0x0xe7d7c0]
+	(No symbol) [0x0xeba663]
+	(No symbol) [0x0xee9cb6]
+	(No symbol) [0x0xee555e]
+	(No symbol) [0x0xee4ad3]
+	(No symbol) [0x0xe4e73d]
+	(No symbol) [0x0xe4ecbe]
+	(No symbol) [0x0xe4f15d]
+	GetHandleVerifier [0x0x12deda3+2697763]
+	GetHandleVerifier [0x0x12d9ec7+2677575]
+	GetHandleVerifier [0x0x1084194+228884]
+	GetHandleVerifier [0x0x10749f8+165496]
+	GetHandleVerifier [0x0x107b18d+192013]
+	(No symbol) [0x0xe4e3f2]
+	(No symbol) [0x0xe4db72]
+	GetHandleVerifier [0x0x143340c+4092044]
+	BaseThreadInitThunk [0x0x759efcc9+25]
+	RtlGetAppContainerNamedObjectPath [0x0x77bc82ae+286]
+	RtlGetAppContainerNamedObjectPath [0x0x77bc827e+238]
+
+2025-09-25 13:24:17,451 - INFO - 📊 완료: 성공 0개, 실패 0개, 총 0개
+2025-09-25 13:28:20,703 - INFO - ====== WebDriver manager ======
+2025-09-25 13:28:21,700 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 13:28:22,306 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 13:28:22,875 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 13:28:39,367 - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 13:28:39,368 - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 1개)
+2025-09-25 13:28:39,372 - INFO - 📄 [  1/  1] (100.0%) ★가입인사
+2025-09-25 13:28:42,134 - INFO - 📊 완료: 성공 0개, 실패 0개, 총 0개
+2025-09-25 13:28:44,374 - INFO - ====== WebDriver manager ======
+2025-09-25 13:28:45,362 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 13:28:45,938 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 13:28:46,504 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 13:29:02,788 - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 13:29:02,788 - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 1개)
+2025-09-25 13:29:02,793 - INFO - 📄 [  1/  1] (100.0%) ★가입인사
+2025-09-25 13:29:05,455 - INFO - 📊 완료: 성공 0개, 실패 0개, 총 0개
+2025-09-25 13:34:24,311 - INFO - ====== WebDriver manager ======
+2025-09-25 13:34:25,219 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 13:34:25,764 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 13:34:26,322 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 13:34:42,241 - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 13:34:42,242 - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 1개)
+2025-09-25 13:34:42,246 - INFO - 📄 [  1/  1] (100.0%) ★가입인사
+2025-09-25 13:34:45,004 - INFO - 📊 완료: 성공 0개, 실패 0개, 총 0개
+2025-09-25 13:40:04,470 - INFO - ====== WebDriver manager ======
+2025-09-25 13:40:05,403 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 13:40:05,976 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 13:40:06,543 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 13:40:22,890 - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 13:40:22,891 - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 1개)
+2025-09-25 13:40:22,895 - INFO - 📄 [  1/  1] (100.0%) ★가입인사
+2025-09-25 13:47:22,727 - INFO - ====== WebDriver manager ======
+2025-09-25 13:47:23,873 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 13:47:24,483 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 13:47:25,101 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 13:47:41,349 - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 13:47:41,350 - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 1개)
+2025-09-25 13:47:41,354 - INFO - 📄 [  1/  1] (100.0%) ★가입인사
+2025-09-25 13:56:15,913 - ERROR - ❌ 실패: ★가입인사 - Login required but failed
+2025-09-25 13:56:15,914 - INFO - 📊 완료: 성공 0개, 실패 0개, 총 0개
+2025-09-25 14:00:32,909 - INFO - ====== WebDriver manager ======
+2025-09-25 14:00:33,836 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 14:00:38,440 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 14:00:38,991 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 14:01:21,143 - INFO - ====== WebDriver manager ======
+2025-09-25 14:01:22,032 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 14:01:22,579 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 14:01:23,133 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 14:01:34,314 - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 14:01:34,315 - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 1개)
+2025-09-25 14:01:34,319 - INFO - 📄 [  1/  1] (100.0%) ★가입인사
+2025-09-25 14:10:06,293 - ERROR - ❌ 실패: ★가입인사 - Login required but failed
+2025-09-25 14:10:06,293 - INFO - 📊 완료: 성공 0개, 실패 0개, 총 0개
+2025-09-25 14:43:44,135 - INFO - ====== WebDriver manager ======
+2025-09-25 14:43:45,034 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 14:43:45,571 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 14:43:46,102 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 14:44:33,201 - INFO - ====== WebDriver manager ======
+2025-09-25 14:44:34,101 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 14:44:34,634 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 14:44:35,161 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 14:44:46,517 - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 14:44:46,518 - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 1개)
+2025-09-25 14:44:46,523 - INFO - 📄 [  1/  1] (100.0%) ★가입인사
+2025-09-25 14:53:47,955 - ERROR - ❌ 실패: ★가입인사 - Login required but failed
+2025-09-25 14:53:47,956 - INFO - 📊 완료: 성공 0개, 실패 0개, 총 0개
+2025-09-25 15:10:17,882 - INFO - ====== WebDriver manager ======
+2025-09-25 15:10:18,832 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 15:10:19,404 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 15:10:19,955 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 15:11:00,260 - INFO - ====== WebDriver manager ======
+2025-09-25 15:11:01,190 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 15:11:01,746 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 15:11:02,330 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 15:11:13,533 - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 15:11:13,534 - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 1개)
+2025-09-25 15:11:13,539 - INFO - 📄 [  1/  1] (100.0%) ★가입인사
+2025-09-25 15:15:05,824 - ERROR - ❌ 실패: ★가입인사 - Login required but failed
+2025-09-25 15:15:05,825 - INFO - 📊 완료: 성공 0개, 실패 0개, 총 0개
+2025-09-25 15:20:37,587 - INFO - ====== WebDriver manager ======
+2025-09-25 15:20:38,605 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 15:20:39,220 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 15:20:39,805 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 15:20:50,616 - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 15:20:50,617 - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 1개)
+2025-09-25 15:20:50,621 - INFO - 📄 [  1/  1] (100.0%) ★가입인사
+2025-09-25 15:22:03,456 - ERROR - ❌ 실패: ★가입인사 - Login required but failed
+2025-09-25 15:22:03,457 - INFO - 📊 완료: 성공 0개, 실패 0개, 총 0개
+2025-09-25 15:39:59,147 - INFO - ====== WebDriver manager ======
+2025-09-25 15:40:00,072 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 15:40:04,782 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 15:40:05,324 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 15:40:16,363 - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 15:40:16,364 - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 1개)
+2025-09-25 15:40:16,367 - INFO - 📄 [  1/  1] (100.0%) ★가입인사
+2025-09-25 15:44:07,289 - ERROR - ❌ 실패: ★가입인사 - Login required but failed
+2025-09-25 15:44:07,289 - INFO - 📊 완료: 성공 0개, 실패 0개, 총 0개
+2025-09-25 16:04:16,773 - INFO - ====== WebDriver manager ======
+2025-09-25 16:04:17,662 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 16:04:18,204 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 16:04:18,734 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 16:04:29,635 - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 16:04:29,636 - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 1개)
+2025-09-25 16:04:29,640 - INFO - 📄 [  1/  1] (100.0%) ★가입인사
+2025-09-25 16:08:20,055 - ERROR - ❌ 실패: ★가입인사 - Login required but failed
+2025-09-25 16:08:20,056 - INFO - 📊 완료: 성공 0개, 실패 0개, 총 0개
+2025-09-25 16:29:18,679 - INFO - ====== WebDriver manager ======
+2025-09-25 16:29:19,567 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 16:29:20,099 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 16:29:20,632 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 16:29:31,757 - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 16:29:31,757 - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 1개)
+2025-09-25 16:29:31,762 - INFO - 📄 [  1/  1] (100.0%) ★가입인사
+2025-09-25 16:33:23,033 - ERROR - ❌ 실패: ★가입인사 - Login required but failed
+2025-09-25 16:33:23,033 - INFO - 📊 완료: 성공 0개, 실패 0개, 총 0개
+2025-09-25 16:45:54,727 - INFO - ====== WebDriver manager ======
+2025-09-25 16:45:55,612 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 16:45:56,161 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 16:45:56,696 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 16:46:08,787 - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 16:46:08,788 - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 1개)
+2025-09-25 16:46:08,792 - INFO - 📄 [  1/  1] (100.0%) ★가입인사
+2025-09-25 16:50:00,104 - ERROR - ❌ 실패: ★가입인사 - Login required but failed
+2025-09-25 16:50:00,104 - INFO - 📊 완료: 성공 0개, 실패 0개, 총 0개
+2025-09-25 16:56:34,632 - INFO - ====== WebDriver manager ======
+2025-09-25 16:56:35,533 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 16:56:36,064 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-25 16:56:36,594 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-25 16:56:47,601 - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 16:56:47,602 - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 1개)
+2025-09-25 16:56:47,606 - INFO - 📄 [  1/  1] (100.0%) ★가입인사
+2025-09-25 17:00:38,145 - ERROR - ❌ 실패: ★가입인사 - Login required but failed
+2025-09-25 17:00:38,146 - INFO - 📊 완료: 성공 0개, 실패 0개, 총 0개
+2025-09-26 10:02:33,685 - INFO - ====== WebDriver manager ======
+2025-09-26 10:02:34,632 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-26 10:02:35,293 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-26 10:02:35,851 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-26 10:02:37,090 - INFO - WebDriver version 140.0.7339.207 selected
+2025-09-26 10:02:37,096 - INFO - Modern chrome version https://storage.googleapis.com/chrome-for-testing-public/140.0.7339.207/win32/chromedriver-win32.zip
+2025-09-26 10:02:37,097 - INFO - About to download new driver from https://storage.googleapis.com/chrome-for-testing-public/140.0.7339.207/win32/chromedriver-win32.zip
+2025-09-26 10:02:37,647 - INFO - Driver downloading response is 200
+2025-09-26 10:02:38,447 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-26 10:02:40,317 - INFO - Driver has been saved in cache [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207]
+2025-09-26 10:06:33,654 - INFO - ====== WebDriver manager ======
+2025-09-26 10:06:34,691 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-26 10:06:35,301 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-26 10:06:35,864 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-26 10:07:20,496 - INFO - ====== WebDriver manager ======
+2025-09-26 10:07:21,446 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-26 10:07:22,020 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-26 10:07:22,564 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-26 10:07:40,396 - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-26 10:07:40,397 - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 1개)
+2025-09-26 10:07:40,402 - INFO - 📄 [  1/  1] (100.0%) ★가입인사
+2025-09-26 10:08:01,169 - INFO - 🚀 스크래핑 시작: 다중 게시글 (총 5개)
+2025-09-26 10:08:01,169 - INFO - ⏱️ 동시 처리 설정: 0.00초 최대 3개
+2025-09-26 10:10:18,491 - INFO - 🛡️ 안티봇 대응: 요청 간 대기 3.77098921508847초
+2025-09-26 10:12:39,307 - INFO - 🛡️ 안티봇 대응: 요청 간 대기 4.206242527400992초
+2025-09-26 10:14:59,944 - INFO - 🛡️ 안티봇 대응: 요청 간 대기 4.734101044497728초
+2025-09-26 10:17:21,121 - INFO - 🛡️ 안티봇 대응: 요청 간 대기 6.075285703490287초
+2025-09-26 10:19:53,587 - INFO - 📊 완료: 성공 5개, 실패 0개, 총 5개
+2025-09-26 10:43:04,121 - INFO - ====== WebDriver manager ======
+2025-09-26 10:43:05,043 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-26 10:43:14,969 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-26 10:43:15,514 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-26 10:43:54,677 - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-26 10:43:54,678 - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 1개)
+2025-09-26 10:43:54,682 - INFO - 📄 [  1/  1] (100.0%) ★가입인사
+2025-09-26 10:44:16,141 - INFO - 🚀 스크래핑 시작: 다중 게시글 (총 3개)
+2025-09-26 10:44:16,141 - INFO - ⏱️ 동시 처리 설정: 0.00초 최대 3개
+2025-09-26 10:46:33,084 - INFO - 🛡️ 안티봇 대응: 요청 간 대기 4.5408607080081165초
+2025-09-26 10:48:54,189 - INFO - 🛡️ 안티봇 대응: 요청 간 대기 3.751988609308018초
+2025-09-26 10:51:14,753 - INFO - 📊 완료: 성공 3개, 실패 0개, 총 3개
+2025-09-26 10:59:06,970 - INFO - ====== WebDriver manager ======
+2025-09-26 10:59:07,874 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-26 10:59:08,436 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-26 10:59:09,113 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-26 10:59:27,433 - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-26 10:59:27,434 - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 1개)
+2025-09-26 10:59:27,441 - INFO - 📄 [  1/  1] (100.0%) ★가입인사
+2025-09-26 10:59:47,810 - INFO - 🚀 스크래핑 시작: 다중 게시글 (총 3개)
+2025-09-26 10:59:47,810 - INFO - ⏱️ 동시 처리 설정: 0.00초 최대 3개
+2025-09-26 11:03:28,556 - INFO - 🛡️ 안티봇 대응: 요청 간 대기 2.029565263556684초
+2025-09-26 11:07:12,097 - INFO - 🛡️ 안티봇 대응: 요청 간 대기 6.92792790996645초
+2025-09-26 11:11:00,005 - INFO - 📊 완료: 성공 3개, 실패 0개, 총 3개
+2025-09-26 11:43:10,244 - INFO - ====== WebDriver manager ======
+2025-09-26 11:43:11,209 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-26 11:43:11,761 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-26 11:43:12,308 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-26 11:43:30,261 - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-26 11:43:30,262 - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 1개)
+2025-09-26 11:43:30,266 - INFO - 📄 [  1/  1] (100.0%) ★가입인사
+2025-09-26 11:43:50,702 - INFO - 🚀 스크래핑 시작: 다중 게시글 (총 3개)
+2025-09-26 11:43:50,703 - INFO - ⏱️ 동시 처리 설정: 0.00초 최대 3개
+2025-09-26 11:47:31,435 - INFO - 🛡️ 안티봇 대응: 요청 간 대기 4.8182379512174816초
+2025-09-26 11:51:16,715 - INFO - 🛡️ 안티봇 대응: 요청 간 대기 6.851274037945269초
+2025-09-26 11:55:03,823 - INFO - 📊 완료: 성공 3개, 실패 0개, 총 3개
+2025-09-26 12:00:12,877 - INFO - ====== WebDriver manager ======
+2025-09-26 12:00:13,816 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-26 12:00:14,376 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-26 12:00:14,951 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-26 12:00:32,309 - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-26 12:00:32,310 - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 1개)
+2025-09-26 12:00:32,314 - INFO - 📄 [  1/  1] (100.0%) ★가입인사
+2025-09-26 12:00:52,477 - INFO - 🚀 스크래핑 시작: 다중 게시글 (총 3개)
+2025-09-26 12:00:52,478 - INFO - ⏱️ 동시 처리 설정: 0.00초 최대 3개
+2025-09-26 12:04:53,769 - INFO - 🛡️ 안티봇 대응: 요청 간 대기 3.5016075196352134초
+2025-09-26 12:08:38,990 - INFO - 🛡️ 안티봇 대응: 요청 간 대기 7.572291283095349초
+2025-09-26 12:12:27,055 - INFO - 📊 완료: 성공 3개, 실패 0개, 총 3개
+2025-09-26 12:31:48,919 - INFO - ====== WebDriver manager ======
+2025-09-26 12:31:49,843 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-26 12:31:56,651 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-26 12:31:57,192 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-26 12:32:14,791 - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-26 12:32:14,791 - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 1개)
+2025-09-26 12:32:14,795 - INFO - 📄 [  1/  1] (100.0%) ★가입인사
+2025-09-26 12:32:34,649 - INFO - 🚀 스크래핑 시작: 다중 게시글 (총 3개)
+2025-09-26 12:32:34,649 - INFO - ⏱️ 동시 처리 설정: 0.00초 최대 3개
+2025-09-26 12:36:14,808 - INFO - 🛡️ 안티봇 대응: 요청 간 대기 1.7600309708974684초
+2025-09-26 12:39:57,698 - INFO - 🛡️ 안티봇 대응: 요청 간 대기 7.092145644665042초
+2025-09-26 12:43:45,516 - INFO - 📊 완료: 성공 3개, 실패 0개, 총 3개
+2025-09-26 13:20:16,946 - INFO - ====== WebDriver manager ======
+2025-09-26 13:20:17,873 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-26 13:20:18,443 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-26 13:20:18,996 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-26 13:20:36,975 - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-26 13:20:36,976 - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 1개)
+2025-09-26 13:20:36,988 - INFO - 📄 [  1/  1] (100.0%) ★가입인사
+2025-09-26 13:20:57,334 - INFO - 🚀 스크래핑 시작: 다중 게시글 (총 3개)
+2025-09-26 13:20:57,334 - INFO - ⏱️ 동시 처리 설정: 0.00초 최대 3개
+2025-09-26 13:25:38,430 - INFO - 🛡️ 안티봇 대응: 요청 간 대기 6.58370940802152초
+2025-09-26 13:30:44,625 - INFO - 🛡️ 안티봇 대응: 요청 간 대기 3.457136735651096초
+2025-09-26 13:35:27,475 - INFO - 📊 완료: 성공 3개, 실패 0개, 총 3개
+2025-09-26 14:13:31,324 - INFO - ====== WebDriver manager ======
+2025-09-26 14:13:32,226 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-26 14:13:32,782 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-26 14:13:33,325 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-26 14:13:51,708 - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-26 14:13:51,709 - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 1개)
+2025-09-26 14:13:51,714 - INFO - 📄 [  1/  1] (100.0%) ★가입인사
+2025-09-26 14:14:11,343 - INFO - 🚀 스크래핑 시작: 다중 게시글 (총 3개)
+2025-09-26 14:14:11,343 - INFO - ⏱️ 동시 처리 설정: 0.00초 최대 3개
+2025-09-26 14:18:22,837 - INFO - 🛡️ 안티봇 대응: 요청 간 대기 1.806274321274104초
+2025-09-26 14:22:35,847 - INFO - 🛡️ 안티봇 대응: 요청 간 대기 3.705844286577409초
+2025-09-26 14:26:50,848 - INFO - 📊 완료: 성공 3개, 실패 0개, 총 3개
+2025-09-26 16:36:59,156 - INFO - ====== WebDriver manager ======
+2025-09-26 16:37:00,075 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-26 16:37:00,677 - INFO - Get LATEST chromedriver version for google-chrome
+2025-09-26 16:37:01,253 - INFO - Driver [C:\Users\chichi\.wdm\drivers\chromedriver\win64\140.0.7339.207\chromedriver-win32/chromedriver.exe] found in cache
+2025-09-26 16:37:18,980 - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-26 16:37:18,981 - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 1개)
+2025-09-26 16:37:18,987 - INFO - 📄 [  1/  1] (100.0%) ★가입인사
+2025-09-26 16:37:40,978 - INFO - 🚀 스크래핑 시작: 다중 게시글 (총 2개)
+2025-09-26 16:37:40,979 - INFO - ⏱️ 동시 처리 설정: 0.00초 최대 3개
+2025-09-26 16:42:25,103 - INFO - 🛡️ 안티봇 대응: 요청 간 대기 1.9337711734903817초
+2025-09-26 16:47:11,175 - INFO - 📊 완료: 성공 2개, 실패 0개, 총 2개

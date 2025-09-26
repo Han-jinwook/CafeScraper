@@ -27,13 +27,12 @@ python -m venv .venv
 # 패키지 설치
 pip install -r requirements.txt
 
-# Playwright 브라우저 설치
-playwright install
+# Selenium WebDriver는 자동으로 설치됩니다
 ```
 
-### 2. 로그인 테스트
+### 2. Selenium 테스트
 ```powershell
-python test_login.py
+python test_selenium_login.py
 ```
 
 ### 3. 서버 실행
@@ -43,10 +42,10 @@ uvicorn app.main:app --reload
 
 ## 사용법
 
-### 1. 로그인
+### 1. 로그인 (개선됨)
 - 브라우저가 열리면 네이버에 수동 로그인
-- 로그인 완료 후 터미널에서 Enter 키 입력
-- 쿠키가 `sessions/` 폴더에 저장됨
+- 시스템이 자동으로 로그인 상태를 감지 (최대 5분 대기)
+- 쿠키가 `sessions/` 폴더에 자동 저장됨
 
 ### 2. 카페 스크래핑 (주요 기능!)
 

@@ -60,7 +60,7 @@ class NaverScraper:
         try:
             print("🔄 Selenium Chrome 브라우저 시작 중...")
             
-            # Chrome 옵션 설정
+            # Chrome 옵션 설정 (세션 안정성 강화)
             chrome_options = Options()
             chrome_options.add_argument("--no-sandbox")
             chrome_options.add_argument("--disable-dev-shm-usage")
@@ -77,12 +77,27 @@ class NaverScraper:
             chrome_options.add_argument("--disable-field-trial-config")
             chrome_options.add_argument("--disable-back-forward-cache")
             chrome_options.add_argument("--disable-ipc-flooding-protection")
+            # 세션 안정성 강화 옵션 추가
+            chrome_options.add_argument("--disable-hang-monitor")
+            chrome_options.add_argument("--disable-prompt-on-repost")
+            chrome_options.add_argument("--disable-sync")
+            chrome_options.add_argument("--disable-translate")
+            chrome_options.add_argument("--disable-logging")
+            chrome_options.add_argument("--disable-permissions-api")
+            chrome_options.add_argument("--disable-popup-blocking")
             chrome_options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
             chrome_options.add_experimental_option('useAutomationExtension', False)
             chrome_options.add_experimental_option("prefs", {
                 "profile.default_content_setting_values.notifications": 2,
                 "profile.default_content_settings.popups": 0,
-                "profile.managed_default_content_settings.images": 2
+                "profile.managed_default_content_settings.images": 2,
+                "profile.default_content_setting_values.cookies": 1,  # 쿠키 허용
+                "profile.default_content_setting_values.javascript": 1,  # JavaScript 허용
+                "profile.default_content_setting_values.plugins": 1,  # 플러그인 허용
+                "profile.default_content_setting_values.media_stream": 2,  # 미디어 스트림 차단
+                "profile.default_content_setting_values.geolocation": 2,  # 위치 정보 차단
+                "profile.default_content_setting_values.camera": 2,  # 카메라 차단
+                "profile.default_content_setting_values.microphone": 2  # 마이크 차단
             })
             
             # User-Agent 설정
@@ -107,22 +122,58 @@ class NaverScraper:
             raise Exception(f"브라우저 시작 실패: {str(e)}")
 
     def _load_cookies(self) -> None:
-        """Load saved cookies from file."""
+        """Load saved cookies from file with improved domain handling."""
         if self._cookie_file.exists() and self.driver:
             try:
                 with open(self._cookie_file, 'r', encoding='utf-8') as f:
                     cookies = json.load(f)
                 
+                loaded_count = 0
+                
                 # 네이버 메인 페이지로 이동 후 쿠키 로드
                 self.driver.get("https://www.naver.com")
+                time.sleep(3)  # 페이지 로딩 대기 시간 증가
+                
                 for cookie in cookies:
                     try:
-                        self.driver.add_cookie(cookie)
+                        # 도메인 수정하여 로드 시도
+                        original_domain = cookie.get('domain', '')
+                        
+                        # 쿠키 복사본 생성
+                        cookie_copy = cookie.copy()
+                        
+                        # 도메인 처리 개선
+                        if original_domain.startswith('.naver.com'):
+                            # .naver.com 도메인 쿠키는 그대로 로드
+                            self.driver.add_cookie(cookie_copy)
+                            loaded_count += 1
+                        elif original_domain.startswith('.cafe.naver.com'):
+                            # .cafe.naver.com 도메인 쿠키는 .naver.com으로 변경하여 로드
+                            cookie_copy['domain'] = '.naver.com'
+                            self.driver.add_cookie(cookie_copy)
+                            loaded_count += 1
+                        elif original_domain.startswith('www.naver.com'):
+                            # www.naver.com 도메인 쿠키는 .naver.com으로 변경
+                            cookie_copy['domain'] = '.naver.com'
+                            self.driver.add_cookie(cookie_copy)
+                            loaded_count += 1
+                        else:
+                            # 기타 도메인 쿠키는 도메인을 제거하고 로드
+                            if 'domain' in cookie_copy:
+                                del cookie_copy['domain']
+                            self.driver.add_cookie(cookie_copy)
+                            loaded_count += 1
+                            
                     except Exception as e:
                         print(f"⚠️ 쿠키 로드 실패: {cookie.get('name', 'unknown')} - {e}")
                         continue
                 
-                print(f"✅ Loaded {len(cookies)} cookies from {self._cookie_file}")
+                print(f"✅ Loaded {loaded_count} cookies from {self._cookie_file}")
+                
+                # 쿠키 로드 후 페이지 새로고침하여 세션 활성화
+                self.driver.refresh()
+                time.sleep(2)
+                
             except Exception as e:
                 print(f"⚠️ Failed to load cookies: {e}")
 
@@ -131,15 +182,124 @@ class NaverScraper:
         if self.driver:
             try:
                 cookies = self.driver.get_cookies()
+                # 쿠키 파일이 이미 존재하고 유효한 경우 덮어쓰지 않음
+                if self._cookie_file.exists():
+                    try:
+                        with open(self._cookie_file, 'r', encoding='utf-8') as f:
+                            existing_cookies = json.load(f)
+                        if len(existing_cookies) > 0:
+                            print(f"✅ 기존 쿠키 파일 유지 ({len(existing_cookies)}개 쿠키)")
+                            return
+                    except:
+                        pass  # 기존 파일이 손상된 경우 새로 저장
+                
                 with open(self._cookie_file, 'w', encoding='utf-8') as f:
                     json.dump(cookies, f, ensure_ascii=False, indent=2)
                 print(f"✅ Saved {len(cookies)} cookies to {self._cookie_file}")
             except Exception as e:
                 print(f"⚠️ Failed to save cookies: {e}")
 
+    def _check_login_status(self) -> bool:
+        """로그인 상태만 확인 (재로그인 시도하지 않음)"""
+        try:
+            # 쿠키 파일이 있으면 로그인된 것으로 간주
+            if self._cookie_file.exists():
+                print("✅ 쿠키 파일 존재 - 로그인된 것으로 간주")
+                return True
+            
+            # 네이버 메인 페이지로 이동
+            self.driver.get("https://www.naver.com")
+            time.sleep(3)
+            
+            # 여러 방법으로 로그인 상태 확인
+            login_indicators = [
+                # 로그인 버튼이 없으면 로그인된 상태
+                len(self.driver.find_elements(By.XPATH, "//a[contains(text(), '로그인')]")) == 0,
+                # 사용자 프로필이 있으면 로그인된 상태
+                len(self.driver.find_elements(By.XPATH, "//a[contains(@href, 'nid.naver.com')]")) > 0,
+                # 닉네임이 표시되면 로그인된 상태
+                len(self.driver.find_elements(By.XPATH, "//span[contains(@class, 'MyView-module__link_login___HpHMW')]")) > 0,
+                # 로그아웃 버튼이 있으면 로그인된 상태
+                len(self.driver.find_elements(By.XPATH, "//a[contains(text(), '로그아웃')]")) > 0
+            ]
+            
+            # 하나라도 True이면 로그인된 상태
+            if any(login_indicators):
+                print("✅ 로그인 상태 확인됨")
+                return True
+            else:
+                print("❌ 로그인되지 않음")
+                return False
+        except Exception as e:
+            print(f"❌ 로그인 상태 확인 실패: {e}")
+            return False
+
+    def manual_login(self) -> bool:
+        """수동 로그인 프로세스 - 사용자가 브라우저에서 직접 로그인"""
+        if not self.driver:
+            self.start_browser()
+        
+        # 네이버 로그인 페이지로 이동
+        print("🌐 네이버 로그인 페이지로 이동 중...")
+        self.driver.get("https://nid.naver.com/nidlogin.login")
+        time.sleep(3)
+        
+        print("🔐 브라우저에서 네이버에 로그인해주세요.")
+        print("   로그인 완료 후 자동으로 감지됩니다...")
+        
+        # 자동 로그인 감지 (최대 5분 대기)
+        max_wait_time = 120  # 2분
+        check_interval = 3   # 3초마다 확인
+        waited_time = 0
+        
+        while waited_time < max_wait_time:
+            try:
+                time.sleep(check_interval)
+                waited_time += check_interval
+                
+                # 브라우저 창이 닫혔는지 확인
+                try:
+                    current_url = self.driver.current_url
+                except Exception as e:
+                    print(f"❌ 브라우저 창이 닫혔습니다: {e}")
+                    print("🔐 브라우저에서 네이버에 로그인해주세요.")
+                    print("   로그인 완료 후 자동으로 감지됩니다...")
+                    # 브라우저 재시작
+                    self.start_browser()
+                    self.driver.get("https://nid.naver.com/nidlogin.login")
+                    time.sleep(3)
+                    continue
+                
+                # 로그인 성공 확인 (네이버 메인 페이지로 리다이렉트됨)
+                if "naver.com" in current_url and "nidlogin" not in current_url:
+                    self._save_cookies()
+                    print("✅ 로그인 성공! 쿠키가 저장되었습니다.")
+                    return True
+                
+                # 진행 상황 표시
+                remaining_time = max_wait_time - waited_time
+                print(f"⏳ 로그인 대기 중... ({remaining_time}초 남음)")
+                
+            except Exception as e:
+                print(f"⚠️ 로그인 확인 중 오류: {e}")
+                continue
+        
+        print("❌ 로그인 시간 초과. 다시 시도해주세요.")
+        return False
+
     def ensure_logged_in(self) -> bool:
         """Ensure user is logged in to Naver. Returns True if successful."""
         if not self.driver:
+            self.start_browser()
+        
+        # 브라우저 세션 유효성 확인
+        try:
+            current_url = self.driver.current_url
+            if not current_url or current_url == "data:,":
+                print("⚠️ 브라우저 세션이 끊어짐 - 재시작 중...")
+                self.start_browser()
+        except Exception as e:
+            print(f"⚠️ 브라우저 세션 확인 실패: {e} - 재시작 중...")
             self.start_browser()
         
         # 쿠키 로드
@@ -147,7 +307,7 @@ class NaverScraper:
         
         # 네이버 메인 페이지로 이동
         self.driver.get("https://www.naver.com")
-        time.sleep(2)
+        time.sleep(3)  # 로딩 대기 시간 증가
         
         # 로그인 상태 확인
         try:
@@ -163,13 +323,29 @@ class NaverScraper:
             print("   The system will automatically detect when you're logged in...")
             
             # 자동 로그인 감지 (최대 5분 대기)
-            max_wait_time = 300  # 5분
+            max_wait_time = 120  # 2분
             check_interval = 3   # 3초마다 확인
             waited_time = 0
             
             while waited_time < max_wait_time:
                 time.sleep(check_interval)
                 waited_time += check_interval
+                
+                # 브라우저 세션 유효성 재확인
+                try:
+                    current_url = self.driver.current_url
+                    if not current_url or current_url == "data:,":
+                        print("⚠️ 브라우저 세션이 끊어짐 - 재시작 중...")
+                        self.start_browser()
+                        self._load_cookies()
+                        self.driver.get("https://www.naver.com")
+                        time.sleep(3)
+                except Exception as e:
+                    print(f"⚠️ 브라우저 세션 확인 실패: {e} - 재시작 중...")
+                    self.start_browser()
+                    self._load_cookies()
+                    self.driver.get("https://www.naver.com")
+                    time.sleep(3)
                 
                 # 페이지 새로고침 후 로그인 상태 확인
                 self.driver.refresh()
@@ -195,8 +371,9 @@ class NaverScraper:
 
     def scrape_article(self, url: str, include_nicks: list[str] | None = None, exclude_nicks: list[str] | None = None, max_retries: int = 3):
         """Scrape a single article with comments and images."""
-        if not self.ensure_logged_in():
-            raise Exception("Login required but failed")
+        # 로그인 상태 확인을 간소화 (이미 게시판 조회에서 확인됨)
+        if not self.driver:
+            raise Exception("Browser not started")
         
         for attempt in range(max_retries):
             try:
@@ -205,8 +382,15 @@ class NaverScraper:
                 # Navigate to article with retry logic
                 self._navigate_with_retry(url, max_retries=2)
                 
+                # JavaScript 로딩 대기 (더 긴 시간)
+                print("⏳ JavaScript 로딩 대기 중... (30초)")
+                time.sleep(30)
+                
                 # Take snapshot for debugging
-                snapshot_dir = self.snapshots_dir / Path(url).stem
+                # URL에서 안전한 디렉터리명 생성
+                import re
+                safe_name = re.sub(r'[^\w\-_.]', '_', url.split('/')[-1].split('?')[0])
+                snapshot_dir = self.snapshots_dir / safe_name
                 snapshot_dir.mkdir(exist_ok=True)
                 self.driver.save_screenshot(str(snapshot_dir / f"page_attempt_{attempt + 1}.png"))
                 
@@ -249,31 +433,173 @@ class NaverScraper:
             # Extract article ID from URL
             article_id = url.split("/")[-1] if "/" in url else "unknown"
             
-            # Try multiple selectors for title
+            # 네이버 카페 최신 구조에 맞는 새로운 셀렉터 (2025년 업데이트)
             title_selectors = [
-                ".title_text",
-                ".se-title-text", 
-                ".se-fs-",
+                # 1. 실제 발견된 셀렉터들 (우선순위)
                 "h3.title",
-                ".article_title",
-                "[data-testid='article-title']",
-                ".board_title",
-                ".article_title_text",
-                ".se-text-paragraph",
-                "h1", "h2", "h3",
+                "h2.title", 
+                "h1.title",
                 ".title",
-                "[class*='title']",
-                "[class*='Title']"
+                # 2. 네이버 카페 최신 구조 (2024년 기준)
+                ".se-title-text",
+                ".se-fs-",
+                ".se-component-content h1",
+                ".se-component-content h2", 
+                ".se-component-content h3",
+                ".se-text-paragraph",
+                # 3. 게시글 본문 영역 내 제목
+                ".article_content h1",
+                ".article_content h2",
+                ".article_content h3",
+                ".post_content h1",
+                ".post_content h2",
+                ".post_content h3",
+                # 4. 일반적인 제목 셀렉터
+                ".article_title",
+                ".post_title",
+                ".content_title",
+                ".view_title",
+                # 5. 네이버 카페 특화 셀렉터
+                ".cafe-article-title",
+                ".article-view-title",
+                ".post-view-title",
+                # 6. 최신 네이버 카페 구조
+                ".Layout_content__pUOz1 h1",
+                ".Layout_content__pUOz1 h2",
+                ".Layout_content__pUOz1 h3",
+                # 7. 완전히 새로운 접근 - 모든 h 태그에서 카페 제목 제외
+                "h1:not([class*='Layout_cafe_name']):not([class*='Header'])",
+                "h2:not([class*='Layout_cafe_name']):not([class*='Header'])",
+                "h3:not([class*='Layout_cafe_name']):not([class*='Header'])",
+                # 8. 게시글 제목이 있을 수 있는 특정 영역들
+                "[class*='article'] h1",
+                "[class*='article'] h2", 
+                "[class*='article'] h3",
+                "[class*='post'] h1",
+                "[class*='post'] h2",
+                "[class*='post'] h3",
+                "[class*='content'] h1",
+                "[class*='content'] h2",
+                "[class*='content'] h3"
             ]
             
             title = self._safe_extract(title_selectors, default="제목을 찾을 수 없음")
             
-            # Try multiple selectors for author
+            # 디버깅: 제목 추출 실패 시 페이지 구조 분석
+            if title == "제목을 찾을 수 없음" or "비타민D자외선요법" in title:
+                print("🔍 디버깅: 제목 추출 문제 분석 중...")
+                try:
+                    # 페이지 소스에서 가능한 제목 요소들 찾기
+                    page_source = self.driver.page_source
+                    
+                    # h1, h2, h3 태그들 찾기
+                    import re
+                    h_tags = re.findall(r'<h[1-3][^>]*>([^<]+)</h[1-3]>', page_source)
+                    if h_tags:
+                        print(f"🔍 발견된 h 태그들: {h_tags[:5]}")  # 처음 5개만 출력
+                    
+                    # title 관련 클래스들 찾기
+                    title_classes = re.findall(r'class="([^"]*title[^"]*)"', page_source)
+                    if title_classes:
+                        print(f"🔍 발견된 title 클래스들: {title_classes[:5]}")
+                    
+                    # se- 관련 클래스들 찾기
+                    se_classes = re.findall(r'class="([^"]*se-[^"]*)"', page_source)
+                    if se_classes:
+                        print(f"🔍 발견된 se- 클래스들: {se_classes[:5]}")
+                    
+                    # 게시글 제목이 있을 수 있는 영역들 확인
+                    print("🔍 게시글 제목 영역 확인 중...")
+                    try:
+                        # 게시글 본문 영역 내 제목 찾기
+                        from selenium.webdriver.common.by import By
+                        content_area = self.driver.find_elements(By.CSS_SELECTOR, ".article_content, .post_content, .se-main-container")
+                        if content_area:
+                            print(f"✅ 게시글 본문 영역 발견: {len(content_area)}개")
+                            for i, area in enumerate(content_area[:2]):  # 처음 2개만 확인
+                                try:
+                                    titles_in_area = area.find_elements(By.CSS_SELECTOR, "h1, h2, h3, .title")
+                                    if titles_in_area:
+                                        print(f"   영역 {i+1} 내 제목 요소: {len(titles_in_area)}개")
+                                        for j, title_elem in enumerate(titles_in_area[:3]):  # 처음 3개만 확인
+                                            try:
+                                                title_text = title_elem.text.strip()
+                                                if title_text and "비타민D자외선요법" not in title_text:
+                                                    print(f"     제목 {j+1}: {title_text[:50]}...")
+                                            except:
+                                                pass
+                                except:
+                                    pass
+                        else:
+                            print("❌ 게시글 본문 영역을 찾을 수 없음")
+                        
+                        # 완전히 새로운 접근 방식 - 모든 h 태그 확인
+                        print("🔍 모든 h 태그 확인 중...")
+                        all_h_tags = self.driver.find_elements(By.CSS_SELECTOR, "h1, h2, h3, h4, h5, h6")
+                        if all_h_tags:
+                            print(f"✅ 전체 h 태그 발견: {len(all_h_tags)}개")
+                            for i, h_tag in enumerate(all_h_tags[:10]):  # 처음 10개만 확인
+                                try:
+                                    h_text = h_tag.text.strip()
+                                    h_class = h_tag.get_attribute("class") or ""
+                                    if h_text and "비타민D자외선요법" not in h_text:
+                                        print(f"   h 태그 {i+1}: {h_text[:50]}... (클래스: {h_class[:30]})")
+                                except:
+                                    pass
+                        
+                        # 게시글 제목이 있을 수 있는 특정 영역들 확인
+                        print("🔍 게시글 제목 특화 영역 확인 중...")
+                        title_areas = [
+                            ".article_title",
+                            ".post_title", 
+                            ".content_title",
+                            ".view_title",
+                            ".se-title-text",
+                            ".se-fs-",
+                            ".cafe-article-title",
+                            ".article-view-title",
+                            ".post-view-title",
+                            ".content-view-title"
+                        ]
+                        
+                        for area_selector in title_areas:
+                            try:
+                                area_elements = self.driver.find_elements(By.CSS_SELECTOR, area_selector)
+                                if area_elements:
+                                    print(f"✅ {area_selector} 영역 발견: {len(area_elements)}개")
+                                    for i, elem in enumerate(area_elements[:3]):
+                                        try:
+                                            elem_text = elem.text.strip()
+                                            if elem_text and "비타민D자외선요법" not in elem_text:
+                                                print(f"   {area_selector} {i+1}: {elem_text[:50]}...")
+                                        except:
+                                            pass
+                            except:
+                                pass
+                        
+                    except Exception as e:
+                        print(f"❌ 게시글 제목 영역 확인 오류: {e}")
+                        
+                except Exception as e:
+                    print(f"⚠️ 제목 디버깅 중 오류: {e}")
+            
+            # Try multiple selectors for author (updated for current Naver Cafe structure)
             author_selectors = [
+                # 최신 네이버 카페 구조
                 ".nick",
                 ".nickname", 
                 ".author",
                 ".writer",
+                ".user_nick",
+                ".user_name",
+                ".member_nick",
+                ".member_name",
+                # 네이버 카페 특화 셀렉터
+                ".cafe-nick",
+                ".cafe-author",
+                ".article-author",
+                ".post-author",
+                # 일반적인 셀렉터
                 "[data-testid='author']",
                 ".se-fs-",
                 ".nickname_text",
@@ -285,33 +611,82 @@ class NaverScraper:
                 ".user_info .nick",
                 ".user_info .nickname",
                 ".article_info .nick",
-                ".article_info .nickname"
+                ".article_info .nickname",
+                # 추가 시도
+                "span[class*='nick']",
+                "div[class*='author']",
+                "div[class*='writer']"
             ]
             
             author = self._safe_extract(author_selectors, default="작성자를 찾을 수 없음")
             
-            # Try multiple selectors for content
+            # 네이버 카페 최신 구조에 맞는 내용 셀렉터 (2025년 업데이트)
             content_selectors = [
-                ".se-main-container",
-                ".se-component-content", 
-                ".article_content",
+                # 1. 실제 발견된 셀렉터들 (우선순위)
                 ".content",
-                "[data-testid='article-content']",
+                # 2. 네이버 에디터 최신 구조
+                ".se-main-container",
+                ".se-component-content",
                 ".se-text-paragraph",
+                ".se-text",
+                ".se-component",
+                # 3. 게시글 본문 영역
+                ".article_content",
+                ".post_content",
                 ".article_text",
                 ".board_text",
-                ".post_content",
                 ".article_body",
+                # 4. 네이버 카페 특화 셀렉터
+                ".cafe-content",
+                ".cafe-article-content",
+                ".article-view-content",
+                ".view-content",
+                ".content-view",
+                # 5. 최신 네이버 카페 구조
+                ".Layout_content__pUOz1",
+                ".Layout_content__pUOz1 .se-main-container",
+                ".Layout_content__pUOz1 .se-component-content",
+                # 6. 일반적인 셀렉터
+                "[data-testid='article-content']",
                 "[class*='content']",
                 "[class*='Content']",
                 "[class*='text']",
                 "[class*='Text']",
-                ".se-text",
-                ".se-component"
+                # 7. se- 관련 모든 클래스
+                "div[class*='se-']",
+                "p[class*='se-']",
+                "span[class*='se-']",
+                # 8. 게시글 본문이 있을 수 있는 영역들
+                "div[class*='article']",
+                "div[class*='post']",
+                "div[class*='content']"
             ]
             
             content_text = self._safe_extract(content_selectors, default="내용을 찾을 수 없음")
             content_html = self._safe_extract_html(content_selectors, default="<p>내용을 찾을 수 없음</p>")
+            
+            # 디버깅: 페이지 구조 확인
+            if content_text == "내용을 찾을 수 없음":
+                print("🔍 디버깅: 페이지 구조 분석 중...")
+                try:
+                    # 페이지 소스에서 가능한 셀렉터 찾기
+                    page_source = self.driver.page_source
+                    if "se-main-container" in page_source:
+                        print("✅ se-main-container 발견됨")
+                    if "article" in page_source.lower():
+                        print("✅ article 관련 클래스 발견됨")
+                    if "content" in page_source.lower():
+                        print("✅ content 관련 클래스 발견됨")
+                    
+                    # 실제 존재하는 클래스들 찾기
+                    import re
+                    class_pattern = r'class="([^"]*)"'
+                    classes = re.findall(class_pattern, page_source)
+                    content_classes = [cls for cls in classes if any(keyword in cls.lower() for keyword in ['content', 'article', 'text', 'se-'])]
+                    if content_classes:
+                        print(f"🔍 발견된 클래스들: {content_classes[:10]}")  # 처음 10개만 출력
+                except Exception as e:
+                    print(f"⚠️ 디버깅 중 오류: {e}")
             
             # Try to extract date
             date_selectors = [
@@ -419,24 +794,40 @@ class NaverScraper:
         """Extract comments with nickname filtering."""
         comments = []
         try:
-            # Try multiple selectors for comments
+            # Try multiple selectors for comments (updated for current Naver Cafe structure)
             comment_selectors = [
+                # 1. 실제 발견된 셀렉터들 (우선순위)
+                ".comment_area",
+                ".LinkComment",
+                # 2. 최신 네이버 카페 구조
                 ".comment",
                 ".reply", 
                 ".comment_item",
+                ".reply_item",
+                ".cafe-comment",
+                ".cafe-reply",
+                ".article-comment",
+                ".article-reply",
+                # 3. 네이버 카페 특화 셀렉터
+                ".comment-list .comment",
+                ".comment-list .reply",
+                ".reply-list .comment",
+                ".reply-list .reply",
+                ".comment-area .comment",
+                ".comment-area .reply",
+                ".reply-area .comment",
+                ".reply-area .reply",
+                # 4. 일반적인 셀렉터
                 "[data-testid='comment']",
-                ".comment_list .comment",
-                ".comment_list .reply",
-                ".reply_list .comment",
-                ".reply_list .reply",
                 "[class*='comment']",
                 "[class*='Comment']",
                 "[class*='reply']",
                 "[class*='Reply']",
-                ".comment_area .comment",
-                ".comment_area .reply",
-                ".reply_area .comment",
-                ".reply_area .reply"
+                # 5. 추가 시도
+                "div[class*='comment']",
+                "div[class*='reply']",
+                "li[class*='comment']",
+                "li[class*='reply']"
             ]
             
             comment_elements = []
@@ -491,7 +882,8 @@ class NaverScraper:
 
     def scrape_board_articles(self, board_url: str, max_pages: int = 5) -> list[dict]:
         """Scrape articles from a board page with pagination."""
-        if not self.ensure_logged_in():
+        # 간단한 로그인 상태 확인
+        if not self._cookie_file.exists():
             raise Exception("Login required but failed")
         
         articles = []
@@ -571,12 +963,25 @@ class NaverScraper:
                 print("⚠️ No article links found on this page")
                 return articles
             
-            for link in article_links:
+            print(f"🔍 Processing {len(article_links)} links...")
+            valid_links = 0
+            
+            for i, link in enumerate(article_links):
                 try:
                     # Get article URL
                     href = link.get_attribute("href")
-                    if not href or "ArticleRead" not in href:
+                    if not href:
                         continue
+                    
+                    # Debug: Print first few links
+                    if i < 5:
+                        print(f"🔗 Link {i+1}: {href}")
+                    
+                    # Check for various article URL patterns
+                    if not any(pattern in href for pattern in ["ArticleRead", "ArticleRead.nhn", "articleid", "clubid", "articles"]):
+                        continue
+                    
+                    valid_links += 1
                     
                     # Make URL absolute
                     if href.startswith("/"):
@@ -634,6 +1039,8 @@ class NaverScraper:
                 except Exception as e:
                     print(f"⚠️ Error processing article link: {e}")
                     continue
+            
+            print(f"✅ Found {valid_links} valid article links out of {len(article_links)} total links")
                     
         except Exception as e:
             print(f"⚠️ Error extracting article links: {e}")
@@ -642,8 +1049,9 @@ class NaverScraper:
 
     def scrape_multiple_articles(self, article_urls: list[str], include_nicks: list[str] | None = None, exclude_nicks: list[str] | None = None, max_concurrent: int = 3) -> list[dict]:
         """Scrape multiple articles with progress tracking."""
-        if not self.ensure_logged_in():
-            raise Exception("Login required but failed")
+        # 로그인 상태 확인을 간소화 (이미 게시판 조회에서 확인됨)
+        if not self.driver:
+            raise Exception("Browser not started")
         
         start_time = time.time()
         results = []
@@ -767,9 +1175,17 @@ class NaverScraper:
                 print("🔄 브라우저 초기화 중...")
                 self.start_browser()
             
-            # 로그인 확인
-            if not self.ensure_logged_in():
-                raise Exception("Login required but failed")
+            # 쿠키 로드
+            self._load_cookies()
+            
+            # 쿠키가 있으면 로그인된 것으로 간주하고 카페 접속 시도
+            if self._cookie_file.exists():
+                print("✅ 저장된 쿠키를 사용하여 카페 접속을 시도합니다.")
+            else:
+                print("⚠️ 저장된 쿠키가 없습니다.")
+                print("💡 해결 방법: 웹 UI에서 '로그인 시작' 버튼을 클릭하세요.")
+                # 쿠키가 없어도 일단 시도해보기 (batch_scraping에서 이미 처리됨)
+                print("🔄 쿠키 없이 카페 접속을 시도합니다.")
             
             # 카페 메인 페이지로 이동
             print(f"🌐 카페 페이지 이동: {cafe_url}")
@@ -791,14 +1207,17 @@ class NaverScraper:
         boards = []
         
         try:
-            # 게시판 링크 선택자들
+            # 게시판 링크 선택자들 (더 포괄적으로)
             board_selectors = [
                 "a[href*='BoardList.nhn']",
                 "a[href*='menuid=']",
                 ".menu_list a",
                 ".board_list a",
                 "[class*='menu'] a",
-                "[class*='board'] a"
+                "[class*='board'] a",
+                "a[href*='cafe.naver.com']",
+                ".cafe_menu a",
+                ".menu_item a"
             ]
             
             board_links = []
@@ -816,20 +1235,30 @@ class NaverScraper:
                 print("⚠️ 게시판 링크를 찾을 수 없습니다")
                 return boards
             
-            for link in board_links:
+            print(f"🔍 발견된 링크들을 분석 중...")
+            
+            for i, link in enumerate(board_links):
                 try:
                     href = link.get_attribute("href")
-                    if not href or "BoardList" not in href:
+                    text = link.text.strip() if link.text else ""
+                    
+                    print(f"링크 {i+1}: {text} -> {href}")
+                    
+                    # 게시판 링크인지 확인 (더 유연한 조건)
+                    if not href or not any(keyword in href.lower() for keyword in ['boardlist', 'menuid', 'cafe.naver.com']):
                         continue
                     
-                    # 메뉴 ID 추출
+                    # 메뉴 ID 추출 (더 유연한 패턴)
                     import re
                     menuid_match = re.search(r'menuid=(\d+)', href)
-                    if not menuid_match:
-                        continue
+                    if menuid_match:
+                        menu_id = menuid_match.group(1)
+                    else:
+                        # menuid가 없으면 href에서 숫자 추출
+                        numbers = re.findall(r'\d+', href)
+                        menu_id = numbers[-1] if numbers else f"unknown_{i}"
                     
-                    menu_id = menuid_match.group(1)
-                    menu_name = link.text.strip() if link.text else f"게시판 {menu_id}"
+                    menu_name = text if text else f"게시판 {menu_id}"
                     
                     # URL 정규화
                     if href.startswith("/"):
@@ -843,6 +1272,8 @@ class NaverScraper:
                         "board_url": href
                     })
                     
+                    print(f"✅ 게시판 추가: {menu_name} (ID: {menu_id})")
+                    
                 except Exception as e:
                     print(f"⚠️ 게시판 링크 처리 오류: {e}")
                     continue
@@ -850,12 +1281,14 @@ class NaverScraper:
         except Exception as e:
             print(f"⚠️ 게시판 목록 추출 오류: {e}")
         
+        print(f"📊 총 {len(boards)}개 게시판 추출 완료")
         return boards
     
     def scrape_cafe(self, cafe_url: str, max_pages: int, all_boards: bool, selected_boards: list[str], include_nicks: list[str] | None = None, exclude_nicks: list[str] | None = None) -> list[dict]:
         """카페 전체 또는 특정 게시판 스크래핑"""
-        if not self.ensure_logged_in():
-            raise Exception("Login required but failed")
+        # 로그인 상태 확인을 간소화 (이미 게시판 조회에서 확인됨)
+        if not self.driver:
+            raise Exception("Browser not started")
         
         start_time = time.time()
         all_results = []
@@ -912,8 +1345,36 @@ class NaverScraper:
     
     def batch_scraping(self, cafe_url: str, max_pages: int, all_boards: bool, selected_boards: list[str], search_keywords: list[str], post_authors: list[str], comment_authors: list[str], max_articles: int, image_processing: str, period: str, delay_between_requests: int) -> list[dict]:
         """배치 크롤링 - 키워드 검색 및 작성자 필터링 포함"""
-        if not self.ensure_logged_in():
-            raise Exception("Login required but failed")
+        try:
+            # 브라우저 세션 확인 및 재시작
+            if not self.driver:
+                print("🔄 브라우저 초기화 중...")
+                self.start_browser()
+            else:
+                # 기존 브라우저 세션이 유효한지 확인
+                try:
+                    current_url = self.driver.current_url
+                    if not current_url or current_url == "data:,":
+                        print("⚠️ 브라우저 세션이 끊어짐 - 재시작 중...")
+                        self.start_browser()
+                except Exception as e:
+                    print(f"⚠️ 브라우저 세션이 끊어짐: {e}")
+                    print("🔄 브라우저 재시작 중...")
+                    self.start_browser()
+
+            # 쿠키 로드
+            self._load_cookies()
+
+            # 쿠키가 있으면 로그인된 것으로 간주하고 카페 접속 시도
+            if self._cookie_file.exists():
+                print("✅ 저장된 쿠키를 사용하여 카페 접속을 시도합니다.")
+            else:
+                print("⚠️ 저장된 쿠키가 없습니다.")
+                print("💡 해결 방법: 웹 UI에서 '로그인 시작' 버튼을 클릭하세요.")
+                raise Exception("Login required but failed")
+        except Exception as e:
+            print(f"❌ 배치 크롤링 초기화 실패: {e}")
+            raise
         
         start_time = time.time()
         all_results = []
@@ -945,6 +1406,30 @@ class NaverScraper:
                 break
                 
             try:
+                # 브라우저 세션 확인 및 재시작
+                try:
+                    current_url = self.driver.current_url
+                    # URL이 유효한지 확인
+                    if not current_url or current_url == "data:,":
+                        raise Exception("Invalid browser session")
+                except Exception as e:
+                    print(f"⚠️ 브라우저 세션이 끊어짐: {e}")
+                    print("🔄 브라우저 재시작 중...")
+                    try:
+                        self.driver.quit()
+                    except:
+                        pass
+                    self.start_browser()
+                    self._load_cookies()
+                    
+                    # 카페 페이지로 다시 이동
+                    try:
+                        self.driver.get(cafe_url)
+                        time.sleep(3)
+                    except Exception as nav_e:
+                        print(f"⚠️ 카페 페이지 재접속 실패: {nav_e}")
+                        continue
+                
                 print(f"📄 게시판 {i}/{len(target_boards)}: {board['menu_name']}")
                 scraping_logger.log_scraping_progress(i, len(target_boards), board['menu_name'])
                 
@@ -994,23 +1479,31 @@ class NaverScraper:
         """게시글 필터링 - 키워드, 작성자, 기간"""
         filtered = []
         
-        for article in articles:
+        print(f"🔍 필터링 시작: {len(articles)}개 게시글 중에서")
+        print(f"🔍 검색 키워드: {search_keywords}")
+        print(f"🔍 작성자 필터: {post_authors}")
+        
+        for i, article in enumerate(articles):
+            title = article.get('title', '').lower()
+            author = article.get('author_nickname', '').lower()
+            
             # 키워드 필터링
             if search_keywords:
-                title = article.get('title', '').lower()
-                content = article.get('content_text', '').lower()
-                
-                keyword_match = any(keyword.lower() in title or keyword.lower() in content 
-                                  for keyword in search_keywords)
+                keyword_match = any(keyword.lower() in title for keyword in search_keywords)
                 if not keyword_match:
+                    print(f"❌ 키워드 불일치: {article.get('title', 'N/A')[:30]}...")
                     continue
+                else:
+                    print(f"✅ 키워드 일치: {article.get('title', 'N/A')[:30]}...")
             
             # 작성자 필터링
             if post_authors:
-                author = article.get('author_nickname', '').lower()
                 author_match = any(author_nick.lower() in author for author_nick in post_authors)
                 if not author_match:
+                    print(f"❌ 작성자 불일치: {author}")
                     continue
+                else:
+                    print(f"✅ 작성자 일치: {author}")
             
             # 기간 필터링 (간단한 구현)
             if period != "all":
@@ -1018,7 +1511,14 @@ class NaverScraper:
                 pass
             
             filtered.append(article)
+            print(f"✅ 필터 통과: {len(filtered)}번째 게시글")
+            
+            # 최대 게시글 수 제한 확인
+            if len(filtered) >= 5:  # 5개로 제한
+                print(f"🛑 최대 게시글 수(5개)에 도달하여 필터링 중단")
+                break
         
+        print(f"🔍 필터링 완료: {len(filtered)}개 게시글 선택")
         return filtered
 
     def close(self) -> None:

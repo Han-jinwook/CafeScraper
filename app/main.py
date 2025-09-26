@@ -109,13 +109,100 @@ async def health() -> dict:
 	return {"ok": True}
 
 
+@app.get("/session/status")
+async def check_session_status() -> JSONResponse:
+	"""세션 상태 확인 - 쿠키 파일 존재 및 유효성 검사"""
+	try:
+		import os
+		from pathlib import Path
+		
+		cookie_file = Path(SESSIONS_DIR) / "naver_cookies.json"
+		
+		# 쿠키 파일 존재 여부 확인
+		if not cookie_file.exists():
+			return JSONResponse({
+				"status": "no_session",
+				"message": "로그인 세션이 없습니다. 로그인을 진행하세요.",
+				"has_cookies": False,
+				"cookie_file_exists": False
+			})
+		
+		# 쿠키 파일 크기 확인 (빈 파일인지 체크)
+		if cookie_file.stat().st_size == 0:
+			return JSONResponse({
+				"status": "invalid_session",
+				"message": "쿠키 파일이 비어있습니다. 다시 로그인하세요.",
+				"has_cookies": False,
+				"cookie_file_exists": True
+			})
+		
+		# 쿠키 파일 내용 확인
+		try:
+			import json
+			with open(cookie_file, 'r', encoding='utf-8') as f:
+				cookies = json.load(f)
+			
+			if not cookies or len(cookies) == 0:
+				return JSONResponse({
+					"status": "invalid_session",
+					"message": "유효한 쿠키가 없습니다. 다시 로그인하세요.",
+					"has_cookies": False,
+					"cookie_file_exists": True
+				})
+			
+			# 쿠키 만료 시간 확인 (선택적)
+			import time
+			current_time = time.time()
+			valid_cookies = []
+			
+			for cookie in cookies:
+				# 쿠키에 만료 시간이 있는 경우 확인
+				if 'expiry' in cookie and cookie['expiry']:
+					if cookie['expiry'] > current_time:
+						valid_cookies.append(cookie)
+				else:
+					# 만료 시간이 없는 쿠키는 유효한 것으로 간주
+					valid_cookies.append(cookie)
+			
+			if len(valid_cookies) == 0:
+				return JSONResponse({
+					"status": "expired_session",
+					"message": "세션이 만료되었습니다. 다시 로그인하세요.",
+					"has_cookies": False,
+					"cookie_file_exists": True
+				})
+			
+			return JSONResponse({
+				"status": "valid_session",
+				"message": "로그인 세션이 유효합니다.",
+				"has_cookies": True,
+				"cookie_file_exists": True
+			})
+			
+		except json.JSONDecodeError:
+			return JSONResponse({
+				"status": "invalid_session",
+				"message": "쿠키 파일이 손상되었습니다. 다시 로그인하세요.",
+				"has_cookies": False,
+				"cookie_file_exists": True
+			})
+		
+	except Exception as e:
+		return JSONResponse({
+			"status": "error",
+			"message": f"세션 상태 확인 실패: {str(e)}",
+			"has_cookies": False,
+			"cookie_file_exists": False
+		}, status_code=500)
+
+
 @app.post("/login/start")
 async def login_start() -> JSONResponse:
 	"""Start manual login process with browser window."""
 	try:
 		scraper = NaverScraper(SESSIONS_DIR, SNAPSHOTS_DIR)
-		success = await scraper.ensure_logged_in()
-		await scraper.close()
+		success = scraper.manual_login()
+		scraper.close()
 		
 		if success:
 			return JSONResponse({
@@ -148,14 +235,14 @@ async def scrape_single_article(payload: ScrapeArticlePayload) -> JSONResponse:
 		exclude_nicks = payload.comment_filter.exclude if payload.comment_filter else None
 		
 		# Perform actual scraping
-		result = await scraper.scrape_article(
+		result = scraper.scrape_article(
 			payload.url, 
 			include_nicks, 
 			exclude_nicks
 		)
 
 		csv_path = append_article_bundle_row(OUTPUTS_DIR, result)
-		await scraper.close()
+		scraper.close()
 		
 		return JSONResponse({
 			"status": "success",
@@ -185,10 +272,10 @@ async def scrape_board_articles(payload: ScrapeBoardPayload) -> JSONResponse:
 		print(f"📄 최대 페이지: {payload.max_pages}")
 		
 		# Get article list from board
-		articles = await scraper.scrape_board_articles(payload.board_url, payload.max_pages)
+		articles = scraper.scrape_board_articles(payload.board_url, payload.max_pages)
 		
 		if not articles:
-			await scraper.close()
+			scraper.close()
 			return JSONResponse({
 				"status": "warning",
 				"message": "No articles found on the board",
@@ -204,7 +291,7 @@ async def scrape_board_articles(payload: ScrapeBoardPayload) -> JSONResponse:
 		print(f"📊 발견된 게시글: {len(article_urls)}개")
 		
 		# Scrape detailed information for each article
-		detailed_results = await scraper.scrape_multiple_articles(article_urls, include_nicks, exclude_nicks)
+		detailed_results = scraper.scrape_multiple_articles(article_urls, include_nicks, exclude_nicks)
 		
 		# Save to CSV
 		csv_paths = []
@@ -216,7 +303,7 @@ async def scrape_board_articles(payload: ScrapeBoardPayload) -> JSONResponse:
 				csv_paths.append(csv_path)
 				successful_results.append(result)
 		
-		await scraper.close()
+		scraper.close()
 		
 		success_count = len(successful_results)
 		error_count = len(detailed_results) - success_count
@@ -249,7 +336,7 @@ async def scrape_multiple_articles(payload: ScrapeMultipleArticlesPayload) -> JS
 		exclude_nicks = payload.comment_filter.exclude if payload.comment_filter else None
 		
 		# Scrape multiple articles
-		results = await scraper.scrape_multiple_articles(payload.article_urls, include_nicks, exclude_nicks)
+		results = scraper.scrape_multiple_articles(payload.article_urls, include_nicks, exclude_nicks)
 		
 		# Save to CSV
 		csv_paths = []
@@ -257,7 +344,7 @@ async def scrape_multiple_articles(payload: ScrapeMultipleArticlesPayload) -> JS
 			csv_path = append_article_bundle_row(OUTPUTS_DIR, result)
 			csv_paths.append(csv_path)
 		
-		await scraper.close()
+		scraper.close()
 		
 		return JSONResponse({
 			"status": "success",
@@ -281,9 +368,9 @@ async def get_cafe_boards(payload: CafeBoardsPayload) -> JSONResponse:
 		scraper = NaverScraper(SESSIONS_DIR, SNAPSHOTS_DIR)
 		
 		# 카페 게시판 목록 조회
-		boards = await scraper.get_cafe_boards(payload.cafe_url)
+		boards = scraper.get_cafe_boards(payload.cafe_url)
 		
-		await scraper.close()
+		scraper.close()
 		
 		if not boards:
 			return JSONResponse({
@@ -332,7 +419,7 @@ async def scrape_cafe(payload: CafeScrapingPayload) -> JSONResponse:
 			print(f"📄 선택된 게시판: {payload.selected_boards}")
 		
 		# 카페 스크래핑 실행
-		results = await scraper.scrape_cafe(
+		results = scraper.scrape_cafe(
 			payload.cafe_url,
 			payload.max_pages,
 			payload.all_boards,
@@ -351,7 +438,7 @@ async def scrape_cafe(payload: CafeScrapingPayload) -> JSONResponse:
 				csv_paths.append(csv_path)
 				successful_results.append(result)
 		
-		await scraper.close()
+		scraper.close()
 		
 		success_count = len(successful_results)
 		error_count = len(results) - success_count
@@ -385,7 +472,7 @@ async def batch_scraping(payload: BatchScrapingPayload) -> JSONResponse:
 		print(f"📊 최대 게시글 수: {payload.max_articles}")
 		
 		# 배치 크롤링 실행
-		results = await scraper.batch_scraping(
+		results = scraper.batch_scraping(
 			payload.cafe_url,
 			payload.max_pages,
 			payload.all_boards,
@@ -399,17 +486,19 @@ async def batch_scraping(payload: BatchScrapingPayload) -> JSONResponse:
 			payload.delay_between_requests
 		)
 		
-		# Save to CSV
+		# Save to CSV (배치 스크래핑 시 하나의 파일로 통합)
+		import time
+		batch_id = int(time.time())  # 배치 ID 생성
 		csv_paths = []
 		successful_results = []
 		
 		for result in results:
 			if "error" not in result:
-				csv_path = append_article_bundle_row(OUTPUTS_DIR, result)
+				csv_path = append_article_bundle_row(OUTPUTS_DIR, result, batch_id)
 				csv_paths.append(csv_path)
 				successful_results.append(result)
 		
-		await scraper.close()
+		scraper.close()
 		
 		success_count = len(successful_results)
 		error_count = len(results) - success_count
@@ -479,4 +568,9 @@ async def cleanup_old_metrics(days: int = 30) -> JSONResponse:
 			"status": "error",
 			"message": f"메트릭 정리 실패: {str(e)}"
 		}, status_code=500)
+
+
+if __name__ == "__main__":
+	import uvicorn
+	uvicorn.run(app, host="127.0.0.1", port=8001)
 

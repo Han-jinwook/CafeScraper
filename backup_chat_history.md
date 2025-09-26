@@ -57,3 +57,5 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 1. `Ctrl + Shift + P` → "Sync: Download Settings"
 2. `Ctrl + Shift + P` → "Sync: Upload Settings"
 3. Cursor 완전 종료 후 재시작
+
+
