@@ -1,0 +1,147 @@
+2025-09-25 11:19:51 - scraping - ERROR - ❌ 실패: https://cafe.naver.com/sundreamd - Login required but failed
+2025-09-25 11:21:41 - scraping - ERROR - ❌ 실패: https://cafe.naver.com/sundreamd - Login required but failed
+2025-09-25 11:40:19 - scraping - ERROR - ❌ 실패: https://cafe.naver.com/sundreamd - Login required but failed
+2025-09-25 11:43:43 - scraping - INFO - ✅ 성공: 게시판 0개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 11:45:29 - scraping - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 11:53:10 - scraping - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 11:56:54 - scraping - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 12:01:24 - scraping - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 12:10:07 - scraping - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 12:12:14 - scraping - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 12:20:11 - scraping - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 12:27:00 - scraping - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 12:58:50 - scraping - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 12:59:42 - scraping - ERROR - ❌ 실패: https://cafe.naver.com/sundreamd - Message: invalid session id
+Stacktrace:
+	GetHandleVerifier [0x0x105c333+65459]
+	GetHandleVerifier [0x0x105c374+65524]
+	(No symbol) [0x0xe7d7c0]
+	(No symbol) [0x0xeba663]
+	(No symbol) [0x0xee9cb6]
+	(No symbol) [0x0xee555e]
+	(No symbol) [0x0xee4ad3]
+	(No symbol) [0x0xe4e73d]
+	(No symbol) [0x0xe4ecbe]
+	(No symbol) [0x0xe4f15d]
+	GetHandleVerifier [0x0x12deda3+2697763]
+	GetHandleVerifier [0x0x12d9ec7+2677575]
+	GetHandleVerifier [0x0x1084194+228884]
+	GetHandleVerifier [0x0x10749f8+165496]
+	GetHandleVerifier [0x0x107b18d+192013]
+	(No symbol) [0x0xe4e3f2]
+	(No symbol) [0x0xe4db72]
+	GetHandleVerifier [0x0x143340c+4092044]
+	BaseThreadInitThunk [0x0x759efcc9+25]
+	RtlGetAppContainerNamedObjectPath [0x0x77bc82ae+286]
+	RtlGetAppContainerNamedObjectPath [0x0x77bc827e+238]
+
+2025-09-25 13:00:38 - scraping - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 13:11:11 - scraping - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 13:17:14 - scraping - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 13:19:34 - scraping - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 13:19:34 - scraping - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 2개)
+2025-09-25 13:19:34 - scraping - INFO - 📄 [  1/  2] ( 50.0%) 매니저 치유기록
+2025-09-25 13:24:17 - scraping - ERROR - ❌ 실패: 매니저 치유기록 - Login required but failed
+2025-09-25 13:24:17 - scraping - INFO - 📄 [  2/  2] (100.0%) 비타민D 샤워갤러리
+2025-09-25 13:24:17 - scraping - ERROR - ❌ 실패: 비타민D 샤워갤러리 - Message: invalid session id
+Stacktrace:
+	GetHandleVerifier [0x0x105c333+65459]
+	GetHandleVerifier [0x0x105c374+65524]
+	(No symbol) [0x0xe7d7c0]
+	(No symbol) [0x0xeba663]
+	(No symbol) [0x0xee9cb6]
+	(No symbol) [0x0xee555e]
+	(No symbol) [0x0xee4ad3]
+	(No symbol) [0x0xe4e73d]
+	(No symbol) [0x0xe4ecbe]
+	(No symbol) [0x0xe4f15d]
+	GetHandleVerifier [0x0x12deda3+2697763]
+	GetHandleVerifier [0x0x12d9ec7+2677575]
+	GetHandleVerifier [0x0x1084194+228884]
+	GetHandleVerifier [0x0x10749f8+165496]
+	GetHandleVerifier [0x0x107b18d+192013]
+	(No symbol) [0x0xe4e3f2]
+	(No symbol) [0x0xe4db72]
+	GetHandleVerifier [0x0x143340c+4092044]
+	BaseThreadInitThunk [0x0x759efcc9+25]
+	RtlGetAppContainerNamedObjectPath [0x0x77bc82ae+286]
+	RtlGetAppContainerNamedObjectPath [0x0x77bc827e+238]
+
+2025-09-25 13:24:17 - scraping - INFO - 📊 완료: 성공 0개, 실패 0개, 총 0개
+2025-09-25 13:28:39 - scraping - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 13:28:39 - scraping - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 1개)
+2025-09-25 13:28:39 - scraping - INFO - 📄 [  1/  1] (100.0%) ★가입인사
+2025-09-25 13:28:42 - scraping - INFO - 📊 완료: 성공 0개, 실패 0개, 총 0개
+2025-09-25 13:29:02 - scraping - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 13:29:02 - scraping - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 1개)
+2025-09-25 13:29:02 - scraping - INFO - 📄 [  1/  1] (100.0%) ★가입인사
+2025-09-25 13:29:05 - scraping - INFO - 📊 완료: 성공 0개, 실패 0개, 총 0개
+2025-09-25 13:34:42 - scraping - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 13:34:42 - scraping - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 1개)
+2025-09-25 13:34:42 - scraping - INFO - 📄 [  1/  1] (100.0%) ★가입인사
+2025-09-25 13:34:45 - scraping - INFO - 📊 완료: 성공 0개, 실패 0개, 총 0개
+2025-09-25 13:40:22 - scraping - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 13:40:22 - scraping - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 1개)
+2025-09-25 13:40:22 - scraping - INFO - 📄 [  1/  1] (100.0%) ★가입인사
+2025-09-25 13:47:41 - scraping - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 13:47:41 - scraping - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 1개)
+2025-09-25 13:47:41 - scraping - INFO - 📄 [  1/  1] (100.0%) ★가입인사
+2025-09-25 13:56:15 - scraping - ERROR - ❌ 실패: ★가입인사 - Login required but failed
+2025-09-25 13:56:15 - scraping - INFO - 📊 완료: 성공 0개, 실패 0개, 총 0개
+2025-09-25 14:01:34 - scraping - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 14:01:34 - scraping - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 1개)
+2025-09-25 14:01:34 - scraping - INFO - 📄 [  1/  1] (100.0%) ★가입인사
+2025-09-25 14:10:06 - scraping - ERROR - ❌ 실패: ★가입인사 - Login required but failed
+2025-09-25 14:10:06 - scraping - INFO - 📊 완료: 성공 0개, 실패 0개, 총 0개
+2025-09-25 14:44:46 - scraping - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 14:44:46 - scraping - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 1개)
+2025-09-25 14:44:46 - scraping - INFO - 📄 [  1/  1] (100.0%) ★가입인사
+2025-09-25 14:53:47 - scraping - ERROR - ❌ 실패: ★가입인사 - Login required but failed
+2025-09-25 14:53:47 - scraping - INFO - 📊 완료: 성공 0개, 실패 0개, 총 0개
+2025-09-25 15:11:13 - scraping - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 15:11:13 - scraping - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 1개)
+2025-09-25 15:11:13 - scraping - INFO - 📄 [  1/  1] (100.0%) ★가입인사
+2025-09-25 15:15:05 - scraping - ERROR - ❌ 실패: ★가입인사 - Login required but failed
+2025-09-25 15:15:05 - scraping - INFO - 📊 완료: 성공 0개, 실패 0개, 총 0개
+2025-09-25 15:20:50 - scraping - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 15:20:50 - scraping - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 1개)
+2025-09-25 15:20:50 - scraping - INFO - 📄 [  1/  1] (100.0%) ★가입인사
+2025-09-25 15:22:03 - scraping - ERROR - ❌ 실패: ★가입인사 - Login required but failed
+2025-09-25 15:22:03 - scraping - INFO - 📊 완료: 성공 0개, 실패 0개, 총 0개
+2025-09-25 15:32:25 - scraping - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 15:40:16 - scraping - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 15:40:16 - scraping - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 1개)
+2025-09-25 15:40:16 - scraping - INFO - 📄 [  1/  1] (100.0%) ★가입인사
+2025-09-25 15:44:07 - scraping - ERROR - ❌ 실패: ★가입인사 - Login required but failed
+2025-09-25 15:44:07 - scraping - INFO - 📊 완료: 성공 0개, 실패 0개, 총 0개
+2025-09-25 15:46:09 - scraping - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 15:54:00 - scraping - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 15:58:37 - scraping - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 16:00:44 - scraping - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 16:04:29 - scraping - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 16:04:29 - scraping - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 1개)
+2025-09-25 16:04:29 - scraping - INFO - 📄 [  1/  1] (100.0%) ★가입인사
+2025-09-25 16:08:20 - scraping - ERROR - ❌ 실패: ★가입인사 - Login required but failed
+2025-09-25 16:08:20 - scraping - INFO - 📊 완료: 성공 0개, 실패 0개, 총 0개
+2025-09-25 16:29:31 - scraping - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 16:29:31 - scraping - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 1개)
+2025-09-25 16:29:31 - scraping - INFO - 📄 [  1/  1] (100.0%) ★가입인사
+2025-09-25 16:33:23 - scraping - ERROR - ❌ 실패: ★가입인사 - Login required but failed
+2025-09-25 16:33:23 - scraping - INFO - 📊 완료: 성공 0개, 실패 0개, 총 0개
+2025-09-25 16:46:08 - scraping - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 16:46:08 - scraping - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 1개)
+2025-09-25 16:46:08 - scraping - INFO - 📄 [  1/  1] (100.0%) ★가입인사
+2025-09-25 16:50:00 - scraping - ERROR - ❌ 실패: ★가입인사 - Login required but failed
+2025-09-25 16:50:00 - scraping - INFO - 📊 완료: 성공 0개, 실패 0개, 총 0개
+2025-09-25 16:56:47 - scraping - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 16:56:47 - scraping - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 1개)
+2025-09-25 16:56:47 - scraping - INFO - 📄 [  1/  1] (100.0%) ★가입인사
+2025-09-25 17:00:38 - scraping - ERROR - ❌ 실패: ★가입인사 - Login required but failed
+2025-09-25 17:00:38 - scraping - INFO - 📊 완료: 성공 0개, 실패 0개, 총 0개
+2025-09-25 17:06:36 - scraping - INFO - ✅ 성공: 게시판 71개 조회 - https://cafe.naver.com/sundreamd
+2025-09-25 17:06:36 - scraping - INFO - 🚀 스크래핑 시작: 선택된 게시판 배치 크롤링 (총 1개)
+2025-09-25 17:06:36 - scraping - INFO - 📄 [  1/  1] (100.0%) ★가입인사
+2025-09-25 17:06:42 - scraping - INFO - 🚀 스크래핑 시작: 다중 게시글 (총 2개)
+2025-09-25 17:06:42 - scraping - INFO - ⏱️ 동시 처리 설정: 0.00초 최대 3개
+2025-09-25 17:08:59 - scraping - INFO - 🛡️ 안티봇 대응: 요청 간 대기 4.662984976850356초
+2025-09-25 17:11:20 - scraping - INFO - 📊 완료: 성공 2개, 실패 0개, 총 2개

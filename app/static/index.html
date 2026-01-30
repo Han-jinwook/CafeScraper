@@ -271,6 +271,17 @@
         <div class="header">
             <h1>🚀 네이버 카페 스크래퍼</h1>
             <p>게시글, 댓글, 이미지를 수집하여 CSV로 저장</p>
+            
+            <!-- 로그인 세션 상태 알림 -->
+            <div id="sessionStatus" class="session-status" style="display: none; margin: 15px 0; padding: 12px; border-radius: 8px; border: 1px solid #ddd;">
+                <div class="session-info" style="display: flex; align-items: center; justify-content: space-between;">
+                    <div style="display: flex; align-items: center;">
+                        <span id="sessionIcon" style="font-size: 18px; margin-right: 8px;">🔐</span>
+                        <span id="sessionMessage" style="font-weight: 500;">세션 상태 확인 중...</span>
+                    </div>
+                    <button id="refreshSession" onclick="checkSessionStatus()" style="padding: 6px 12px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">새로고침</button>
+                </div>
+            </div>
         </div>
         
         <div class="content">
@@ -285,18 +296,57 @@
             <!-- 카페 설정 -->
             <div class="section">
                 <h2>🏪 카페 설정</h2>
+                
+                <!-- 카페 선택 방식 -->
                 <div class="form-group">
+                    <label>카페 선택 방식:</label>
+                    <div style="margin: 10px 0; display: flex; gap: 20px; align-items: center; flex-wrap: wrap;">
+                        <label for="savedCafe" style="display: flex; align-items: center; cursor: pointer;">
+                            <input type="radio" id="savedCafe" name="cafeSelection" value="saved" checked style="margin-right: 8px;">
+                            저장된 카페에서 선택
+                        </label>
+                        <label for="directUrl" style="display: flex; align-items: center; cursor: pointer;">
+                            <input type="radio" id="directUrl" name="cafeSelection" value="direct" style="margin-right: 8px;">
+                            직접 URL 입력
+                        </label>
+                    </div>
+                </div>
+                
+                <!-- 저장된 카페 선택 -->
+                <div id="savedCafeSelection" class="form-group">
+                    <label for="cafeSelect">카페 선택:</label>
+                    <select id="cafeSelect" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; margin: 5px 0;" onchange="onCafeSelect()">
+                        <option value="">카페를 선택하세요</option>
+                    </select>
+                    <div id="selectedCafeInfo" style="margin: 10px 0; padding: 10px; background: #e8f5e8; border-radius: 6px; border: 1px solid #4caf50; display: none;">
+                        <strong id="selectedCafeName"></strong> 카페 ID: <span id="selectedCafeId"></span>
+                    </div>
+                </div>
+                
+                <!-- 직접 URL 입력 -->
+                <div id="directUrlInput" class="form-group" style="display: none;">
                     <label for="cafeUrl">카페 URL:</label>
                     <input type="url" id="cafeUrl" placeholder="https://cafe.naver.com/yourcafe">
+                    <div class="form-group">
+                        <label for="cafeName">카페 이름:</label>
+                        <input type="text" id="cafeName" placeholder="예: 선드림 카페">
+                    </div>
+                    <div style="margin: 20px 0;">
+                        <button class="btn" onclick="saveCafeSettings()">카페 설정 저장</button>
+                        <button class="btn btn-success" onclick="loadCafeBoards()">게시판 목록 불러오기</button>
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label for="cafeName">카페 이름:</label>
-                    <input type="text" id="cafeName" placeholder="예: 선드림 카페">
+                
+                <!-- 기존 카페 설정 (항상 표시) -->
+                <div class="form-group" style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
+                    <h3 style="margin-bottom: 15px; color: #333; font-size: 1.2em;">📝 카페 설정 관리</h3>
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
+                        <button class="btn btn-secondary" onclick="showCafeManager()">카페 관리</button>
+                        <button class="btn btn-secondary" onclick="clearAllCafes()">모든 카페 삭제</button>
+                        <span id="cafeCount" style="color: #666; font-size: 14px;"></span>
+                    </div>
                 </div>
-                <div style="margin: 20px 0;">
-                    <button class="btn" onclick="saveCafeSettings()">카페 설정 저장</button>
-                    <button class="btn btn-success" onclick="loadCafeBoards()">게시판 목록 불러오기</button>
-                </div>
+                
                 <div id="cafeResult"></div>
             </div>
             
@@ -313,13 +363,15 @@
                         <!-- 게시판 선택 방식 -->
                         <div class="form-group">
                             <label>게시판 선택 방식:</label>
-                            <div style="margin: 10px 0;">
-                                <input type="radio" id="allBoards" name="boardSelection" value="all" checked>
-                                <label for="allBoards" style="display: inline; margin-left: 5px;">전체 게시판</label>
-                            </div>
-                            <div style="margin: 10px 0;">
-                                <input type="radio" id="specificBoards" name="boardSelection" value="specific">
-                                <label for="specificBoards" style="display: inline; margin-left: 5px;">특정 게시판 선택</label>
+                            <div style="margin: 10px 0; display: flex; gap: 20px; align-items: center;">
+                                <label for="allBoards" style="display: flex; align-items: center; cursor: pointer;">
+                                    <input type="radio" id="allBoards" name="boardSelection" value="all" checked style="margin-right: 8px;">
+                                    전체 게시판
+                                </label>
+                                <label for="specificBoards" style="display: flex; align-items: center; cursor: pointer;">
+                                    <input type="radio" id="specificBoards" name="boardSelection" value="specific" style="margin-right: 8px;">
+                                    특정 게시판 선택
+                                </label>
                             </div>
                         </div>
                         
@@ -329,6 +381,11 @@
                                 <label>선택할 게시판:</label>
                                 <div id="boardList" style="max-height: 200px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; margin: 10px 0;">
                                     <!-- 게시판 목록이 여기에 표시됩니다 -->
+                                </div>
+                                <div style="text-align: center; margin: 10px 0;">
+                                    <button type="button" id="toggleBoardListBtn" onclick="toggleBoardList()" style="background: #6c757d; color: white; border: none; border-radius: 4px; padding: 8px 16px; cursor: pointer; font-size: 14px;">
+                                        닫기
+                                    </button>
                                 </div>
                             </div>
                         </div>
@@ -358,25 +415,27 @@
                         <!-- 수집 기간 -->
                         <div class="form-group">
                             <label>수집 기간:</label>
-                            <div style="margin: 10px 0;">
-                                <input type="radio" id="periodAll" name="period" value="all" checked>
-                                <label for="periodAll" style="display: inline; margin-left: 5px;">전체</label>
-                            </div>
-                            <div style="margin: 10px 0;">
-                                <input type="radio" id="period1Month" name="period" value="1month">
-                                <label for="period1Month" style="display: inline; margin-left: 5px;">최근 1개월</label>
-                            </div>
-                            <div style="margin: 10px 0;">
-                                <input type="radio" id="period6Months" name="period" value="6months">
-                                <label for="period6Months" style="display: inline; margin-left: 5px;">최근 6개월</label>
-                            </div>
-                            <div style="margin: 10px 0;">
-                                <input type="radio" id="period1Year" name="period" value="1year">
-                                <label for="period1Year" style="display: inline; margin-left: 5px;">최근 1년</label>
-                            </div>
-                            <div style="margin: 10px 0;">
-                                <input type="radio" id="periodCustom" name="period" value="custom">
-                                <label for="periodCustom" style="display: inline; margin-left: 5px;">사용자 지정</label>
+                            <div style="margin: 10px 0; display: flex; flex-wrap: wrap; gap: 15px; align-items: center;">
+                                <label for="periodAll" style="display: flex; align-items: center; cursor: pointer;">
+                                    <input type="radio" id="periodAll" name="period" value="all" checked style="margin-right: 8px;">
+                                    전체
+                                </label>
+                                <label for="period1Month" style="display: flex; align-items: center; cursor: pointer;">
+                                    <input type="radio" id="period1Month" name="period" value="1month" style="margin-right: 8px;">
+                                    최근 1개월
+                                </label>
+                                <label for="period6Months" style="display: flex; align-items: center; cursor: pointer;">
+                                    <input type="radio" id="period6Months" name="period" value="6months" style="margin-right: 8px;">
+                                    최근 6개월
+                                </label>
+                                <label for="period1Year" style="display: flex; align-items: center; cursor: pointer;">
+                                    <input type="radio" id="period1Year" name="period" value="1year" style="margin-right: 8px;">
+                                    최근 1년
+                                </label>
+                                <label for="periodCustom" style="display: flex; align-items: center; cursor: pointer;">
+                                    <input type="radio" id="periodCustom" name="period" value="custom" style="margin-right: 8px;">
+                                    사용자 지정
+                                </label>
                             </div>
                         </div>
                         
@@ -389,17 +448,19 @@
                         <!-- 이미지 처리 방식 -->
                         <div class="form-group">
                             <label>이미지 처리 방식:</label>
-                            <div style="margin: 10px 0;">
-                                <input type="radio" id="imageNone" name="imageProcessing" value="none">
-                                <label for="imageNone" style="display: inline; margin-left: 5px;">없음</label>
-                            </div>
-                            <div style="margin: 10px 0;">
-                                <input type="radio" id="imageBase64" name="imageProcessing" value="base64" checked>
-                                <label for="imageBase64" style="display: inline; margin-left: 5px;">Base64 인베딩 (GPTs 지식베이스용)</label>
-                            </div>
-                            <div style="margin: 10px 0;">
-                                <input type="radio" id="imageServer" name="imageProcessing" value="server">
-                                <label for="imageServer" style="display: inline; margin-left: 5px;">서버 저장 (백업용)</label>
+                            <div style="margin: 10px 0; display: flex; flex-wrap: wrap; gap: 15px; align-items: center;">
+                                <label for="imageNone" style="display: flex; align-items: center; cursor: pointer;">
+                                    <input type="radio" id="imageNone" name="imageProcessing" value="none" style="margin-right: 8px;">
+                                    없음
+                                </label>
+                                <label for="imageBase64" style="display: flex; align-items: center; cursor: pointer;">
+                                    <input type="radio" id="imageBase64" name="imageProcessing" value="base64" checked style="margin-right: 8px;">
+                                    Base64 인베딩 (GPTs 지식베이스용)
+                                </label>
+                                <label for="imageServer" style="display: flex; align-items: center; cursor: pointer;">
+                                    <input type="radio" id="imageServer" name="imageProcessing" value="server" style="margin-right: 8px;">
+                                    서버 저장 (백업용)
+                                </label>
                             </div>
                         </div>
                     </div>
@@ -471,7 +532,11 @@
     </div>
 
     <script>
+<<<<<<< HEAD
         const API_BASE = 'http://localhost:8001';
+=======
+        const API_BASE = 'http://127.0.0.1:8001';
+>>>>>>> 9540633dc9880bb288d4ebffde1c3da4da964713
         
         // 로그인 시작
         async function startLogin() {
@@ -495,27 +560,263 @@
             }
         }
         
+        // 세션 상태 확인
+        function checkSessionStatus() {
+            const sessionStatus = document.getElementById('sessionStatus');
+            const sessionIcon = document.getElementById('sessionIcon');
+            const sessionMessage = document.getElementById('sessionMessage');
+            
+            // 실제 세션 상태 API 호출
+            fetch(`${API_BASE}/session/status`)
+                .then(response => response.json())
+                .then(data => {
+                    sessionStatus.style.display = 'block';
+                    
+                    if (data.status === 'valid_session') {
+                        sessionStatus.style.background = '#28a745';
+                        sessionStatus.style.borderColor = '#1e7e34';
+                        sessionIcon.textContent = '✅';
+                        sessionMessage.textContent = data.message;
+                    } else if (data.status === 'no_session') {
+                        sessionStatus.style.background = '#ffc107';
+                        sessionStatus.style.borderColor = '#d39e00';
+                        sessionIcon.textContent = '⚠️';
+                        sessionMessage.textContent = '로그인 세션이 없습니다. 로그인을 진행하세요.';
+                    } else if (data.status === 'expired_session' || data.status === 'invalid_session') {
+                        sessionStatus.style.background = '#dc3545';
+                        sessionStatus.style.borderColor = '#bd2130';
+                        sessionIcon.textContent = '❌';
+                        sessionMessage.textContent = data.message;
+                    } else {
+                        sessionStatus.style.background = '#f8d7da';
+                        sessionStatus.style.borderColor = '#dc3545';
+                        sessionIcon.textContent = '❌';
+                        sessionMessage.textContent = '세션 상태 확인 실패.';
+                    }
+                })
+                .catch(error => {
+                    sessionStatus.style.display = 'block';
+                    sessionStatus.style.background = '#f8d7da';
+                    sessionStatus.style.borderColor = '#dc3545';
+                    sessionIcon.textContent = '❌';
+                    sessionMessage.textContent = '세션 상태 확인 실패. 서버 연결을 확인하세요.';
+                });
+        }
+        
+        // 카페 선택 방식 변경
+        function toggleCafeSelection() {
+            const savedCafe = document.getElementById('savedCafe');
+            const directUrl = document.getElementById('directUrl');
+            const savedCafeSelection = document.getElementById('savedCafeSelection');
+            const directUrlInput = document.getElementById('directUrlInput');
+            
+            if (savedCafe.checked) {
+                savedCafeSelection.style.display = 'block';
+                directUrlInput.style.display = 'none';
+                loadSavedCafes();
+            } else {
+                savedCafeSelection.style.display = 'none';
+                directUrlInput.style.display = 'block';
+            }
+        }
+        
+        // 저장된 카페 목록 로드
+        function loadSavedCafes() {
+            const savedCafes = JSON.parse(localStorage.getItem('savedCafes') || '[]');
+            const cafeSelect = document.getElementById('cafeSelect');
+            
+            cafeSelect.innerHTML = '<option value="">카페를 선택하세요</option>';
+            
+            savedCafes.forEach((cafe, index) => {
+                const option = document.createElement('option');
+                option.value = index;
+                option.textContent = `${cafe.name} (${cafe.url})`;
+                cafeSelect.appendChild(option);
+            });
+        }
+        
+        // 카페 선택 시 처리
+        function onCafeSelect() {
+            const cafeSelect = document.getElementById('cafeSelect');
+            const selectedCafeInfo = document.getElementById('selectedCafeInfo');
+            const selectedCafeName = document.getElementById('selectedCafeName');
+            const selectedCafeId = document.getElementById('selectedCafeId');
+            
+            if (cafeSelect.value) {
+                const savedCafes = JSON.parse(localStorage.getItem('savedCafes') || '[]');
+                const selectedCafe = savedCafes[cafeSelect.value];
+                
+                if (selectedCafe) {
+                    selectedCafeName.textContent = selectedCafe.name;
+                    selectedCafeId.textContent = selectedCafe.cafeId || 'N/A';
+                    selectedCafeInfo.style.display = 'block';
+                    
+                    // 저장된 게시판 목록이 있으면 바로 표시
+                    if (selectedCafe.boards && selectedCafe.boards.length > 0) {
+                        console.log('저장된 게시판 목록 사용:', selectedCafe.boards.length + '개');
+                        displayBoards(selectedCafe.boards);
+                    } else {
+                        console.log('저장된 게시판이 없음, 새로 로드');
+                        // 저장된 게시판이 없으면 새로 로드
+                        loadCafeBoards(selectedCafe.url);
+                    }
+                }
+            } else {
+                selectedCafeInfo.style.display = 'none';
+            }
+        }
+        
         // 카페 설정 저장
         function saveCafeSettings() {
             const cafeUrl = document.getElementById('cafeUrl').value;
             const cafeName = document.getElementById('cafeName').value;
+            
+            console.log('카페 저장 시도:', { cafeUrl, cafeName });
             
             if (!cafeUrl) {
                 alert('카페 URL을 입력하세요.');
                 return;
             }
             
-            // 로컬 스토리지에 저장
-            const cafeSettings = {
+            // 카페 ID 추출
+            const cafeIdMatch = cafeUrl.match(/cafe\.naver\.com\/([^\/]+)/);
+            const cafeId = cafeIdMatch ? cafeIdMatch[1] : 'unknown';
+            
+            // 저장된 카페 목록에 추가
+            const savedCafes = JSON.parse(localStorage.getItem('savedCafes') || '[]');
+            const newCafe = {
+                name: cafeName || cafeId,
                 url: cafeUrl,
-                name: cafeName || '카페',
-                saved_at: new Date().toISOString()
+                cafeId: cafeId,
+                timestamp: new Date().toISOString()
             };
             
-            localStorage.setItem('cafeSettings', JSON.stringify(cafeSettings));
+            savedCafes.push(newCafe);
+            localStorage.setItem('savedCafes', JSON.stringify(savedCafes));
             
-            document.getElementById('cafeResult').innerHTML = 
-                `<div class="status success">✅ 카페 설정이 저장되었습니다.</div>`;
+            console.log('카페 저장 완료:', newCafe);
+            
+            // 메시지 표시
+            const cafeResult = document.getElementById('cafeResult');
+            if (cafeResult) {
+                cafeResult.innerHTML = 
+                    `<div class="status success" style="background: #d4edda; color: #155724; padding: 10px; border-radius: 4px; margin: 10px 0; border: 1px solid #c3e6cb;">✅ 카페 설정이 저장되었습니다. (${cafeName || cafeId})</div>`;
+                cafeResult.style.display = 'block';
+            } else {
+                console.error('cafeResult 요소를 찾을 수 없습니다.');
+                alert('✅ 카페 설정이 저장되었습니다.');
+            }
+            
+            // 저장된 카페 목록 새로고침
+            loadSavedCafes();
+            updateCafeCount();
+        }
+        
+        // 카페 관리 창 표시
+        function showCafeManager() {
+            const savedCafes = JSON.parse(localStorage.getItem('savedCafes') || '[]');
+            
+            if (savedCafes.length === 0) {
+                alert('저장된 카페가 없습니다.');
+                return;
+            }
+            
+            let managerHtml = `
+                <div style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; display: flex; justify-content: center; align-items: center;">
+                    <div style="background: white; padding: 30px; border-radius: 10px; max-width: 600px; width: 90%; max-height: 80%; overflow-y: auto;">
+                        <h3 style="margin-bottom: 20px; color: #333;">📝 저장된 카페 관리</h3>
+                        <div id="cafeManagerList" style="margin-bottom: 20px;">
+            `;
+            
+            savedCafes.forEach((cafe, index) => {
+                managerHtml += `
+                    <div style="border: 1px solid #ddd; border-radius: 8px; padding: 15px; margin-bottom: 10px; background: #f9f9f9;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <strong style="color: #333; font-size: 16px;">${cafe.name}</strong>
+                                <div style="color: #666; font-size: 14px; margin-top: 5px;">${cafe.url}</div>
+                                <div style="color: #999; font-size: 12px; margin-top: 5px;">
+                                    카페 ID: ${cafe.cafeId} | 저장일: ${new Date(cafe.timestamp).toLocaleDateString()}
+                                    ${cafe.boards ? ` | 게시판: ${cafe.boards.length}개` : ' | 게시판: 없음'}
+                                </div>
+                            </div>
+                            <div style="display: flex; gap: 10px;">
+                                <button onclick="editCafe(${index})" style="background: #007bff; color: white; border: none; border-radius: 4px; padding: 6px 12px; cursor: pointer; font-size: 12px;">수정</button>
+                                <button onclick="deleteCafe(${index})" style="background: #dc3545; color: white; border: none; border-radius: 4px; padding: 6px 12px; cursor: pointer; font-size: 12px;">삭제</button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            managerHtml += `
+                        </div>
+                        <div style="text-align: center;">
+                            <button onclick="closeCafeManager()" style="background: #6c757d; color: white; border: none; border-radius: 4px; padding: 10px 20px; cursor: pointer; margin-right: 10px;">닫기</button>
+                            <button onclick="clearAllCafes()" style="background: #dc3545; color: white; border: none; border-radius: 4px; padding: 10px 20px; cursor: pointer;">모든 카페 삭제</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            document.body.insertAdjacentHTML('beforeend', managerHtml);
+        }
+        
+        // 카페 관리 창 닫기
+        function closeCafeManager() {
+            const manager = document.querySelector('[style*="position: fixed"]');
+            if (manager) {
+                manager.remove();
+            }
+        }
+        
+        // 카페 수정
+        function editCafe(index) {
+            const savedCafes = JSON.parse(localStorage.getItem('savedCafes') || '[]');
+            const cafe = savedCafes[index];
+            
+            const newName = prompt('카페 이름을 수정하세요:', cafe.name);
+            if (newName !== null && newName.trim() !== '') {
+                savedCafes[index].name = newName.trim();
+                localStorage.setItem('savedCafes', JSON.stringify(savedCafes));
+                loadSavedCafes();
+                updateCafeCount();
+                closeCafeManager();
+                showCafeManager(); // 새로고침
+            }
+        }
+        
+        // 카페 삭제
+        function deleteCafe(index) {
+            if (confirm('이 카페를 삭제하시겠습니까?')) {
+                const savedCafes = JSON.parse(localStorage.getItem('savedCafes') || '[]');
+                savedCafes.splice(index, 1);
+                localStorage.setItem('savedCafes', JSON.stringify(savedCafes));
+                loadSavedCafes();
+                updateCafeCount();
+                closeCafeManager();
+                showCafeManager(); // 새로고침
+            }
+        }
+        
+        // 모든 카페 삭제
+        function clearAllCafes() {
+            if (confirm('모든 저장된 카페를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.')) {
+                localStorage.removeItem('savedCafes');
+                loadSavedCafes();
+                updateCafeCount();
+                closeCafeManager();
+                alert('모든 카페가 삭제되었습니다.');
+            }
+        }
+        
+        // 카페 개수 업데이트
+        function updateCafeCount() {
+            const savedCafes = JSON.parse(localStorage.getItem('savedCafes') || '[]');
+            const countElement = document.getElementById('cafeCount');
+            if (countElement) {
+                countElement.textContent = `저장된 카페: ${savedCafes.length}개`;
+            }
         }
         
         // 저장된 카페 설정 불러오기
@@ -529,11 +830,12 @@
         }
         
         // 카페 게시판 목록 불러오기
-        async function loadCafeBoards() {
-            const cafeUrl = document.getElementById('cafeUrl').value;
+        async function loadCafeBoards(cafeUrl = null) {
+            // 매개변수로 받은 URL이 있으면 사용, 없으면 입력 필드에서 가져오기
+            const url = cafeUrl || document.getElementById('cafeUrl').value;
             const cafeName = document.getElementById('cafeName').value;
             
-            if (!cafeUrl) {
+            if (!url) {
                 alert('카페 URL을 입력하세요.');
                 return;
             }
@@ -547,14 +849,20 @@
                         'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({
-                        cafe_url: cafeUrl,
+                        cafe_url: url,
                         cafe_name: cafeName || null
                     })
                 });
                 
                 const result = await response.json();
                 if (result.status === 'success') {
-                    displayBoardList(result.boards);
+                    // 게시판 목록을 전역 변수로 저장
+                    window.currentBoards = result.boards;
+                    displayBoards(result.boards);
+                    
+                    // 카페 설정에 게시판 목록도 저장
+                    saveBoardsToCafe(url, result.boards);
+                    
                     document.getElementById('cafeResult').innerHTML = 
                         `<div class="status success">✅ 게시판 목록을 불러왔습니다. (${result.boards.length}개)</div>`;
                 } else {
@@ -565,22 +873,163 @@
             }
         }
         
+        // 카페 설정에 게시판 목록 저장
+        function saveBoardsToCafe(cafeUrl, boards) {
+            const savedCafes = JSON.parse(localStorage.getItem('savedCafes') || '[]');
+            const cafeIndex = savedCafes.findIndex(cafe => cafe.url === cafeUrl);
+            
+            if (cafeIndex !== -1) {
+                savedCafes[cafeIndex].boards = boards;
+                savedCafes[cafeIndex].boardsUpdated = new Date().toISOString();
+                localStorage.setItem('savedCafes', JSON.stringify(savedCafes));
+                console.log('게시판 목록이 카페 설정에 저장되었습니다:', boards.length + '개');
+            }
+        }
+        
+        // 게시판 목록 표시 (통합 함수)
+        function displayBoards(boards) {
+            displayBoardList(boards);
+        }
+        
         // 게시판 목록 표시
         function displayBoardList(boards) {
             const boardListDiv = document.getElementById('boardList');
-            boardListDiv.innerHTML = '';
+            const selectedBoardsDiv = document.getElementById('selectedBoards');
             
-            boards.forEach((board, index) => {
+                // 선택된 게시판 표시 영역 생성
+                if (!selectedBoardsDiv) {
+                    const selectedDiv = document.createElement('div');
+                    selectedDiv.id = 'selectedBoards';
+                    selectedDiv.innerHTML = `
+                        <div style="margin: 15px 0; padding: 15px; background: #e8f5e8; border-radius: 8px; border: 1px solid #4caf50; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                            <h4 style="margin: 0 0 15px 0; color: #2e7d32; font-size: 16px; font-weight: 600;">✅ 선택된 게시판</h4>
+                            <div id="selectedBoardList" style="max-height: 200px; overflow-y: auto; border: 1px solid #c8e6c9; border-radius: 4px; background: white; padding: 8px;"></div>
+                        </div>
+                    `;
+                    boardListDiv.parentNode.insertBefore(selectedDiv, boardListDiv);
+                }
+            
+            // 자주 사용되는 게시판 로드
+            const frequentBoards = loadFrequentBoards();
+            
+            // 게시판 목록 초기화
+            boardListDiv.innerHTML = '';
+            boardListDiv.style.cssText = 'max-height: 400px; overflow-y: auto; border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px; background: #fafafa;';
+            
+            // 자주 사용되는 게시판을 상위에 표시
+            const frequentBoardIds = frequentBoards.map(b => b.menu_id);
+            const sortedBoards = [...boards].sort((a, b) => {
+                const aFrequent = frequentBoardIds.includes(a.menu_id);
+                const bFrequent = frequentBoardIds.includes(b.menu_id);
+                if (aFrequent && !bFrequent) return -1;
+                if (!aFrequent && bFrequent) return 1;
+                return 0;
+            });
+            
+            sortedBoards.forEach((board, index) => {
+                const isFrequent = frequentBoardIds.includes(board.menu_id);
                 const boardItem = document.createElement('div');
-                boardItem.style.marginBottom = '10px';
-                boardItem.innerHTML = `
-                    <label style="display: flex; align-items: center; cursor: pointer;">
-                        <input type="checkbox" id="board_${index}" value="${board.menu_id}" style="margin-right: 10px;">
-                        <span>${board.menu_name} (ID: ${board.menu_id})</span>
-                    </label>
-                `;
+                boardItem.style.marginBottom = '8px';
+                boardItem.style.padding = '5px';
+                boardItem.style.borderRadius = '3px';
+                if (isFrequent) {
+                    boardItem.style.backgroundColor = '#fff3e0';
+                    boardItem.style.border = '1px solid #ff9800';
+                }
+                
+                    boardItem.innerHTML = `
+                        <label style="display: flex; align-items: center; cursor: pointer; padding: 10px 12px; border-radius: 6px; transition: all 0.2s; border: 1px solid transparent;" onmouseover="this.style.backgroundColor='#f5f5f5'; this.style.borderColor='#e0e0e0';" onmouseout="this.style.backgroundColor=''; this.style.borderColor='transparent';">
+                            <input type="checkbox" id="board_${index}" value="${board.menu_id}" style="margin-right: 12px; width: 16px; height: 16px; flex-shrink: 0;" onchange="updateSelectedBoards()">
+                            <span style="flex: 1; font-size: 14px; line-height: 1.4; color: #333;">${board.menu_name} (ID: ${board.menu_id})</span>
+                            ${isFrequent ? '<span style="color: #ff9800; font-size: 12px; margin-left: 8px; flex-shrink: 0; font-weight: 500;">⭐ 자주 사용</span>' : ''}
+                        </label>
+                    `;
                 boardListDiv.appendChild(boardItem);
             });
+        }
+        
+        // 선택된 게시판 업데이트
+        function updateSelectedBoards() {
+            const selectedList = document.getElementById('selectedBoardList');
+            const checkboxes = document.querySelectorAll('#boardList input[type="checkbox"]:checked');
+            
+            selectedList.innerHTML = '';
+            
+            if (checkboxes.length === 0) {
+                selectedList.innerHTML = '<div style="color: #666; font-style: italic;">선택된 게시판이 없습니다.</div>';
+                return;
+            }
+            
+            checkboxes.forEach((checkbox, index) => {
+                const boardName = checkbox.parentNode.querySelector('span').textContent;
+                const boardItem = document.createElement('div');
+                boardItem.style.marginBottom = '8px';
+                boardItem.style.padding = '10px 12px';
+                boardItem.style.backgroundColor = '#f1f8e9';
+                boardItem.style.borderRadius = '6px';
+                boardItem.style.display = 'flex';
+                boardItem.style.justifyContent = 'space-between';
+                boardItem.style.alignItems = 'center';
+                boardItem.style.border = '1px solid #c8e6c9';
+                boardItem.style.transition = 'all 0.2s';
+                boardItem.style.boxShadow = '0 1px 3px rgba(0,0,0,0.1)';
+                
+                boardItem.innerHTML = `
+                    <span style="font-size: 14px; color: #2e7d32; font-weight: 500;">${boardName}</span>
+                    <button type="button" onclick="unselectBoard('${checkbox.id}')" style="background: #f44336; color: white; border: none; border-radius: 4px; padding: 6px 12px; cursor: pointer; font-size: 12px; font-weight: 500; transition: background-color 0.2s;" onmouseover="this.style.backgroundColor='#d32f2f'" onmouseout="this.style.backgroundColor='#f44336'">제거</button>
+                `;
+                selectedList.appendChild(boardItem);
+            });
+        }
+        
+        // 게시판 선택 해제
+        function unselectBoard(checkboxId) {
+            const checkbox = document.getElementById(checkboxId);
+            if (checkbox) {
+                checkbox.checked = false;
+                updateSelectedBoards();
+            }
+        }
+        
+        // 자주 사용되는 게시판 로드
+        function loadFrequentBoards() {
+            const saved = localStorage.getItem('frequentBoards');
+            return saved ? JSON.parse(saved) : [];
+        }
+        
+        // 자주 사용되는 게시판 저장
+        function saveFrequentBoards(boards) {
+            localStorage.setItem('frequentBoards', JSON.stringify(boards));
+        }
+        
+        // 자주 사용되는 게시판 업데이트
+        function updateFrequentBoards(selectedBoardIds, allBoards) {
+            const frequentBoards = loadFrequentBoards();
+            const selectedBoards = allBoards.filter(board => selectedBoardIds.includes(board.menu_id));
+            
+            // 선택된 게시판들을 자주 사용되는 목록에 추가
+            selectedBoards.forEach(board => {
+                const existingIndex = frequentBoards.findIndex(b => b.menu_id === board.menu_id);
+                if (existingIndex >= 0) {
+                    // 이미 있으면 사용 횟수 증가
+                    frequentBoards[existingIndex].useCount = (frequentBoards[existingIndex].useCount || 1) + 1;
+                    frequentBoards[existingIndex].lastUsed = new Date().toISOString();
+                } else {
+                    // 새로 추가
+                    frequentBoards.push({
+                        ...board,
+                        useCount: 1,
+                        lastUsed: new Date().toISOString()
+                    });
+                }
+            });
+            
+            // 사용 횟수 순으로 정렬하고 최대 20개만 유지
+            frequentBoards.sort((a, b) => (b.useCount || 1) - (a.useCount || 1));
+            const topBoards = frequentBoards.slice(0, 20);
+            
+            saveFrequentBoards(topBoards);
+            console.log('자주 사용되는 게시판 업데이트됨:', topBoards.length, '개');
         }
         
         // 게시판 선택 방식 변경
@@ -592,6 +1041,24 @@
                 boardSelection.style.display = 'block';
             } else {
                 boardSelection.style.display = 'none';
+            }
+        }
+        
+        // 게시판 목록 토글 (닫기/열기)
+        function toggleBoardList() {
+            const boardList = document.getElementById('boardList');
+            const toggleBtn = document.getElementById('toggleBoardListBtn');
+            
+            if (boardList.style.display === 'none') {
+                // 열기
+                boardList.style.display = 'block';
+                toggleBtn.textContent = '닫기';
+                toggleBtn.style.background = '#6c757d';
+            } else {
+                // 닫기
+                boardList.style.display = 'none';
+                toggleBtn.textContent = '열기';
+                toggleBtn.style.background = '#28a745';
             }
         }
         
@@ -659,6 +1126,13 @@
                 
                 const result = await response.json();
                 showResult(result, 'scrapingResult');
+                
+                // 선택된 게시판을 자주 사용되는 게시판으로 저장
+                if (result.status === 'success' && selectedBoards.length > 0) {
+                    // 게시판 목록을 다시 가져와서 자주 사용되는 게시판 업데이트
+                    const allBoards = window.currentBoards || [];
+                    updateFrequentBoards(selectedBoards, allBoards);
+                }
             } catch (error) {
                 showError(error.message, 'scrapingResult');
             }
@@ -761,8 +1235,21 @@
             document.getElementById('allBoards').addEventListener('change', toggleBoardSelection);
             document.getElementById('specificBoards').addEventListener('change', toggleBoardSelection);
             
+            // 카페 선택 방식 이벤트 리스너 추가
+            document.getElementById('savedCafe').addEventListener('change', toggleCafeSelection);
+            document.getElementById('directUrl').addEventListener('change', toggleCafeSelection);
+            
             // 저장된 카페 설정 불러오기
             loadSavedCafeSettings();
+            
+            // 세션 상태 확인
+            checkSessionStatus();
+            
+            // 저장된 카페 목록 로드
+            loadSavedCafes();
+            
+            // 카페 개수 업데이트
+            updateCafeCount();
         };
     </script>
 </body>
