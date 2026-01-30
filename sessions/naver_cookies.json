@@ -1,57 +1,77 @@
 [
   {
-    "domain": ".naver.com",
-    "expiry": 1758696819,
+    "domain": ".nid.naver.com",
+    "expiry": 1792569838,
     "httpOnly": false,
-    "name": "SRT5",
-    "path": "/",
-    "sameSite": "None",
-    "secure": true,
-    "value": "1758696521"
-  },
-  {
-    "domain": ".naver.com",
-    "expiry": 1758698319,
-    "httpOnly": false,
-    "name": "SRT30",
-    "path": "/",
-    "sameSite": "None",
-    "secure": true,
-    "value": "1758696521"
-  },
-  {
-    "domain": ".naver.com",
-    "expiry": 1793256519,
-    "httpOnly": true,
-    "name": "BUC",
-    "path": "/",
-    "sameSite": "None",
-    "secure": true,
-    "value": "36Ayrhs1qCn0vxx1pgTcN8HAOXTVdxH3bFxr9LHMRKg="
-  },
-  {
-    "domain": ".naver.com",
-    "expiry": 1793256519,
-    "httpOnly": false,
-    "name": "NNB",
-    "path": "/",
-    "sameSite": "None",
-    "secure": true,
-    "value": "GTXXDZCJSTJWQ"
-  },
-  {
-    "domain": "www.naver.com",
-    "expiry": 1758782918,
-    "httpOnly": false,
-    "name": "NM_srt_chzzk",
+    "name": "nid_slevel",
     "path": "/",
     "sameSite": "Lax",
     "secure": false,
     "value": "1"
   },
   {
+    "domain": ".nid.naver.com",
+    "expiry": 1795593835,
+    "httpOnly": false,
+    "name": "nid_buk",
+    "path": "/",
+    "sameSite": "Lax",
+    "secure": true,
+    "value": "ULOYD4DJH33WQ"
+  },
+  {
     "domain": ".naver.com",
-    "expiry": 1758782918,
+    "expiry": 1761034138,
+    "httpOnly": false,
+    "name": "SRT5",
+    "path": "/",
+    "sameSite": "None",
+    "secure": true,
+    "value": "1761033833"
+  },
+  {
+    "domain": ".naver.com",
+    "expiry": 1761035638,
+    "httpOnly": false,
+    "name": "SRT30",
+    "path": "/",
+    "sameSite": "None",
+    "secure": true,
+    "value": "1761033833"
+  },
+  {
+    "domain": ".naver.com",
+    "expiry": 1795593838,
+    "httpOnly": true,
+    "name": "BUC",
+    "path": "/",
+    "sameSite": "None",
+    "secure": true,
+    "value": "aUuhda6LoUA6rNyfLtywcGLxJCTjn7hCEl3copSU6m0="
+  },
+  {
+    "domain": ".naver.com",
+    "expiry": 1795593838,
+    "httpOnly": false,
+    "name": "NNB",
+    "path": "/",
+    "sameSite": "None",
+    "secure": true,
+    "value": "ULOYD4DJH33WQ"
+  },
+  {
+    "domain": ".nid.naver.com",
+    "expiry": 1778313838,
+    "httpOnly": true,
+    "name": "NID_JST",
+    "path": "/",
+    "sameSite": "Lax",
+    "secure": true,
+    "value": "yI/o0m660AAjJQsEehcsl1AHx64aios/anJ4dec6RCydhtGDe+15Ri5htnlAfUIk4ghYySL9EMrgOQeS3n1BVOJ4PMP8uFXqRuRECAbX0CeGzOXBm1Fj3xDVBT9tfEFMS0ObQUMsm8KQ1vP3af2bGetMkcyosFp83G+UYwUItzE="
+  },
+  {
+    "domain": ".naver.com",
+    "expiry": 1761120232,
     "httpOnly": false,
     "name": "NACT",
     "path": "/",
@@ -61,22 +81,12 @@
   },
   {
     "domain": ".naver.com",
-    "expiry": 1793256518,
+    "expiry": 1795593832,
     "httpOnly": false,
     "name": "NAC",
     "path": "/",
     "sameSite": "None",
     "secure": true,
-    "value": "v6SbBwAupg0n"
-  },
-  {
-    "domain": "www.naver.com",
-    "expiry": 1758782918,
-    "httpOnly": true,
-    "name": "PM_CK_loc",
-    "path": "/",
-    "sameSite": "Lax",
-    "secure": false,
-    "value": "d8ae3d03f90816d25151f3388d1f08f988cf220516a13aa3e742853ae82722f7"
+    "value": "Bk7XB0wQ5V9E"
   }
 ]

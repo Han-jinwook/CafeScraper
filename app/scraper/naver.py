@@ -28,14 +28,14 @@ except ImportError:
         def warning(self, msg): print(f"WARNING: {msg}")
         def error(self, msg): print(f"ERROR: {msg}")
         def debug(self, msg): print(f"DEBUG: {msg}")
-        def log_scraping_start(self, url, total): self.info(f"🚀 스크래핑 시작: {url} (총 {total}개)")
-        def log_scraping_progress(self, current, total, url): self.info(f"📄 [{current:3d}/{total:3d}] {url}")
-        def log_scraping_success(self, url, title): self.info(f"✅ 성공: {title}")
-        def log_scraping_error(self, url, error): self.error(f"❌ 실패: {url} - {error}")
-        def log_scraping_complete(self, successful, failed, total): self.info(f"📊 완료: 성공 {successful}개, 실패 {failed}개")
-        def log_performance(self, operation, duration, details=""): self.info(f"⏱️ {operation}: {duration:.2f}초")
-        def log_memory_usage(self, operation, memory_mb): self.info(f"💾 {operation}: {memory_mb:.1f}MB")
-        def log_antibot_measure(self, measure, details=""): self.info(f"🛡️ 안티봇 대응: {measure}")
+        def log_scraping_start(self, url, total): self.info(f"[INFO] 스크래핑 시작: {url} (총 {total}개)")
+        def log_scraping_progress(self, current, total, url): self.info(f"[INFO] [{current:3d}/{total:3d}] {url}")
+        def log_scraping_success(self, url, title): self.info(f"[SUCCESS] 성공: {title}")
+        def log_scraping_error(self, url, error): self.error(f"[ERROR] 실패: {url} - {error}")
+        def log_scraping_complete(self, successful, failed, total): self.info(f"[INFO] 완료: 성공 {successful}개, 실패 {failed}개")
+        def log_performance(self, operation, duration, details=""): self.info(f"[INFO] {operation}: {duration:.2f}초")
+        def log_memory_usage(self, operation, memory_mb): self.info(f"[INFO] {operation}: {memory_mb:.1f}MB")
+        def log_antibot_measure(self, measure, details=""): self.info(f"[INFO] 안티봇 대응: {measure}")
     
     scraping_logger = DummyLogger()
 
@@ -54,11 +54,11 @@ class NaverScraper:
     def start_browser(self) -> None:
         """Start Chrome browser with persistent context for cookie management."""
         if self.driver:
-            print("✅ 브라우저가 이미 실행 중입니다.")
+            print("[INFO] 브라우저가 이미 실행 중입니다.")
             return
         
         try:
-            print("🔄 Selenium Chrome 브라우저 시작 중...")
+            print("[INFO] Selenium Chrome 브라우저 시작 중...")
             
             # Chrome 옵션 설정
             chrome_options = Options()
@@ -98,12 +98,12 @@ class NaverScraper:
             # 자동화 감지 방지
             self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
             
-            print("✅ Selenium Chrome 브라우저 시작 완료")
+            print("[SUCCESS] Selenium Chrome 브라우저 시작 완료")
             
         except Exception as e:
-            print(f"❌ 브라우저 시작 실패: {e}")
-            print(f"❌ 에러 타입: {type(e).__name__}")
-            print(f"❌ 에러 상세: {str(e)}")
+            print(f"[ERROR] 브라우저 시작 실패: {e}")
+            print(f"[ERROR] 에러 타입: {type(e).__name__}")
+            print(f"[ERROR] 에러 상세: {str(e)}")
             raise Exception(f"브라우저 시작 실패: {str(e)}")
 
     def _load_cookies(self) -> None:
@@ -115,16 +115,31 @@ class NaverScraper:
                 
                 # 네이버 메인 페이지로 이동 후 쿠키 로드
                 self.driver.get("https://www.naver.com")
+                time.sleep(2)  # 페이지 로딩 대기
+                
+                loaded_count = 0
                 for cookie in cookies:
                     try:
+                        # 쿠키 도메인 문제 해결을 위한 수정
+                        if 'domain' in cookie:
+                            # 도메인이 .naver.com인 경우 www.naver.com으로 변경
+                            if cookie['domain'] == '.naver.com':
+                                cookie['domain'] = 'www.naver.com'
+                        
                         self.driver.add_cookie(cookie)
+                        loaded_count += 1
                     except Exception as e:
-                        print(f"⚠️ 쿠키 로드 실패: {cookie.get('name', 'unknown')} - {e}")
+                        # 쿠키 로드 실패는 무시하고 계속 진행
                         continue
                 
-                print(f"✅ Loaded {len(cookies)} cookies from {self._cookie_file}")
+                print(f"[SUCCESS] Loaded {loaded_count}/{len(cookies)} cookies from {self._cookie_file}")
+                
+                # 쿠키 로드 후 페이지 새로고침
+                self.driver.refresh()
+                time.sleep(2)
+                
             except Exception as e:
-                print(f"⚠️ Failed to load cookies: {e}")
+                print(f"[WARN] Failed to load cookies: {e}")
 
     def _save_cookies(self) -> None:
         """Save current cookies to file."""
@@ -133,9 +148,9 @@ class NaverScraper:
                 cookies = self.driver.get_cookies()
                 with open(self._cookie_file, 'w', encoding='utf-8') as f:
                     json.dump(cookies, f, ensure_ascii=False, indent=2)
-                print(f"✅ Saved {len(cookies)} cookies to {self._cookie_file}")
+                print(f"[SUCCESS] Saved {len(cookies)} cookies to {self._cookie_file}")
             except Exception as e:
-                print(f"⚠️ Failed to save cookies: {e}")
+                print(f"[WARN] Failed to save cookies: {e}")
 
     def ensure_logged_in(self) -> bool:
         """Ensure user is logged in to Naver. Returns True if successful."""
@@ -154,12 +169,37 @@ class NaverScraper:
             # 로그인 버튼이 없으면 로그인된 상태
             login_button = self.driver.find_elements(By.XPATH, "//a[contains(text(), '로그인')]")
             if not login_button:
-                print("✅ Already logged in to Naver")
+                print("[SUCCESS] Already logged in to Naver")
                 self._save_cookies()
                 return True
             
+            # 로그인 버튼이 있어도 카페 접근 가능한지 확인
+            print("[INFO] 네이버 홈에서 로그인 버튼이 보이지만, 카페 접근 가능 여부를 확인합니다...")
+            
+            # 카페 접근 테스트 (실제 카페 URL이 필요)
+            # 임시로 네이버 카페 메인 페이지로 이동해서 확인
+            try:
+                self.driver.get("https://cafe.naver.com")
+                time.sleep(3)
+                
+                # 카페 페이지에서 로그인 상태 확인
+                cafe_login_buttons = self.driver.find_elements(By.XPATH, "//a[contains(text(), '로그인')]")
+                if not cafe_login_buttons:
+                    print("[SUCCESS] 카페 접근 가능 - 로그인 상태 확인됨")
+                    self._save_cookies()
+                    return True
+                else:
+                    print("[WARN] 카페에서도 로그인이 필요합니다")
+            except Exception as e:
+                print(f"[WARN] 카페 접근 테스트 실패: {e}")
+                # 카페 접근이 실패해도 네이버 홈에서 로그인 버튼이 없으면 로그인된 것으로 간주
+                if not login_button:
+                    print("[SUCCESS] 네이버 홈에서 로그인 상태 확인됨")
+                    self._save_cookies()
+                    return True
+            
             # 로그인 버튼이 있으면 로그인 필요
-            print("🔐 Manual login required. Please log in to Naver in the browser window.")
+            print("[INFO] Manual login required. Please log in to Naver in the browser window.")
             print("   The system will automatically detect when you're logged in...")
             
             # 자동 로그인 감지 (최대 5분 대기)
@@ -179,18 +219,18 @@ class NaverScraper:
                 login_button_after = self.driver.find_elements(By.XPATH, "//a[contains(text(), '로그인')]")
                 if not login_button_after:
                     self._save_cookies()
-                    print("✅ Login successful! Cookies saved.")
+                    print("[SUCCESS] Login successful! Cookies saved.")
                     return True
                 
                 # 진행 상황 표시
                 remaining_time = max_wait_time - waited_time
-                print(f"⏳ Waiting for login... ({remaining_time}s remaining)")
+                print(f"[INFO] Waiting for login... ({remaining_time}s remaining)")
             
-            print("❌ Login timeout. Please try again.")
+            print("[ERROR] Login timeout. Please try again.")
             return False
                 
         except Exception as e:
-            print(f"❌ Login check failed: {e}")
+            print(f"[ERROR] Login check failed: {e}")
             return False
 
     def scrape_article(self, url: str, include_nicks: list[str] | None = None, exclude_nicks: list[str] | None = None, max_retries: int = 3):
@@ -200,7 +240,7 @@ class NaverScraper:
         
         for attempt in range(max_retries):
             try:
-                print(f"📄 스크래핑 시도 {attempt + 1}/{max_retries}: {url}")
+                print(f"[INFO] 스크래핑 시도 {attempt + 1}/{max_retries}: {url}")
                 
                 # Navigate to article with retry logic
                 self._navigate_with_retry(url, max_retries=2)
@@ -227,17 +267,17 @@ class NaverScraper:
                     "scraped_at": time.strftime("%Y-%m-%d %H:%M:%S")
                 }
                 
-                print(f"✅ 스크래핑 성공: {article_data.get('title', 'N/A')}")
+                print(f"[SUCCESS] 스크래핑 성공: {article_data.get('title', 'N/A')}")
                 return result
                 
             except Exception as e:
-                print(f"⚠️ 스크래핑 시도 {attempt + 1} 실패: {e}")
+                print(f"[WARN] 스크래핑 시도 {attempt + 1} 실패: {e}")
                 if attempt < max_retries - 1:
                     wait_time = (attempt + 1) * 5  # 5초, 10초, 15초 대기
                     print(f"⏳ {wait_time}초 후 재시도...")
                     time.sleep(wait_time)
                 else:
-                    print(f"❌ 최대 재시도 횟수 초과: {url}")
+                    print(f"[ERROR] 최대 재시도 횟수 초과: {url}")
                     raise e
 
     def _extract_article_data(self, url: str) -> dict:
@@ -348,7 +388,7 @@ class NaverScraper:
             }
             
         except Exception as e:
-            print(f"⚠️ Error extracting article data: {e}")
+            print(f"[WARN] Error extracting article data: {e}")
             return {
                 "cafe_id": "unknown",
                 "article_id": "unknown",
@@ -369,7 +409,7 @@ class NaverScraper:
             
             # Limit number of images to prevent memory issues
             if len(image_elements) > max_images:
-                print(f"⚠️ Too many images ({len(image_elements)}), limiting to {max_images}")
+                print(f"[WARN] Too many images ({len(image_elements)}), limiting to {max_images}")
                 image_elements = image_elements[:max_images]
             
             for i, img in enumerate(image_elements):
@@ -387,7 +427,7 @@ class NaverScraper:
                         # Check image size to prevent memory issues
                         size_mb = len(image_data) / (1024 * 1024)
                         if size_mb > max_size_mb:
-                            print(f"⚠️ Image {i+1} too large ({size_mb:.1f}MB), skipping")
+                            print(f"[WARN] Image {i+1} too large ({size_mb:.1f}MB), skipping")
                             continue
                         
                         base64_data = base64.b64encode(image_data).decode('utf-8')
@@ -407,11 +447,11 @@ class NaverScraper:
                         })
                         
                 except Exception as e:
-                    print(f"⚠️ Error processing image {i}: {e}")
+                    print(f"[WARN] Error processing image {i}: {e}")
                     continue
                     
         except Exception as e:
-            print(f"⚠️ Error extracting images: {e}")
+            print(f"[WARN] Error extracting images: {e}")
         
         return images
 
@@ -481,11 +521,11 @@ class NaverScraper:
                         })
                         
                 except Exception as e:
-                    print(f"⚠️ Error processing comment: {e}")
+                    print(f"[WARN] Error processing comment: {e}")
                     continue
                     
         except Exception as e:
-            print(f"⚠️ Error extracting comments: {e}")
+            print(f"[WARN] Error extracting comments: {e}")
         
         return comments
 
@@ -498,14 +538,14 @@ class NaverScraper:
         page = 1
         total_articles = 0
         
-        print(f"📊 게시판 스크래핑 시작: {board_url}")
-        print(f"📄 최대 페이지: {max_pages}")
+        print(f"[INFO] 게시판 스크래핑 시작: {board_url}")
+        print(f"[INFO] 최대 페이지: {max_pages}")
         print("=" * 50)
         
         while page <= max_pages:
             try:
                 progress = f"[페이지 {page:2d}/{max_pages:2d}]"
-                print(f"📄 {progress} 게시판 페이지 로딩 중...")
+                print(f"[INFO] {progress} 게시판 페이지 로딩 중...")
                 
                 # Navigate to board page
                 page_url = f"{board_url}?page={page}" if "?" not in board_url else f"{board_url}&page={page}"
@@ -521,12 +561,12 @@ class NaverScraper:
                 page_articles = self._extract_article_links_from_board()
                 
                 if not page_articles:
-                    print(f"📄 {progress} 게시글을 찾을 수 없음, 페이지네이션 중단")
+                    print(f"[WARN] {progress} 게시글을 찾을 수 없음, 페이지네이션 중단")
                     break
                 
                 articles.extend(page_articles)
                 total_articles += len(page_articles)
-                print(f"✅ {progress} 완료 - 발견된 게시글: {len(page_articles)}개 (누적: {total_articles}개)")
+                print(f"[SUCCESS] {progress} 완료 - 발견된 게시글: {len(page_articles)}개 (누적: {total_articles}개)")
                 
                 page += 1
                 
@@ -534,11 +574,11 @@ class NaverScraper:
                 time.sleep(2)
                 
             except Exception as e:
-                print(f"⚠️ {progress} 오류: {e}")
+                print(f"[WARN] {progress} 오류: {e}")
                 break
         
         print("=" * 50)
-        print(f"📊 게시판 스크래핑 완료: 총 {total_articles}개 게시글 발견")
+        print(f"[INFO] 게시판 스크래핑 완료: 총 {total_articles}개 게시글 발견")
         return articles
 
     def _extract_article_links_from_board(self) -> list[dict]:
@@ -562,13 +602,13 @@ class NaverScraper:
                     links = self.driver.find_elements(By.CSS_SELECTOR, selector)
                     if links:
                         article_links = links
-                        print(f"✅ Found {len(links)} article links using selector: {selector}")
+                        print(f"[SUCCESS] Found {len(links)} article links using selector: {selector}")
                         break
                 except:
                     continue
             
             if not article_links:
-                print("⚠️ No article links found on this page")
+                print("[WARN] No article links found on this page")
                 return articles
             
             for link in article_links:
@@ -632,11 +672,11 @@ class NaverScraper:
                     })
                     
                 except Exception as e:
-                    print(f"⚠️ Error processing article link: {e}")
+                    print(f"[WARN] Error processing article link: {e}")
                     continue
                     
         except Exception as e:
-            print(f"⚠️ Error extracting article links: {e}")
+            print(f"[WARN] Error extracting article links: {e}")
         
         return articles
 
@@ -663,13 +703,13 @@ class NaverScraper:
             try:
                 progress = f"[{i:3d}/{total:3d}]"
                 percentage = (i / total) * 100
-                print(f"📄 {progress} ({percentage:5.1f}%) 스크래핑 중: {url}")
+                print(f"[INFO] {progress} ({percentage:5.1f}%) 스크래핑 중: {url}")
                 
                 # Scrape individual article
                 article_data = self.scrape_article(url, include_nicks, exclude_nicks)
                 results.append(article_data)
                 successful += 1
-                print(f"✅ {progress} 완료")
+                print(f"[SUCCESS] {progress} 완료")
                 
                 # Add delay between requests
                 if i < total:
@@ -678,7 +718,7 @@ class NaverScraper:
                     time.sleep(delay)
                 
             except Exception as e:
-                print(f"❌ {progress} 실패: {e}")
+                print(f"[ERROR] {progress} 실패: {e}")
                 failed += 1
                 results.append({
                     "article_url": url,
@@ -688,7 +728,7 @@ class NaverScraper:
                 })
         
         print("=" * 60)
-        print(f"📊 스크래핑 완료: 총 {total}개 중 성공 {successful}개, 실패 {failed}개")
+        print(f"[INFO] 스크래핑 완료: 총 {total}개 중 성공 {successful}개, 실패 {failed}개")
         return results
 
     def _navigate_with_retry(self, url: str, max_retries: int = 3) -> None:
@@ -699,7 +739,7 @@ class NaverScraper:
                 time.sleep(3)  # Wait for page to load
                 return
             except Exception as e:
-                print(f"⚠️ 네비게이션 시도 {attempt + 1} 실패: {e}")
+                print(f"[WARN] 네비게이션 시도 {attempt + 1} 실패: {e}")
                 if attempt < max_retries - 1:
                     time.sleep(2)
                 else:
@@ -764,7 +804,7 @@ class NaverScraper:
         try:
             # 브라우저가 시작되지 않았으면 시작
             if not self.driver:
-                print("🔄 브라우저 초기화 중...")
+                print("[INFO] 브라우저 초기화 중...")
                 self.start_browser()
             
             # 로그인 확인
@@ -807,13 +847,13 @@ class NaverScraper:
                     links = self.driver.find_elements(By.CSS_SELECTOR, selector)
                     if links:
                         board_links = links
-                        print(f"✅ 게시판 링크 {len(links)}개 발견: {selector}")
+                        print(f"[SUCCESS] 게시판 링크 {len(links)}개 발견: {selector}")
                         break
                 except:
                     continue
             
             if not board_links:
-                print("⚠️ 게시판 링크를 찾을 수 없습니다")
+                print("[WARN] 게시판 링크를 찾을 수 없습니다")
                 return boards
             
             for link in board_links:
@@ -844,11 +884,11 @@ class NaverScraper:
                     })
                     
                 except Exception as e:
-                    print(f"⚠️ 게시판 링크 처리 오류: {e}")
+                    print(f"[WARN] 게시판 링크 처리 오류: {e}")
                     continue
                     
         except Exception as e:
-            print(f"⚠️ 게시판 목록 추출 오류: {e}")
+            print(f"[WARN] 게시판 목록 추출 오류: {e}")
         
         return boards
     
@@ -874,7 +914,7 @@ class NaverScraper:
             target_boards = [board for board in boards if board["menu_id"] in selected_boards]
             scraping_logger.log_scraping_start("선택된 게시판", len(target_boards))
         
-        print(f"📊 스크래핑 대상 게시판: {len(target_boards)}개")
+        print(f"[INFO] 스크래핑 대상 게시판: {len(target_boards)}개")
         
         # 각 게시판 스크래핑
         for i, board in enumerate(target_boards, 1):
@@ -891,7 +931,7 @@ class NaverScraper:
                     detailed_results = self.scrape_multiple_articles(article_urls, include_nicks, exclude_nicks)
                     all_results.extend(detailed_results)
                 
-                print(f"✅ 게시판 {i}/{len(target_boards)} 완료: {len(article_urls)}개 게시글")
+                print(f"[SUCCESS] 게시판 {i}/{len(target_boards)} 완료: {len(article_urls)}개 게시글")
                 
                 # 게시판 간 지연
                 if i < len(target_boards):
@@ -899,7 +939,7 @@ class NaverScraper:
                     time.sleep(delay)
                 
             except Exception as e:
-                print(f"❌ 게시판 {i}/{len(target_boards)} 실패: {e}")
+                print(f"[ERROR] 게시판 {i}/{len(target_boards)} 실패: {e}")
                 scraping_logger.log_scraping_error(board["menu_name"], str(e))
                 continue
         
@@ -933,15 +973,15 @@ class NaverScraper:
             target_boards = [board for board in boards if board["menu_id"] in selected_boards]
             scraping_logger.log_scraping_start("선택된 게시판 배치 크롤링", len(target_boards))
         
-        print(f"🔄 배치 크롤링 대상 게시판: {len(target_boards)}개")
-        print(f"🔍 검색 키워드: {search_keywords}")
-        print(f"👤 게시글 작성자 필터: {post_authors}")
-        print(f"💬 댓글 작성자 필터: {comment_authors}")
+        print(f"[INFO] 배치 크롤링 대상 게시판: {len(target_boards)}개")
+        print(f"[INFO] 검색 키워드: {search_keywords}")
+        print(f"[INFO] 게시글 작성자 필터: {post_authors}")
+        print(f"[INFO] 댓글 작성자 필터: {comment_authors}")
         
         # 각 게시판 스크래핑
         for i, board in enumerate(target_boards, 1):
             if collected_count >= max_articles:
-                print(f"📊 최대 수집 게시글 수({max_articles})에 도달하여 크롤링을 중단합니다.")
+                print(f"[INFO] 최대 수집 게시글 수({max_articles})에 도달하여 크롤링을 중단합니다.")
                 break
                 
             try:
@@ -972,14 +1012,14 @@ class NaverScraper:
                     all_results.extend(detailed_results)
                     collected_count += len(detailed_results)
                 
-                print(f"✅ 게시판 {i}/{len(target_boards)} 완료: {len(article_urls)}개 게시글 (누적: {collected_count}개)")
+                print(f"[SUCCESS] 게시판 {i}/{len(target_boards)} 완료: {len(article_urls)}개 게시글 (누적: {collected_count}개)")
                 
                 # 게시판 간 지연
                 if i < len(target_boards):
                     time.sleep(delay_between_requests)
                 
             except Exception as e:
-                print(f"❌ 게시판 {i}/{len(target_boards)} 실패: {e}")
+                print(f"[ERROR] 게시판 {i}/{len(target_boards)} 실패: {e}")
                 scraping_logger.log_scraping_error(board["menu_name"], str(e))
                 continue
         
@@ -1026,4 +1066,4 @@ class NaverScraper:
         if self.driver:
             self._save_cookies()
             self.driver.quit()
-        print("🔒 Browser closed, cookies saved.")
+        print("[INFO] Browser closed, cookies saved.")

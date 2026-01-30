@@ -1,0 +1,15 @@
+{
+  "chrome_profile_path": "C:\\Users\\chichi\\AppData\\Local\\Google\\Chrome",
+  "crawl_mode": "작성자별 수집",
+  "cafe_url": "https://cafe.naver.com/vpqtnl",
+  "max_pages": 5,
+  "cutoff_date": "2026-01-19",
+  "board_mode": null,
+  "board_url": null,
+  "author_nickname": "마법사멀린",
+  "search_keyword": null,
+  "comment_author_nickname": null,
+  "exclude_own_posts": null,
+  "include_nicks": "마법사멀린",
+  "exclude_nicks": ""
+}
