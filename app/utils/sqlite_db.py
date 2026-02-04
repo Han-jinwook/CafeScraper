@@ -36,6 +36,19 @@ def init_db(db_path="cafe_data.db"):
         )
     ''')
 
+    # VitaminDWiki papers 테이블 (전수 조사 모드)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS papers (
+            url TEXT PRIMARY KEY,
+            title TEXT,
+            summary TEXT,
+            content TEXT,
+            category TEXT,
+            collected_date TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
     conn.commit()
     conn.close()
     print(f"✅ DB 초기화 완료: {os.path.abspath(db_path)}")

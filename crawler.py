@@ -9,9 +9,11 @@ import pickle
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Dict, Any
+from collections import deque
 from urllib.parse import urlparse, parse_qs
 import json
 import requests
+from bs4 import BeautifulSoup, FeatureNotFound
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -108,6 +110,10 @@ class NaverCafeCrawler:
 
         return n
 
+    def _normalize_board_name(self, name: str) -> str:
+        # 공백 제거 + 소문자 (예: "먹거리 / 맛집" == "먹거리/맛집")
+        return re.sub(r"\s+", "", (name or "")).strip().lower()
+
     def _extract_text_from_element(self, element) -> str:
         """Selenium 요소에서 표시 텍스트를 최대한 복구(React/SPA 대비)."""
         if not element:
@@ -172,15 +178,21 @@ class NaverCafeCrawler:
             return content
 
         head = text[:1200]  # 앞부분에서만 판별/절단
-        must = ["최초 치유기록", "필수"]
+        # (2026-02) 썬드림 치유일기 고정 안내문 패턴
+        must = ["조사기간/기본조사", "조사방법"]
         hints = [
-            "가족 여러명의 치유일기",
-            "기본조사",
             "집중조사",
-            "조사방법",
+            "조사거리",
+            "시간",
+            "부위",
+            "육해채식",
+            "올유",
+            "멸치",
+            "온습도",
             "피부질환의 경우",
             "노샤노보",
             "냉포마찰",
+            "애로사항",
         ]
 
         if not all(m in head for m in must):
@@ -198,10 +210,17 @@ class NaverCafeCrawler:
         # 구분선이 없으면, 첫 몇 줄에서 안내문 라인들을 제거(보수적으로)
         lines = text.splitlines()
         drop_phrases = [
-            "최초 치유기록에는",
-            "가족 여러명의 치유일기인 경우",
-            "기본조사",
-            "(피부질환의 경우",
+            "조사기간/기본조사",
+            "집중조사",
+            "조사거리",
+            "조사방법",
+            "육해채식",
+            "올유",
+            "멸치",
+            "온습도",
+            "피부질환의 경우",
+            "노샤노보",
+            "냉포마찰",
         ]
         new_lines = []
         dropped = 0
@@ -698,11 +717,21 @@ class NaverCafeCrawler:
         except:
             return None
 
-    def scrape_board_list(self, board_url: str, start_date: datetime, end_date: datetime) -> List[Dict[str, Any]]:
+    def scrape_board_list(
+        self,
+        board_url: str,
+        start_date: datetime,
+        end_date: datetime,
+        exclude_boards: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
         """게시판 리스트에서 날짜 범위 내 게시글 링크 추출 (undetected 버전)"""
         if not board_url:
             self._update_status("❌ 게시판 URL이 비어 있습니다.")
             return []
+
+        exclude_norm = set()
+        if exclude_boards:
+            exclude_norm = {self._normalize_board_name(x) for x in exclude_boards if str(x).strip()}
             
         all_articles = []
         page = 1
@@ -775,6 +804,29 @@ class NaverCafeCrawler:
                         
                         match = re.search(r'articleid=(\d+)', href) or re.search(r'/articles/(\d+)', href)
                         if not match: continue
+
+                        # 게시판 이름 추출 (전체글보기에서 컬럼으로 존재)
+                        board_name = ""
+                        board_selectors = [
+                            "a.board_name",
+                            "a[class*='board_name']",
+                            "td.td_board a",
+                            "a[href*='/menus/']",
+                        ]
+                        for bs in board_selectors:
+                            try:
+                                b_el = row.find_element(By.CSS_SELECTOR, bs)
+                                board_name = self._extract_text_from_element(b_el)
+                                if board_name:
+                                    break
+                            except:
+                                continue
+
+                        # 제외 게시판 필터
+                        if board_name and exclude_norm:
+                            bn = self._normalize_board_name(board_name)
+                            if bn in exclude_norm:
+                                continue
                         
                         # 작성자 정보 추출 (통합 ID 추출 엔진 적용)
                         member_id = "unknown"
@@ -807,7 +859,8 @@ class NaverCafeCrawler:
                             "url": href,
                             "title": title,
                             "date": date_val.strftime("%Y-%m-%d"),
-                            "nickname": nickname
+                            "nickname": nickname,
+                            "board_name": board_name,
                         })
                         page_found_count += 1
                         
@@ -848,6 +901,28 @@ class NaverCafeCrawler:
             api_author_nick = writer_info.get("nickname", "unknown")
             if api_author_id and api_author_id != "unknown":
                 post_author_id = api_author_id
+
+            # 게시판 이름 (상세에서 복구)
+            board_name = ""
+            try:
+                board_name_selectors = [
+                    "a.board_name",
+                    "a[href*='menuid=']",
+                    "a[href*='/menus/']",
+                    ".article_header a",
+                    ".ArticleTopInfo__boardName a",
+                ]
+                for sel in board_name_selectors:
+                    try:
+                        el = self.driver.find_element(By.CSS_SELECTOR, sel)
+                        t = self._extract_text_from_element(el)
+                        if t and len(t) <= 40 and "http" not in t.lower():
+                            board_name = t
+                            break
+                    except:
+                        continue
+            except:
+                pass
 
             # 게시글 닉네임은 API에서 비어있는 경우가 있어서, DOM에서 한번 더 복구
             if api_author_nick == "unknown":
@@ -923,7 +998,7 @@ class NaverCafeCrawler:
                                     "is_target": 1,
                                 }
                             )
-                    return {"content": content, "comments": filtered_comments, "member_id": post_author_id, "nickname": api_author_nick}
+                    return {"content": content, "comments": filtered_comments, "member_id": post_author_id, "nickname": api_author_nick, "board_name": board_name}
 
                 # 2) 실패 시 Selenium DOM 방식으로 폴백
                 comment_elements = self.driver.find_elements(By.CSS_SELECTOR, "li.CommentItem, .comment_list li, div[class*='Comment']")
@@ -954,11 +1029,325 @@ class NaverCafeCrawler:
                     except: continue
             except: pass
                 
-            return {"content": content, "comments": filtered_comments, "member_id": post_author_id, "nickname": api_author_nick}
+            return {"content": content, "comments": filtered_comments, "member_id": post_author_id, "nickname": api_author_nick, "board_name": board_name}
         except Exception as e:
-            return {"content": "", "comments": [], "member_id": post_author_id if post_author_id else "unknown", "nickname": "unknown"}
+            return {"content": "", "comments": [], "member_id": post_author_id if post_author_id else "unknown", "nickname": "unknown", "board_name": ""}
 
     def close(self):
         if self.driver:
             self.driver.quit()
             self.driver = None
+
+
+class VitaminDWikiCrawler:
+    """
+    VitaminDWiki 전수 조사 모드 크롤러 (requests + BeautifulSoup)
+    - 카테고리 목록 -> 카테고리 페이지 -> 아티클 페이지 순회
+    - visited 로 중복 방지
+    - Category는 breadcrumbs/catlinks(카테고리 태그)에서 파싱(키워드 매칭 X)
+    """
+
+    BASE = "https://vitamindwiki.com"
+    # 현재 사이트 구조 기준(2026-02): 아래 인덱스가 사실상 전수 목록 진입점
+    DEFAULT_INDEX_URL = "https://vitamindwiki.com/pages/health-problems-and-d/"
+    DEFAULT_SECONDARY_INDEX_URL = "https://vitamindwiki.com/pages/ways-to-improve-health/"
+
+    def __init__(self, delay_sec: float = 0.5, debug_mode: bool = False, max_retries: int = 3):
+        self.delay_sec = max(0.0, float(delay_sec))
+        self.debug_mode = debug_mode
+        self.max_retries = max(1, int(max_retries))
+        self.status_callback = None
+        self.session = requests.Session()
+        self.session.headers.update(
+            {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept-Language": "en-US,en;q=0.9,ko-KR;q=0.8,ko;q=0.7",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            }
+        )
+
+    def set_status_callback(self, callback):
+        self.status_callback = callback
+
+    def _update_status(self, message: str):
+        if self.status_callback:
+            self.status_callback(message)
+        else:
+            print(f"[INFO] {message}")
+
+    def _sleep(self, mult: float = 1.0):
+        if self.delay_sec <= 0:
+            return
+        jitter = random.uniform(0.0, 0.15)
+        time.sleep(self.delay_sec * mult + jitter)
+
+    def _normalize_url(self, url: str) -> str:
+        u = (url or "").strip()
+        if not u:
+            return ""
+        if u.startswith("//"):
+            u = "https:" + u
+        if u.startswith("/"):
+            u = self.BASE.rstrip("/") + u
+        # fragment 제거
+        u = u.split("#", 1)[0]
+        return u
+
+    def _is_internal_article_link(self, url: str) -> bool:
+        if not url:
+            return False
+        if not url.startswith(self.BASE):
+            return False
+        q = urlparse(url).query.lower()
+        if "print=" in q or "share=" in q:
+            return False
+        path = urlparse(url).path
+        return path.startswith("/pages/") or path.startswith("/tags/")
+
+    def _fetch_html(self, url: str) -> Optional[str]:
+        last_err = None
+        for attempt in range(self.max_retries):
+            try:
+                r = self.session.get(url, timeout=15)
+                if r.status_code == 200 and r.text:
+                    return r.text
+                if r.status_code in (429, 500, 502, 503, 504):
+                    last_err = f"HTTP {r.status_code}"
+                    self._sleep(mult=(attempt + 1) * 2.0)
+                    continue
+                last_err = f"HTTP {r.status_code}"
+                return None
+            except Exception as e:
+                last_err = str(e)
+                self._sleep(mult=(attempt + 1) * 2.0)
+                continue
+
+        if self.debug_mode and last_err:
+            self._update_status(f"[디버그] 요청 실패: {url} ({last_err})")
+        return None
+
+    def _soup(self, html: str) -> BeautifulSoup:
+        try:
+            return BeautifulSoup(html, "lxml")
+        except FeatureNotFound:
+            return BeautifulSoup(html, "html.parser")
+
+    def _extract_title(self, soup: BeautifulSoup) -> str:
+        t = soup.title.get_text(" ", strip=True) if soup.title else ""
+        return t.replace(" - VitaminDWiki", "").strip()
+
+    def _extract_summary(self, soup: BeautifulSoup, max_len: int = 800) -> str:
+        content = soup.select_one("article .markdown-content") or soup.select_one(".markdown-content") or soup.select_one("article")
+        if not content:
+            return ""
+        parts: List[str] = []
+        for p in content.select("p"):
+            txt = p.get_text(" ", strip=True)
+            # 빈 문단/광고/좌표 같은 잡문 방어
+            if not txt or len(txt) < 40:
+                continue
+            parts.append(txt)
+            if sum(len(x) for x in parts) >= max_len:
+                break
+        summary = " ".join(parts).strip()
+        summary = re.sub(r"\s+", " ", summary)
+        return summary[:max_len]
+
+    def _extract_full_content(self, soup: BeautifulSoup) -> str:
+        """
+        페이지 본문 전체 텍스트 추출(요약 아님).
+        - markdown-content 내의 텍스트를 최대한 그대로 가져온다.
+        """
+        content = soup.select_one("article .markdown-content") or soup.select_one(".markdown-content") or soup.select_one("article")
+        if not content:
+            return ""
+
+        # 불필요한 영역 제거
+        for sel in ["script", "style", "nav", "footer", ".toc", "#post-toc"]:
+            for el in content.select(sel):
+                try:
+                    el.decompose()
+                except:
+                    pass
+
+        text = content.get_text("\n", strip=True)
+        text = re.sub(r"\n{3,}", "\n\n", text).strip()
+        return text
+
+    def _extract_categories(self, soup: BeautifulSoup) -> List[str]:
+        cats: List[str] = []
+        for a in soup.select("div.tags a.tag, a.tag[href^='/tags/']"):
+            t = a.get_text(" ", strip=True)
+            if t:
+                cats.append(t.strip())
+
+        seen = set()
+        out: List[str] = []
+        for c in cats:
+            key = c.lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            out.append(c)
+        return out
+
+    def _extract_links(self, soup: BeautifulSoup, scope_selector: Optional[str] = None) -> List[str]:
+        scope = soup.select_one(scope_selector) if scope_selector else soup
+        if not scope:
+            return []
+        links = []
+        for a in scope.select("a[href]"):
+            href = a.get("href") or ""
+            href = self._normalize_url(href)
+            if not href:
+                continue
+            if self._is_internal_article_link(href):
+                links.append(href)
+        # dedupe keep order
+        seen = set()
+        out = []
+        for u in links:
+            if u in seen:
+                continue
+            seen.add(u)
+            out.append(u)
+        return out
+
+    def _is_tag_page(self, url: str) -> bool:
+        return urlparse(url).path.startswith("/tags/")
+
+    def _get_tag_name_from_url(self, url: str) -> str:
+        path = urlparse(url).path.rstrip("/")
+        parts = path.split("/")
+        if len(parts) >= 3 and parts[1] == "tags":
+            return parts[2]
+        return ""
+
+    def _extract_tag_members_and_pagination(self, soup: BeautifulSoup, base_url: str) -> tuple[List[str], List[str]]:
+        members: List[str] = []
+        pages: List[str] = []
+        for a in soup.select("a[href]"):
+            href = a.get("href") or ""
+            if not href:
+                continue
+            if href.startswith("/pages/"):
+                members.append(self._normalize_url(href))
+            if "?page=" in href:
+                if href.startswith("?"):
+                    pages.append(self._normalize_url(base_url + href))
+                else:
+                    pages.append(self._normalize_url(href))
+
+        def dedupe(xs: List[str]) -> List[str]:
+            s = set()
+            o = []
+            for x in xs:
+                if x in s:
+                    continue
+                s.add(x)
+                o.append(x)
+            return o
+
+        return dedupe(members), dedupe(pages)
+
+    def crawl_full(
+        self,
+        start_url: Optional[str] = None,
+        max_pages: Optional[int] = None,
+        initial_visited_urls: Optional[set[str]] = None,
+    ):
+        """
+        generator: paper(dict) yield
+        - max_pages: fetch limit (None이면 무제한)
+        """
+        seed = self._normalize_url(start_url or self.DEFAULT_INDEX_URL)
+        secondary = self._normalize_url(self.DEFAULT_SECONDARY_INDEX_URL)
+        q = deque([(seed, None), (secondary, None)])  # (url, context_category)
+        visited: set[str] = set()
+        # DB 기반 resume: 이미 수집한 /pages URL은 재방문하지 않음
+        if initial_visited_urls:
+            try:
+                for u in initial_visited_urls:
+                    nu = self._normalize_url(u)
+                    if nu:
+                        visited.add(nu)
+            except:
+                pass
+        fetched = 0
+
+        self._update_status(f"🔎 시작 URL: {seed}")
+
+        while q:
+            url, ctx_cat = q.popleft()
+            url = self._normalize_url(url)
+            if not url or url in visited:
+                continue
+            visited.add(url)
+
+            if max_pages is not None and fetched >= max_pages:
+                self._update_status(f"⛔ 최대 페이지 제한 도달: {max_pages} (중단)")
+                break
+
+            html = self._fetch_html(url)
+            fetched += 1
+            if not html:
+                if fetched < 5 or self.debug_mode:
+                    self._update_status(f"⚠️ 페이지 로드 실패: {url}")
+                continue
+
+            soup = self._soup(html)
+            title = self._extract_title(soup)
+
+            if fetched % 30 == 0:
+                self._update_status(f"⏳ 진행: {fetched}페이지 탐색 중... (큐 {len(q)}개)")
+
+            # 1) 태그 페이지(/tags/*): 글 링크 + ?page= 페이지네이션
+            if self._is_tag_page(url):
+                tag = self._get_tag_name_from_url(url)
+                members, pages = self._extract_tag_members_and_pagination(soup, url)
+                if fetched < 5:
+                    self._update_status(f"🏷️ 태그 '{tag}'에서 글 {len(members)}개 링크 발견")
+                for pu in pages:
+                    q.append((pu, tag))
+                for mu in members:
+                    q.append((mu, tag))
+                self._sleep()
+                continue
+
+            # 2) 모든 페이지에서 /pages 및 /tags 링크를 큐에 추가 (전수 스크롤 역할)
+            discovered_pages = 0
+            discovered_tags = 0
+            for a in soup.select("a[href]"):
+                href = a.get("href") or ""
+                if href.startswith("/pages/"):
+                    q.append((self._normalize_url(href), ctx_cat))
+                    discovered_pages += 1
+                elif href.startswith("/tags/"):
+                    q.append((self._normalize_url(href), None))
+                    discovered_tags += 1
+            if fetched <= 2:
+                self._update_status(f"🔗 링크 발견: /pages {discovered_pages}개, /tags {discovered_tags}개")
+
+            # 3) 일반 아티클 페이지: paper로 수집
+            cats = self._extract_categories(soup)
+            if ctx_cat and ctx_cat != "unknown":
+                ctx_readable = ctx_cat.replace("-", " ").strip()
+                if ctx_readable and all(ctx_readable.lower() != c.lower() for c in cats):
+                    cats = [ctx_readable] + cats
+            category_str = " | ".join(cats[:12])  # 너무 길어지는 것 방지
+            full_content = self._extract_full_content(soup)
+            # UI 표에는 미리보기용 요약이 있으면 편해서 유지(앞부분만 자름). "AI 요약"이 아님.
+            summary = self._extract_summary(soup)
+            collected_date = datetime.now().strftime("%Y-%m-%d")
+
+            paper = {
+                "title": title or url,
+                "summary": summary,
+                "content": full_content,
+                "url": url,
+                "category": category_str,
+                "collected_date": collected_date,
+            }
+            if urlparse(url).path.startswith("/pages/"):
+                yield paper
+            self._sleep()

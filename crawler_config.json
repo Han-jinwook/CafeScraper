@@ -1,15 +1,8 @@
 {
-  "chrome_profile_path": "C:\\Users\\chichi\\AppData\\Local\\Google\\Chrome",
-  "crawl_mode": "작성자별 수집",
-  "cafe_url": "https://cafe.naver.com/vpqtnl",
-  "max_pages": 5,
-  "cutoff_date": "2026-01-19",
-  "board_mode": null,
-  "board_url": null,
-  "author_nickname": "마법사멀린",
-  "search_keyword": null,
-  "comment_author_nickname": null,
-  "exclude_own_posts": null,
-  "include_nicks": "마법사멀린",
-  "exclude_nicks": ""
+    "admin_nicks": "마법사멀린, 멀린스타크, 멀린",
+    "exclude_boards": "공지&이벤트\n자유 게시판\n먹거리 / 맛집\n멘토단 전용 (중상급자)\n음악 웃음 힐링\n제품사은품후기\n진급축하 / 진급문의\n회원상품 홍보\n(조사기)중고 직거래\n썬드림 앱's",
+    "start_date": "2026-02-01",
+    "end_date": "2026-02-04",
+    "cafe_url": "https://cafe.naver.com/sundreamd",
+    "board_url": "https://cafe.naver.com/f-e/cafes/27870803/menus/0?viewType=L"
 }

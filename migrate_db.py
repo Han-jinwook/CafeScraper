@@ -61,6 +61,42 @@ def migrate_db():
                 print("[ADD] is_target 컬럼 추가 중...")
                 cursor.execute("ALTER TABLE comments ADD COLUMN is_target INTEGER DEFAULT 0")
                 print("[OK] is_target 컬럼 추가 완료!")
+
+        # posts 테이블에 board_name 컬럼이 없으면 추가 (구버전 DB 호환)
+        cursor.execute("PRAGMA table_info(posts)")
+        post_columns = [col[1] for col in cursor.fetchall()]
+        if "board_name" in post_columns:
+            print("[OK] posts.board_name 컬럼이 이미 존재합니다.")
+        else:
+            print("[ADD] posts.board_name 컬럼 추가 중...")
+            cursor.execute("ALTER TABLE posts ADD COLUMN board_name TEXT DEFAULT ''")
+            print("[OK] posts.board_name 컬럼 추가 완료!")
+
+        # 2. papers 테이블 생성 (VitaminDWiki 전수 조사 모드)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS papers (
+                url TEXT PRIMARY KEY,
+                title TEXT,
+                summary TEXT,
+                content TEXT,
+                category TEXT,
+                collected_date TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        print("[OK] papers 테이블 확인/생성 완료")
+
+        # papers.content 컬럼이 구 DB에 없으면 추가 + 기존 summary를 content로 백필
+        cursor.execute("PRAGMA table_info(papers)")
+        paper_cols = [col[1] for col in cursor.fetchall()]
+        if "content" in paper_cols:
+            print("[OK] papers.content 컬럼이 이미 존재합니다.")
+        else:
+            print("[ADD] papers.content 컬럼 추가 중...")
+            cursor.execute("ALTER TABLE papers ADD COLUMN content TEXT")
+            # 기존 summary에 들어있던 텍스트를 그대로 content로 옮겨서 데이터 보존
+            cursor.execute("UPDATE papers SET content = summary WHERE content IS NULL OR content = ''")
+            print("[OK] papers.content 컬럼 추가 및 백필 완료")
         
         conn.commit()
         print(f"[SUCCESS] 마이그레이션 완료: {os.path.abspath(db_path)}")

@@ -7,6 +7,7 @@ import sys
 import time
 import random
 import json
+from pathlib import Path
 from crawler import NaverCafeCrawler
 from app.utils.sqlite_db import init_db
 
@@ -34,12 +35,13 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# DB 및 설정 파일 경로
-DB_PATH = "cafe_data.db"
-CONFIG_PATH = "crawler_config.json"
+# 프로젝트 루트 기준 경로 고정 (실행 위치가 달라도 DB/설정이 안 갈라지게)
+BASE_DIR = Path(__file__).resolve().parent
+DB_PATH = str(BASE_DIR / "cafe_data.db")
+CONFIG_PATH = str(BASE_DIR / "crawler_config.json")
 
-if not os.path.exists(DB_PATH):
-    init_db(DB_PATH)
+# 기존 DB가 있어도 CREATE TABLE IF NOT EXISTS는 안전하므로 항상 보장
+init_db(DB_PATH)
 
 def load_config():
     if os.path.exists(CONFIG_PATH):
@@ -108,6 +110,28 @@ if "debug_mode" not in st.session_state:
 
 # UI 구성
 st.title("🌅 Project DAYBREAK: 네이버 카페 전략 크롤러")
+def _go_to_papers_page():
+    # 1) switch_page (가장 정상적인 방법)
+    try:
+        st.switch_page("pages/2_papers.py")
+        return
+    except Exception:
+        pass
+
+    st.error(
+        "논문 페이지로 이동할 수 없습니다. "
+        "Streamlit이 새 `pages/` 파일을 아직 인식하지 못한 상태일 수 있어요.\n\n"
+        "해결: 실행 중인 Streamlit을 완전히 종료(Ctrl+C)한 뒤 `streamlit run app.py`로 재실행하세요."
+    )
+
+
+col_nav1, col_nav2 = st.columns([1, 3])
+with col_nav1:
+    if st.button("📚 논문 수집", use_container_width=True):
+        _go_to_papers_page()
+with col_nav2:
+    # page_link는 특정 환경에서 KeyError(url_pathname)로 앱을 죽여서 기본 사용은 보류
+    st.caption("페이지 목록이 안 보이면 Streamlit 재시작이 필요할 수 있습니다.")
 st.markdown("---")
 
 # 실시간 로그 출력을 위한 placeholder (사이드바 아래 또는 메인에 배치)
@@ -120,7 +144,7 @@ def update_logs(msg=None):
         st.session_state.status_messages.append(log_entry)
         
         # 로그를 파일로도 저장 (영구 보관)
-        log_dir = os.path.join(os.getcwd(), "logs")
+        log_dir = str(BASE_DIR / "logs")
         os.makedirs(log_dir, exist_ok=True)
         log_file = os.path.join(log_dir, f"crawler_{datetime.now().strftime('%Y%m%d')}.log")
         
@@ -145,6 +169,27 @@ config = load_config()
 with st.sidebar:
     st.header("⚙️ 설정")
     admin_nicks = st.text_area("운영자 닉네임 (쉼표로 구분)", value=config.get("admin_nicks", "마법사멀린, 멀린스타크, 멀린"))
+
+    st.subheader("🚫 제외 게시판")
+    default_exclude = "\n".join(
+        [
+            "공지&이벤트",
+            "자유 게시판",
+            "먹거리 / 맛집",
+            "멘토단 전용 (중상급자)",
+            "음악 웃음 힐링",
+            "제품사은품후기",
+            "진급축하 / 진급문의",
+            "회원상품 홍보",
+            "(조사기)중고 직거래",
+            "썬드림 앱's",
+        ]
+    )
+    exclude_boards_text = st.text_area(
+        "줄바꿈으로 구분 (해당 게시판은 수집 대상에서 제외)",
+        value=config.get("exclude_boards", default_exclude),
+        height=180,
+    )
     
     st.subheader("📅 수집 기간")
     st.info("💡 11년치 수집 시 1년 단위로 끊어서 진행하는 것을 권장합니다.")
@@ -174,6 +219,7 @@ with st.sidebar:
     if st.button("💾 설정 저장", use_container_width=True):
         new_config = {
             "admin_nicks": admin_nicks,
+            "exclude_boards": exclude_boards_text,
             "start_date": start_date.strftime("%Y-%m-%d"),
             "end_date": end_date.strftime("%Y-%m-%d"),
             "cafe_url": cafe_url,
@@ -260,7 +306,8 @@ with step_col2:
             
             # 1단계: 리스트 수집
             update_logs("🔍 1단계: 대상 게시글 목록 확보 시작...")
-            articles = st.session_state.crawler.scrape_board_list(board_url, start_dt, end_dt)
+            exclude_boards = [x.strip() for x in (exclude_boards_text or "").splitlines() if x.strip()]
+            articles = st.session_state.crawler.scrape_board_list(board_url, start_dt, end_dt, exclude_boards=exclude_boards)
             
             if articles:
                 update_logs(f"✅ 총 {len(articles)}개의 대상 게시글을 찾았습니다.")
@@ -298,6 +345,9 @@ with step_col2:
                             # 게시글 리스트에서 닉네임 unknown인 경우, 상세(API) 닉네임으로 보강
                             if (not art.get("nickname") or art.get("nickname") == "unknown") and detail.get("nickname") and detail.get("nickname") != "unknown":
                                 art["nickname"] = detail["nickname"]
+                            # 게시판 이름 보강
+                            if (not art.get("board_name")) and detail.get("board_name"):
+                                art["board_name"] = detail["board_name"]
                             
                             save_to_sqlite(art, detail['comments'])
                             update_logs(f"✅ '{art['title'][:20]}...' 저장 완료")
