@@ -1,1400 +1,964 @@
 """
-네이버 카페 크롤러 - 로컬 GUI 애플리케이션용
-Selenium을 사용하여 로컬 크롬 브라우저를 제어
+네이버 카페 크롤러 - Project DAYBREAK (최종 복구 및 ID 추출 강화 버전)
 """
 import os
 import time
 import random
-import json
-import base64
 import re
+import pickle
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Dict, Any
-from selenium import webdriver
+from urllib.parse import urlparse, parse_qs
+import json
+import requests
+import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
-from webdriver_manager.chrome import ChromeDriverManager
-from bs4 import BeautifulSoup
-import requests
-
-# 크롬 프로필 경로 (사용자가 설정)
-CHROME_PROFILE_PATH = ""  # 예: r"C:\Users\사용자명\AppData\Local\Google\Chrome\User Data"
-
 
 class NaverCafeCrawler:
-    """네이버 카페 크롤러 - 로컬 크롬 프로필 사용"""
-    
-    def __init__(self, chrome_profile_path: str = "", output_dir: str = "outputs"):
-        """
-        Args:
-            chrome_profile_path: 크롬 프로필 경로 (user-data-dir)
-            output_dir: 결과 저장 디렉토리
-        """
+    def __init__(self, chrome_profile_path: str = "", output_dir: str = "outputs", debug_mode: bool = False):
         self.chrome_profile_path = chrome_profile_path
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
-        
-        self.driver: Optional[webdriver.Chrome] = None
-        self.status_callback = None  # Streamlit 상태 업데이트용 콜백
-        
+        self.driver: Optional[uc.Chrome] = None
+        self.status_callback = None
+        self.admin_nickname = "멀린"
+        self.debug_mode = debug_mode
+
     def set_status_callback(self, callback):
-        """상태 업데이트 콜백 함수 설정"""
         self.status_callback = callback
     
     def _update_status(self, message: str):
-        """상태 메시지 업데이트"""
         if self.status_callback:
             self.status_callback(message)
         else:
             print(f"[INFO] {message}")
-    
+
+    def _extract_id_from_element(self, element) -> str:
+        """요소에서 Naver ID (member_id)를 추출하는 통합 엔진"""
+        try:
+            # 1. onclick 속성 분석 (가장 정확)
+            onclick = element.get_attribute("onclick") or ""
+            patterns = [
+                r"ui\(.*?'(.*?)'", 
+                r"memberid['\s]*[:=]['\s]*([^'\"]+)",
+                r"showMemberLayer\([^,]+,\s*'([^']+)'",
+                r"openMemberInfo\(['\"]([^'\"]+)['\"]",
+                r"memberId['\s]*[:=]['\s]*([^'\"]+)"
+            ]
+            for pattern in patterns:
+                match = re.search(pattern, onclick)
+                if match: return match.group(1)
+            
+            # 2. href 속성 분석 (백업)
+            href = element.get_attribute("href") or ""
+            # blogId=... 형태가 제일 "정직"한 ID
+            try:
+                parsed = urlparse(href)
+                q = parse_qs(parsed.query)
+                if "blogId" in q and q["blogId"] and q["blogId"][0]:
+                    return q["blogId"][0]
+            except:
+                pass
+            href_patterns = [
+                r"memberid=([^&]+)",
+                r"/members/([^/?#]+)",
+                r"memberId=([^&]+)",
+                r"cafe.naver.com/ca-fe/cafes/\d+/members/([^/?#]+)"
+            ]
+            for pattern in href_patterns:
+                match = re.search(pattern, href, re.I)
+                if match: return match.group(1)
+                
+            # 3. data 속성 확인
+            for attr in ["data-member-id", "data-userid", "data-id"]:
+                val = element.get_attribute(attr)
+                if val: return val
+        except: pass
+        return "unknown"
+
+    def _clean_text(self, s: str) -> str:
+        if not s:
+            return ""
+        return re.sub(r"\s+", " ", str(s)).strip()
+
+    def _normalize_nickname(self, nick: str) -> str:
+        """
+        닉네임 텍스트에서 UI 군더더기 제거.
+        예) "봄의향기를 님의 게시글 더보기" -> "봄의향기를"
+        """
+        n = self._clean_text(nick or "")
+        if not n:
+            return ""
+
+        # "X 님의 ..." 형태 제거
+        m = re.match(r"^(.+?)\s*님의\s+.+$", n)
+        if m:
+            return self._clean_text(m.group(1))
+
+        # "X 님 게시글/댓글 ..." 형태(드물게) 제거
+        if any(token in n for token in ["더보기", "게시글", "댓글", "프로필", "보기"]):
+            m2 = re.match(r"^(.+?)\s*님\s+.+$", n)
+            if m2:
+                return self._clean_text(m2.group(1))
+
+        return n
+
+    def _extract_text_from_element(self, element) -> str:
+        """Selenium 요소에서 표시 텍스트를 최대한 복구(React/SPA 대비)."""
+        if not element:
+            return ""
+        try:
+            t = self._clean_text(element.text or "")
+            if t:
+                return self._normalize_nickname(t)
+        except:
+            pass
+
+        for attr in ["textContent", "innerText", "title", "aria-label", "data-nickname", "data-name"]:
+            try:
+                v = element.get_attribute(attr)
+                v = self._clean_text(v or "")
+                if v:
+                    return self._normalize_nickname(v)
+            except:
+                continue
+        return ""
+
+    def _deep_find_first_string(self, obj: Any, key_hints: List[str], max_depth: int = 5) -> str:
+        """
+        dict/list 중첩에서 key_hints(부분 문자열 포함)로 첫 문자열 값을 찾는다.
+        - key_hints: ["nick", "name"] 처럼 힌트
+        """
+        try:
+            key_hints_l = [k.lower() for k in key_hints]
+            seen = set()
+            q = [(obj, 0)]
+            while q:
+                cur, depth = q.pop(0)
+                if id(cur) in seen:
+                    continue
+                seen.add(id(cur))
+                if depth > max_depth:
+                    continue
+                if isinstance(cur, dict):
+                    for k, v in cur.items():
+                        kl = str(k).lower()
+                        if any(h in kl for h in key_hints_l):
+                            if isinstance(v, str) and self._clean_text(v):
+                                return self._clean_text(v)
+                        if isinstance(v, (dict, list)):
+                            q.append((v, depth + 1))
+                elif isinstance(cur, list):
+                    for v in cur:
+                        if isinstance(v, (dict, list)):
+                            q.append((v, depth + 1))
+        except:
+            pass
+        return ""
+
+    def _strip_healing_diary_preamble(self, content: str) -> str:
+        """
+        '치유일기'류 게시글에 포함되는 고정 안내문을 본문에서 제거.
+        - 성능 부담 거의 없음(문자열 탐색/슬라이싱만 수행)
+        - 오탐 방지: 본문 앞부분에서 특정 키워드/문구가 여러 개 동시에 감지될 때만 동작
+        """
+        text = content or ""
+        if not text.strip():
+            return content
+
+        head = text[:1200]  # 앞부분에서만 판별/절단
+        must = ["최초 치유기록", "필수"]
+        hints = [
+            "가족 여러명의 치유일기",
+            "기본조사",
+            "집중조사",
+            "조사방법",
+            "피부질환의 경우",
+            "노샤노보",
+            "냉포마찰",
+        ]
+
+        if not all(m in head for m in must):
+            return content
+
+        hint_hits = sum(1 for h in hints if h in head)
+        if hint_hits < 2:
+            return content
+
+        # 구분선(----) 기준으로 안전하게 자르기
+        m = re.search(r"\n\s*-{5,}\s*\n", head)
+        if m:
+            return (text[m.end():]).lstrip()
+
+        # 구분선이 없으면, 첫 몇 줄에서 안내문 라인들을 제거(보수적으로)
+        lines = text.splitlines()
+        drop_phrases = [
+            "최초 치유기록에는",
+            "가족 여러명의 치유일기인 경우",
+            "기본조사",
+            "(피부질환의 경우",
+        ]
+        new_lines = []
+        dropped = 0
+        for i, line in enumerate(lines):
+            if i < 12 and any(p in line for p in drop_phrases):
+                dropped += 1
+                continue
+            new_lines.append(line)
+
+        if dropped >= 2:
+            return "\n".join(new_lines).lstrip()
+        return content
+
+    def _get_user_agent(self) -> str:
+        try:
+            if self.driver:
+                ua = self.driver.execute_script("return navigator.userAgent;")
+                if isinstance(ua, str) and ua.strip():
+                    return ua.strip()
+        except:
+            pass
+        return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+    def _build_requests_session_from_driver(self) -> requests.Session:
+        s = requests.Session()
+        s.headers.update(
+            {
+                "User-Agent": self._get_user_agent(),
+                "Accept": "application/json, text/plain, */*",
+                "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+            }
+        )
+        if not self.driver:
+            return s
+
+        try:
+            for c in self.driver.get_cookies():
+                try:
+                    s.cookies.set(
+                        c.get("name"),
+                        c.get("value"),
+                        domain=c.get("domain"),
+                        path=c.get("path", "/"),
+                    )
+                except:
+                    continue
+        except:
+            pass
+        return s
+
+    def _parse_club_article_ids(self, article_url: str) -> tuple[Optional[str], Optional[str]]:
+        try:
+            normalized = self._normalize_article_url(article_url or "")
+            if "ArticleRead.nhn" in normalized:
+                parsed = urlparse(normalized)
+                q = parse_qs(parsed.query)
+                club_id = q.get("clubid", [None])[0]
+                article_id = q.get("articleid", [None])[0]
+                if club_id and article_id:
+                    return str(club_id), str(article_id)
+
+            m = re.search(r"/cafes/(\d+)/articles/(\d+)", normalized)
+            if m:
+                return m.group(1), m.group(2)
+        except:
+            pass
+        return None, None
+
+    def _get_member_id_via_api(self, club_id: Optional[str], article_id: Optional[str]) -> str:
+        """전략 2: apis.naver.com 모바일 API로 작성자 ID 추출 (상세 수집용)"""
+        if not club_id or not article_id:
+            return "unknown"
+        try:
+            info = self._get_writer_info_via_article_api(club_id, article_id)
+            mid = info.get("member_id", "unknown")
+            return mid if mid else "unknown"
+        except Exception as e:
+            if self.debug_mode:
+                self._update_status(f"[디버그] API member_id 추출 실패: {e}")
+        return "unknown"
+
+    def _get_writer_info_via_article_api(self, club_id: Optional[str], article_id: Optional[str]) -> Dict[str, str]:
+        """
+        게시글 작성자 원본 정보(API 기반).
+        - member_id: 네이버가 쓰는 긴 고유키(MemberKey 계열 포함)
+        - nickname: 표시 닉네임
+        """
+        out = {"member_id": "unknown", "nickname": "unknown"}
+        if not club_id or not article_id:
+            return out
+        try:
+            s = self._build_requests_session_from_driver()
+            url = f"https://apis.naver.com/cafe-web/cafe-article/v1/articles/{article_id}?useCafeId=false&buid={club_id}"
+            headers = {
+                "Referer": f"https://m.cafe.naver.com/ca-fe/web/cafes/{club_id}/articles/{article_id}",
+                "Origin": "https://m.cafe.naver.com",
+            }
+            r = s.get(url, headers=headers, timeout=10)
+            if r.status_code != 200:
+                return out
+
+            data = r.json()
+            writer = (
+                data.get("result", {})
+                .get("article", {})
+                .get("writer", {})
+            )
+            if not isinstance(writer, dict):
+                return out
+
+            # ID/Key 후보군(서비스 개편으로 필드명이 바뀌는 케이스 방어)
+            for k in ["id", "memberId", "memberKey", "writerId", "userId", "blogId"]:
+                v = writer.get(k)
+                if isinstance(v, str) and v.strip():
+                    out["member_id"] = v.strip()
+                    break
+
+            for k in ["nickname", "nickName", "writerNick", "writerName", "displayName", "name"]:
+                v = writer.get(k)
+                if isinstance(v, str) and v.strip():
+                    out["nickname"] = v.strip()
+                    break
+
+            # 중첩 구조까지 탐색 (최근 구조 변경 대응)
+            if out["nickname"] == "unknown":
+                found = self._deep_find_first_string(writer, ["nick", "nickname", "display", "name"])
+                if found:
+                    out["nickname"] = found
+        except Exception as e:
+            if self.debug_mode:
+                self._update_status(f"[디버그] API writer 정보 추출 실패: {e}")
+        return out
+
+    def _get_comments_via_commentview(self, club_id: Optional[str], article_id: Optional[str]) -> Optional[List[Dict[str, Any]]]:
+        """
+        댓글 JSON 우회 추출.
+        - 구형이지만 여전히 많이 살아있는 엔드포인트: CommentView.nhn
+        - 반환 형태: [{"writer_id":..., "nickname":..., "content":...}, ...]
+        """
+        if not club_id or not article_id:
+            return None
+        try:
+            s = self._build_requests_session_from_driver()
+            url = f"https://cafe.naver.com/CommentView.nhn?search.clubid={club_id}&search.articleid={article_id}"
+            headers = {
+                "Referer": f"https://cafe.naver.com/ArticleRead.nhn?clubid={club_id}&articleid={article_id}",
+            }
+            r = s.get(url, headers=headers, timeout=10)
+            if r.status_code != 200:
+                return None
+
+            # JSON / JSONP 모두 방어
+            data = None
+            try:
+                data = r.json()
+            except:
+                txt = (r.text or "").strip()
+                # 예: callback({...})
+                m = re.search(r"\((\{.*\})\)\s*;?\s*$", txt, re.S)
+                if m:
+                    data = json.loads(m.group(1))
+                else:
+                    # 그냥 JSON 본문일 수 있음
+                    data = json.loads(txt)
+
+            result = data.get("result") if isinstance(data, dict) else None
+            items = None
+            if isinstance(result, dict):
+                items = result.get("list") or result.get("commentList") or result.get("comments")
+            if not isinstance(items, list):
+                return None
+
+            out: List[Dict[str, Any]] = []
+            for it in items:
+                if not isinstance(it, dict):
+                    continue
+                # writer id 키 변형 방어
+                writer_id = (
+                    it.get("writerId")
+                    or it.get("writer_id")
+                    or it.get("writerid")
+                    or it.get("memberKey")
+                    or it.get("writerMemberKey")
+                    or it.get("userKey")
+                    or it.get("memberId")
+                    or it.get("member_id")
+                    or it.get("userId")
+                    or it.get("userid")
+                    or "unknown"
+                )
+                nickname = (
+                    it.get("writerNick")
+                    or it.get("writer_nick")
+                    or it.get("nickName")
+                    or it.get("nickname")
+                    or it.get("writerName")
+                    or it.get("name")
+                    or "unknown"
+                )
+                if nickname == "unknown":
+                    found = self._deep_find_first_string(it, ["nick", "nickname", "writerNick", "name"])
+                    if found:
+                        nickname = found
+                content = (
+                    it.get("content")
+                    or it.get("commentContent")
+                    or it.get("comment")
+                    or it.get("text")
+                    or ""
+                )
+                # html이 섞여 들어오는 경우 방어: 태그 제거(대충)
+                if isinstance(content, str) and "<" in content and ">" in content:
+                    content = re.sub(r"<[^>]+>", " ", content)
+                    content = re.sub(r"\s+", " ", content).strip()
+
+                out.append(
+                    {
+                        "writer_id": str(writer_id) if writer_id is not None else "unknown",
+                        "nickname": str(nickname) if nickname is not None else "unknown",
+                        "content": str(content) if content is not None else "",
+                    }
+                )
+
+            return out
+        except Exception as e:
+            if self.debug_mode:
+                self._update_status(f"[디버그] CommentView 댓글 추출 실패: {e}")
+            return None
+
+    def _get_member_id_via_js_state(self) -> str:
+        """전략 3: SPA 전역 상태/Next.js 데이터에서 writer id 추출"""
+        if not self.driver:
+            return "unknown"
+        try:
+            js = r"""
+                try {
+                    // legacy
+                    if (window.g_sUserId && typeof window.g_sUserId === "string") return window.g_sUserId;
+
+                    // common SPA states
+                    const candidates = [];
+                    if (window.__INITIAL_STATE__) candidates.push(window.__INITIAL_STATE__);
+                    if (window.__NEXT_DATA__) candidates.push(window.__NEXT_DATA__);
+                    if (window.__APOLLO_STATE__) candidates.push(window.__APOLLO_STATE__);
+
+                    function dig(obj, depth) {
+                        if (!obj || depth > 6) return null;
+                        if (typeof obj === "string") return null;
+                        if (obj.writer && obj.writer.id && typeof obj.writer.id === "string") return obj.writer.id;
+                        if (obj.article && obj.article.writer && obj.article.writer.id && typeof obj.article.writer.id === "string") return obj.article.writer.id;
+                        if (obj.result && obj.result.article && obj.result.article.writer && obj.result.article.writer.id && typeof obj.result.article.writer.id === "string") return obj.result.article.writer.id;
+                        // shallow scan
+                        for (const k in obj) {
+                            if (!Object.prototype.hasOwnProperty.call(obj, k)) continue;
+                            const v = obj[k];
+                            if (v && typeof v === "object") {
+                                const found = dig(v, depth + 1);
+                                if (found) return found;
+                            }
+                        }
+                        return null;
+                    }
+
+                    for (const root of candidates) {
+                        const found = dig(root, 0);
+                        if (found) return found;
+                    }
+                    return null;
+                } catch (e) { return null; }
+            """
+            mid = self.driver.execute_script(js)
+            if isinstance(mid, str) and mid.strip():
+                return mid.strip()
+        except Exception as e:
+            if self.debug_mode:
+                self._update_status(f"[디버그] JS state member_id 추출 실패: {e}")
+        return "unknown"
+
+    def _get_member_id_via_layer(self, nickname_element) -> str:
+        """전략 1: 닉네임 클릭 → 작성자 레이어에서 blogId 파싱 (리스트/댓글에서 특히 유용)"""
+        if not self.driver or not nickname_element:
+            return "unknown"
+
+        before_handles = []
+        try:
+            before_handles = list(self.driver.window_handles)
+        except:
+            before_handles = []
+
+        try:
+            # 클릭 안정화: 스크롤 + ActionChains + JS click 백업
+            try:
+                self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", nickname_element)
+            except:
+                pass
+
+            clicked = False
+            try:
+                ActionChains(self.driver).move_to_element(nickname_element).pause(0.05).click(nickname_element).perform()
+                clicked = True
+            except:
+                pass
+            if not clicked:
+                try:
+                    nickname_element.click()
+                    clicked = True
+                except:
+                    pass
+            if not clicked:
+                try:
+                    self.driver.execute_script("arguments[0].click();", nickname_element)
+                    clicked = True
+                except:
+                    pass
+
+            if not clicked:
+                return "unknown"
+
+            # 새 창이 뜨는 케이스 방어 (간혹 블로그로 바로 열림)
+            try:
+                time.sleep(0.15)
+                after_handles = list(self.driver.window_handles)
+                new_handles = [h for h in after_handles if h not in before_handles]
+                if new_handles:
+                    # 새 창은 닫고 원래 창으로 복귀
+                    for h in new_handles:
+                        try:
+                            self.driver.switch_to.window(h)
+                            self.driver.close()
+                        except:
+                            pass
+                    if before_handles:
+                        self.driver.switch_to.window(before_handles[0])
+            except:
+                pass
+
+            wait = WebDriverWait(self.driver, 3)
+
+            # 레이어 후보 셀렉터들을 순차 대기/탐색
+            layer = None
+            layer_selectors = [
+                "div.per_layer ul.layer_list",
+                "div.per_layer",
+                "ul.layer_list",
+                "div[class*='per_layer']",
+                "div[class*='layer'] ul",
+            ]
+
+            for sel in layer_selectors:
+                try:
+                    layer = wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, sel)))
+                    if layer:
+                        break
+                except:
+                    continue
+
+            if not layer:
+                return "unknown"
+
+            # blogId가 담긴 링크 우선
+            link_hrefs: List[str] = []
+            try:
+                for a in layer.find_elements(By.CSS_SELECTOR, "a"):
+                    href = a.get_attribute("href") or ""
+                    if href:
+                        link_hrefs.append(href)
+            except:
+                pass
+
+            # 1) blogId= 우선 파싱
+            for href in link_hrefs:
+                try:
+                    parsed = urlparse(href)
+                    q = parse_qs(parsed.query)
+                    if "blogId" in q and q["blogId"] and q["blogId"][0]:
+                        return q["blogId"][0]
+                except:
+                    continue
+
+            # 2) 회원/작성자 링크에서 memberId/memberid 추출 백업
+            for href in link_hrefs:
+                try:
+                    m = re.search(r"(?:memberid|memberId)=([^&]+)", href, re.I)
+                    if m:
+                        return m.group(1)
+                except:
+                    continue
+
+        except Exception as e:
+            if self.debug_mode:
+                self._update_status(f"[디버그] 레이어 click 추출 실패: {e}")
+        finally:
+            # 레이어 닫기 (ESC) - 다음 동작 방해 방지
+            try:
+                body = self.driver.find_element(By.TAG_NAME, "body")
+                body.send_keys(Keys.ESCAPE)
+            except:
+                pass
+        return "unknown"
+
+    def _extract_member_id_from_nick(self, nick_el, prefer_layer: bool = False) -> str:
+        """닉네임 요소에서 member_id를 하이브리드로 추출"""
+        mid = "unknown"
+        try:
+            if nick_el:
+                mid = self._extract_id_from_element(nick_el)
+        except:
+            mid = "unknown"
+        if mid != "unknown":
+            return mid
+
+        if prefer_layer:
+            mid = self._get_member_id_via_layer(nick_el)
+            if mid != "unknown":
+                return mid
+
+        # 마지막 백업: JS 상태값 (상세 페이지에서 더 유효)
+        mid = self._get_member_id_via_js_state()
+        return mid if mid else "unknown"
+
     def start_browser(self) -> None:
-        """크롬 브라우저 시작 (헤드리스 모드 없음, 로컬 프로필 사용)"""
         if self.driver:
             self._update_status("브라우저가 이미 실행 중입니다.")
             return
         
         try:
-            self._update_status("크롬 브라우저 시작 중...")
+            self._update_status("🚀 undetected-chromedriver로 크롬 브라우저 시작 중...")
             
-            chrome_options = Options()
+            # undetected_chromedriver 옵션 설정
+            options = uc.ChromeOptions()
+            options.add_argument("--start-maximized")
+            options.add_argument("--disable-gpu")
+            options.add_argument("--no-sandbox")
+            options.add_argument("--disable-dev-shm-usage")
             
-            # 로컬 크롬 프로필 사용
-            # 주의: 크롬이 이미 실행 중이면 프로필을 사용할 수 없습니다
-            # --user-data-dir은 Chrome 폴더를 지정해야 합니다 (User Data의 부모)
-            if self.chrome_profile_path and os.path.exists(self.chrome_profile_path):
-                # 프로필 경로를 직접 사용 (크롬이 종료된 상태여야 함)
-                # 경로가 User Data 폴더인지 확인하고, 그렇다면 부모 디렉토리로 변경
-                profile_path = self.chrome_profile_path
-                if profile_path.endswith("User Data") or os.path.basename(profile_path) == "User Data":
-                    # User Data 폴더가 지정된 경우, 부모 디렉토리(Chrome 폴더)로 변경
-                    profile_path = os.path.dirname(profile_path)
-                    self._update_status(f"⚠️ User Data 폴더 대신 Chrome 폴더를 사용합니다: {profile_path}")
-                
-                chrome_options.add_argument(f"--user-data-dir={profile_path}")
-                self._update_status(f"크롬 프로필 사용: {profile_path}")
-                self._update_status("⚠️ 크롬이 이미 실행 중이면 프로필을 사용할 수 없습니다.")
-                self._update_status("💡 크롬을 완전히 종료(Ctrl+Shift+Q 또는 작업 관리자에서 종료)한 후 다시 시도하세요.")
-            else:
-                # 프로필 경로가 없으면 기본 프로필 사용 (임시 프로필)
-                import tempfile
-                temp_profile = tempfile.mkdtemp(prefix="chrome_temp_")
-                chrome_options.add_argument(f"--user-data-dir={temp_profile}")
-                self._update_status(f"임시 프로필 사용: {temp_profile}")
-                self._update_status("⚠️ 로그인 정보는 저장되지 않습니다. 크롬 프로필 경로를 설정하세요.")
+            # undetected_chromedriver 인스턴스 생성 (자동화 탐지 우회)
+            # version_main=144로 현재 Chrome 버전 명시
+            # use_subprocess=True: 멀티프로세싱 에러 방지
+            self.driver = uc.Chrome(options=options, version_main=144, use_subprocess=True)
+            self.driver.set_page_load_timeout(30)
             
-            # 헤드리스 모드 제거 (브라우저가 보이게) - 명시적으로 설정
-            # chrome_options.add_argument("--headless")  # 절대 사용하지 않음
-            
-            # 기본 옵션 (강화된 Stealth 설정)
-            chrome_options.add_argument("--no-sandbox")
-            chrome_options.add_argument("--disable-dev-shm-usage")
-            chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-            chrome_options.add_argument("--disable-infobars")
-            chrome_options.add_argument("--disable-extensions")
-            
-            # 자동화 표시 제거
-            chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-            chrome_options.add_experimental_option("useAutomationExtension", False)
-            
-            # 가속 및 로그 끄기
-            chrome_options.add_argument("--disable-gpu")
-            chrome_options.add_argument("--log-level=3")
-            chrome_options.add_argument("--silent")
-            
-            # User-Agent 설정 (최신 Chrome 버전)
-            chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
-            
-            # 창 크기 설정
-            chrome_options.add_argument("--start-maximized")
-            chrome_options.add_argument("--window-size=1920,1080")
-            
-            self._update_status("WebDriver 초기화 중...")
-            self._update_status("ChromeDriver 다운로드/확인 중... (처음 실행 시 시간이 걸릴 수 있습니다)")
-            
-            # WebDriver 초기화
-            try:
-                # ChromeDriverManager에 타임아웃 설정
-                import signal
-                
-                def timeout_handler(signum, frame):
-                    raise TimeoutError("ChromeDriver 설치 시간 초과")
-                
-                # ChromeDriver 경로 확인
-                self._update_status("ChromeDriver 경로 확인 중...")
-                try:
-                    import time as time_module
-                    start_time = time_module.time()
-                    driver_path = ChromeDriverManager().install()
-                    elapsed = time_module.time() - start_time
-                    self._update_status(f"✅ ChromeDriver 경로: {driver_path}")
-                    self._update_status(f"⏱️ ChromeDriver 확인 시간: {elapsed:.2f}초")
-                except Exception as driver_mgr_error:
-                    error_msg = str(driver_mgr_error)
-                    self._update_status(f"❌ ChromeDriverManager 오류: {error_msg}")
-                    import traceback
-                    self._update_status(f"상세 오류:\n{traceback.format_exc()}")
-                    self._update_status("💡 ChromeDriver를 수동으로 설치하거나 인터넷 연결을 확인하세요.")
-                    raise
-                
-                service = Service(driver_path)
-                self._update_status("Chrome WebDriver 인스턴스 생성 중...")
-                self.driver = webdriver.Chrome(service=service, options=chrome_options)
-                self._update_status("✅ Chrome WebDriver 인스턴스 생성 완료")
-                
-                # 페이지 로드 타임아웃 설정 (무한 대기 방지)
-                self.driver.set_page_load_timeout(20)  # 20초 타임아웃
-                self.driver.implicitly_wait(5)  # 요소 찾기 대기 시간 5초
-                
-                # 창 최대화
-                try:
-                    self.driver.maximize_window()
-                except:
-                    pass
-                
-                # 자동화 감지 방지 (강화)
-                self.driver.execute_script("""
-                    Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-                    Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
-                    Object.defineProperty(navigator, 'languages', {get: () => ['ko-KR', 'ko', 'en-US', 'en']});
-                    window.chrome = {runtime: {}};
-                """)
-                
-                # 초기 페이지 로드
-                self.driver.get("about:blank")
-                
-                # 브라우저 정보 확인
-                try:
-                    window_handles = self.driver.window_handles
-                    # 카페 URL이 있으면 바로 이동
-                    if self.chrome_profile_path: # 프로필이 있으면 이미 로그인 상태일 수 있음
-                         self.driver.get("https://cafe.naver.com")
-                    else:
-                         self.driver.get("https://nid.naver.com/nidlogin.login") # 프로필 없으면 로그인 페이지로
-                    
-                    current_url = self.driver.current_url
-                    self._update_status(f"✅ 크롬 브라우저 시작 완료")
-                    self._update_status(f"현재 URL: {current_url}")
-                    self._update_status(f"💡 브라우저에서 로그인을 완료한 후 2단계를 진행하세요.")
-                except Exception as info_error:
-                    self._update_status(f"✅ 크롬 브라우저 시작 완료 (정보 확인 실패: {info_error})")
-                
-            except Exception as driver_error:
-                error_msg = str(driver_error)
-                self._update_status(f"❌ WebDriver 초기화 실패: {error_msg}")
-                
-                # 일반적인 오류 해결 방법 안내
-                if "user data directory" in error_msg.lower() or "profile" in error_msg.lower() or "lock" in error_msg.lower():
-                    self._update_status("💡 해결 방법:")
-                    self._update_status("   1. 모든 크롬 창을 완전히 종료하세요 (작업 관리자에서 chrome.exe 프로세스 확인)")
-                    self._update_status("   2. 크롬 프로필 경로를 비워두고 다시 시도하세요")
-                elif "chrome" in error_msg.lower() and ("not found" in error_msg.lower() or "path" in error_msg.lower()):
-                    self._update_status("💡 해결 방법: Chrome 브라우저가 설치되어 있는지 확인하세요.")
-                else:
-                    import traceback
-                    self._update_status(f"상세 오류:\n{traceback.format_exc()}")
-                
-                raise
+            self.driver.get("https://cafe.naver.com")
+            self._update_status("✅ 브라우저 시작 완료. (탐지 우회 모드 활성화)")
+            self._update_status("💡 브라우저에서 로그인을 확인한 후 2단계를 진행하세요.")
             
         except Exception as e:
-            error_msg = str(e)
-            self._update_status(f"❌ 브라우저 시작 실패: {error_msg}")
+            self._update_status(f"❌ 브라우저 시작 실패: {e}")
             raise
-    
+
     def _switch_to_cafe_iframe(self) -> bool:
-        """네이버 카페 iframe으로 전환 (강화된 버전)"""
         try:
-            # 먼저 default_content로 전환
             self.driver.switch_to.default_content()
-            
-            # iframe이 이미 없는 새로운 형식인지 확인
             current_url = self.driver.current_url
-            if "/ca-fe/web/cafes/" in current_url:
-                self._update_status("ℹ️ 새로운 형식 페이지 (iframe 없음)")
-                return True
-
-            # iframe 찾기 시도 (최대 10초 대기)
-            iframe_selectors = [
-                "iframe#cafe_main",
-                "iframe[name='cafe_main']",
-                "iframe[src*='BoardList']",
-                "iframe[src*='ArticleRead']",
-                "iframe[src*='cafe']"
-            ]
             
-            start_time = time.time()
-            while time.time() - start_time < 10:
-                for selector in iframe_selectors:
-                    try:
-                        iframes = self.driver.find_elements(By.CSS_SELECTOR, selector)
-                        if iframes:
-                            iframe = iframes[0]
-                            # iframe이 로드되었는지 확인 (src가 비어있지 않은지)
-                            src = iframe.get_attribute("src")
-                            if src and "about:blank" not in src:
-                                self.driver.switch_to.frame(iframe)
-                                self._update_status(f"✅ iframe 전환 성공: {selector}")
-                                return True
-                    except:
-                        continue
-                time.sleep(1)
-            
-            # 만약 BoardList.nhn URL인데 iframe을 못 찾았다면 오류일 가능성이 높음
-            if "BoardList.nhn" in current_url or "ArticleRead.nhn" in current_url:
-                self._update_status("⚠️ iframe을 찾을 수 없습니다 (기존 형식 페이지)")
-                return False
-                
-            self._update_status("ℹ️ iframe 없음 (메인 프레임 사용)")
-            return True
-            
-        except Exception as e:
-            self._update_status(f"⚠️ iframe 전환 중 오류: {e}")
-            return False
-    
-    def _switch_to_default_content(self):
-        """기본 콘텐츠로 전환"""
-        try:
-            self.driver.switch_to.default_content()
-        except:
-            pass
-    
-    def _wait_for_page_load(self, timeout: int = 10):
-        """페이지 로딩 완료 대기 (타임아웃 적용)"""
-        try:
-            WebDriverWait(self.driver, timeout).until(
-                lambda driver: driver.execute_script("return document.readyState") == "complete"
-            )
-            return True
-        except:
-            # 타임아웃 발생 시에도 계속 진행 (일부 페이지는 완전히 로드되지 않을 수 있음)
-            return False
-    
-    def _is_error_page(self) -> bool:
-        """오류 페이지인지 확인 (Naver 'Sorry' 페이지 포함)"""
-        try:
-            # 페이지 제목 확인
-            title = self.driver.title.lower()
-            if "잠시 후" in title or "연결할 수 없" in title or "error" in title or "오류" in title or "sorry" in title:
+            # SPA 형식은 iframe 없음 (이미 URL 정규화했으므로 여기는 안 올 것)
+            if "/ca-fe/" in current_url or "/f-e/" in current_url:
+                if self.debug_mode:
+                    self._update_status(f"[디버그] ⚠️ SPA URL 감지, iframe 스킵: {current_url[:50]}...")
                 return True
             
-            # 페이지 소스 확인 (더 구체적인 키워드)
-            page_source = self.driver.page_source.lower()
-            error_keywords = [
-                "잠시 후 다시 확인해주세요",
-                "지금 이 서비스와 연결할 수 없습니다",
-                "문제를 해결하기 위해 열심히 노력하고 있습니다",
-                "sorry",
-                "service unavailable",
-                "접속이 제한되었습니다",
-                "비정상적인 접근",
-                "captcha"
-            ]
-            if any(keyword in page_source for keyword in error_keywords):
-                return True
-            
-            # 특정 이미지나 요소로 확인 (나타난 고양이/강아지 이미지 등)
-            if "illustration by" in page_source:
-                return True
-                
-            return False
-        except:
-            return False
-    
-    def _random_delay(self, min_sec: float = 3.0, max_sec: float = 10.0):
-        """랜덤 딜레이 (사람처럼 불규칙하게)"""
-        delay = random.uniform(min_sec, max_sec)
-        time.sleep(delay)
-    
-    def _parse_date(self, date_str: str) -> Optional[datetime]:
-        """날짜 문자열을 datetime 객체로 변환"""
-        if not date_str:
-            return None
-        
-        try:
-            # 다양한 날짜 형식 처리
-            # "2024.01.01", "2024-01-01", "1일 전", "2시간 전" 등
-            date_str = date_str.strip()
-            
-            # 상대 시간 처리 ("1일 전", "2시간 전" 등)
-            if "전" in date_str or "ago" in date_str.lower():
-                # 간단한 처리: 상대 시간은 현재 시간으로 간주
-                return datetime.now()
-            
-            # "YYYY.MM.DD" 형식
-            if re.match(r'\d{4}\.\d{2}\.\d{2}', date_str):
-                return datetime.strptime(date_str, "%Y.%m.%d")
-            
-            # "YYYY-MM-DD" 형식
-            if re.match(r'\d{4}-\d{2}-\d{2}', date_str):
-                return datetime.strptime(date_str, "%Y-%m-%d")
-            
-            # "YYYY/MM/DD" 형식
-            if re.match(r'\d{4}/\d{2}/\d{2}', date_str):
-                return datetime.strptime(date_str, "%Y/%m/%d")
-            
-            # 기타 형식 시도
-            for fmt in ["%Y.%m.%d %H:%M", "%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M"]:
-                try:
-                    return datetime.strptime(date_str, fmt)
-                except:
-                    continue
-            
-            return None
-            
-        except Exception as e:
-            self._update_status(f"⚠️ 날짜 파싱 실패: {date_str} - {e}")
-            return None
-    
-    def _is_date_before_cutoff(self, date_str: str, cutoff_date: Optional[datetime]) -> bool:
-        """날짜가 종료 날짜 이전인지 확인"""
-        if not cutoff_date:
-            return False
-        
-        parsed_date = self._parse_date(date_str)
-        if not parsed_date:
-            return False
-        
-        return parsed_date < cutoff_date
-    
-    def navigate_to_cafe(self, cafe_url: str):
-        """카페 페이지로 이동 및 iframe 전환"""
-        self._update_status(f"카페 페이지 이동: {cafe_url}")
-        
-        # 페이지 로드 (타임아웃 적용)
-        self._switch_to_default_content()
-        
-        try:
-            # 페이지 로드 시작
-            self.driver.set_page_load_timeout(15)  # 페이지 로드 타임아웃 15초
-            self.driver.get(cafe_url)
-            
-            # 페이지 로딩 완료 대기
-            load_success = self._wait_for_page_load(timeout=10)
-            if not load_success:
-                self._update_status("⚠️ 페이지 로드 타임아웃 (계속 진행)")
-            
-            time.sleep(2)
-            
-            # 오류 페이지 확인
-            if self._is_error_page():
-                self._update_status("❌ 오류 페이지가 표시됩니다. 네이버 서버 문제일 수 있습니다.")
-                raise Exception("네이버 서비스 오류 페이지가 표시됩니다.")
-                
-        except Exception as load_error:
-            error_msg = str(load_error)
-            if "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
-                self._update_status("⚠️ 페이지 로드 타임아웃")
-            elif "오류 페이지" in error_msg:
-                raise  # 오류 페이지는 재시도하지 않고 즉시 실패
-            else:
-                self._update_status(f"⚠️ 페이지 로드 실패: {error_msg}")
-            raise
-        
-        self._random_delay(2, 4)
-        
-        # iframe 전환
-        self._switch_to_cafe_iframe()
-        self._random_delay(1, 2)
-    
-    def search_in_cafe(self, keyword: str, max_pages: int = 5, cutoff_date: Optional[datetime] = None) -> List[Dict[str, Any]]:
-        """카페 내 검색 수행"""
-        self._update_status(f"카페 내 검색: '{keyword}'")
-        
-        try:
-            # 기본 콘텐츠로 전환 (iframe 밖에서 검색창 찾기)
-            self._switch_to_default_content()
-            
-            # 검색창 찾기 (여러 위치 시도)
-            search_selectors = [
-                "input[name='query']",
-                "input[type='text'][placeholder*='검색']",
-                "input.search_input",
-                "#searchKeyword",
-                ".search_input",
-                "input[class*='search']",
-                "#topLayerQuery",
-                "input[placeholder*='검색']"
-            ]
-            
-            search_input = None
-            for selector in search_selectors:
-                try:
-                    search_input = WebDriverWait(self.driver, 3).until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, selector))
-                    )
-                    if search_input.is_displayed():
-                        self._update_status(f"✅ 검색창 발견: {selector}")
-                        break
-                except:
-                    continue
-            
-            if not search_input:
-                self._update_status("❌ 검색창을 찾을 수 없습니다. 페이지 구조를 확인하세요.")
-                return []
-            
-            # 검색어 입력
-            search_input.clear()
-            search_input.send_keys(keyword)
-            self._random_delay(0.5, 1.5)
-            
-            # 검색 버튼 클릭 또는 Enter 키
-            search_button_selectors = [
-                "button[type='submit']",
-                ".btn_search",
-                "button.search",
-                "input[type='submit']",
-                ".search_btn",
-                "button[class*='search']"
-            ]
-            
-            clicked = False
-            for selector in search_button_selectors:
-                try:
-                    search_button = self.driver.find_element(By.CSS_SELECTOR, selector)
-                    if search_button.is_displayed():
-                        search_button.click()
-                        clicked = True
-                        break
-                except:
-                    continue
-            
-            if not clicked:
-                # 버튼을 찾지 못하면 Enter 키 시도
-                from selenium.webdriver.common.keys import Keys
-                search_input.send_keys(Keys.RETURN)
-            
-            self._random_delay(3, 6)
-            
-            # 검색 결과 페이지에서 게시글 리스트 수집
-            all_articles = []
-            
-            for page in range(1, max_pages + 1):
-                try:
-                    self._update_status(f"검색 결과 페이지 {page}/{max_pages} 처리 중...")
-                    
-                    # iframe 전환 시도
-                    self._switch_to_cafe_iframe()
-                    self._random_delay(1, 2)
-                    
-                    # 게시글 리스트 추출
-                    page_articles = self._extract_article_links_from_board()
-                    
-                    if not page_articles:
-                        self._update_status(f"페이지 {page}에서 게시글을 찾을 수 없습니다.")
-                        break
-                    
-                    # 날짜 필터링
-                    if cutoff_date:
-                        filtered_articles = []
-                        should_stop = False
-                        for article in page_articles:
-                            posted_at = article.get('posted_at')
-                            if posted_at and self._is_date_before_cutoff(posted_at, cutoff_date):
-                                should_stop = True
-                                break
-                            filtered_articles.append(article)
-                        
-                        all_articles.extend(filtered_articles)
-                        if should_stop:
-                            self._update_status(f"종료 날짜 이전 게시글 발견. 수집 중단.")
-                            break
-                    else:
-                        all_articles.extend(page_articles)
-                    
-                    self._update_status(f"페이지 {page} 완료: {len(page_articles)}개 게시글 (누적: {len(all_articles)}개)")
-                    
-                    # 다음 페이지로 이동
-                    if page < max_pages:
-                        try:
-                            next_button_selectors = [
-                                "a[href*='page=']",
-                                ".paging a:last-child",
-                                ".next",
-                                "a.next"
-                            ]
-                            
-                            for selector in next_button_selectors:
-                                try:
-                                    next_buttons = self.driver.find_elements(By.CSS_SELECTOR, selector)
-                                    for btn in next_buttons:
-                                        if "다음" in btn.text or ">" in btn.text or "next" in btn.text.lower():
-                                            btn.click()
-                                            self._random_delay(2, 4)
-                                            break
-                                except:
-                                    continue
-                        except:
-                            break
-                    
-                    self._random_delay(3, 8)
-                    
-                except Exception as e:
-                    self._update_status(f"⚠️ 페이지 {page} 처리 실패: {e}")
-                    break
-            
-            self._update_status(f"검색 결과: {len(all_articles)}개 게시글 발견")
-            return all_articles
-            
-        except Exception as e:
-            self._update_status(f"❌ 검색 실패: {e}")
-            import traceback
-            self._update_status(f"상세 오류: {traceback.format_exc()}")
-            return []
-    
-    def get_articles_by_author(self, cafe_url: str, author_nickname: str, max_pages: int = 10, cutoff_date: Optional[datetime] = None) -> List[Dict[str, Any]]:
-        """특정 작성자의 모든 게시글 수집"""
-        self._update_status(f"작성자 '{author_nickname}'의 게시글 수집 시작")
-        
-        articles = []
-        self.navigate_to_cafe(cafe_url)
-        
-        # 게시판 목록 조회
-        board_urls = self._get_cafe_board_urls()
-        
-        if not board_urls:
-            self._update_status("⚠️ 게시판을 찾을 수 없습니다.")
-            return articles
-        
-        self._update_status(f"발견된 게시판: {len(board_urls)}개")
-        
-        for board_idx, board_url in enumerate(board_urls[:max_pages], 1):
-            if len(articles) >= 100:  # 최대 100개로 제한
-                break
-            
-            self._update_status(f"게시판 {board_idx}/{min(len(board_urls), max_pages)}: {board_url}")
-            
-            # 게시판 페이지별 순회
-            for page in range(1, max_pages + 1):
-                try:
-                    if "?" in board_url:
-                        page_url = f"{board_url}&page={page}"
-                    else:
-                        page_url = f"{board_url}?page={page}"
-                    
-                    self._switch_to_default_content()
-                    self.driver.get(page_url)
-                    self._switch_to_cafe_iframe()
-                    self._random_delay(2, 4)
-                    
-                    page_articles = self._extract_article_links_from_board()
-                    
-                    if not page_articles:
-                        break  # 더 이상 게시글이 없으면 다음 게시판으로
-                    
-                    # 작성자 필터링 (공백 및 부분 일치 대응)
-                    target_nick = author_nickname.strip().lower()
-                    filtered = [
-                        a for a in page_articles 
-                        if target_nick in a.get('author_nickname', '').strip().lower() or 
-                           a.get('author_nickname', '').strip().lower() in target_nick
-                    ]
-                    
-                    # 날짜 필터링
-                    if cutoff_date:
-                        date_filtered = []
-                        should_stop = False
-                        for article in filtered:
-                            posted_at = article.get('posted_at')
-                            if posted_at and self._is_date_before_cutoff(posted_at, cutoff_date):
-                                should_stop = True
-                                break
-                            date_filtered.append(article)
-                        
-                        articles.extend(date_filtered)
-                        if should_stop:
-                            self._update_status(f"종료 날짜 이전 게시글 발견. 수집 중단.")
-                            break
-                    else:
-                        articles.extend(filtered)
-                    
-                    self._update_status(f"  페이지 {page}: {len(filtered)}개 게시글 발견 (누적: {len(articles)}개)")
-                    
-                    if len(articles) >= 100:
-                        break
-                    
-                    self._random_delay(3, 8)
-                    
-                except Exception as e:
-                    self._update_status(f"⚠️ 페이지 {page} 처리 실패: {e}")
-                    break
-        
-        self._update_status(f"작성자 '{author_nickname}' 게시글: {len(articles)}개 발견")
-        return articles
-    
-    def get_cafe_boards(self, cafe_url: str) -> List[Dict[str, Any]]:
-        """카페 게시판 목록 조회 (SPA 및 iframe 방식 모두 지원)"""
-        boards = []
-        try:
-            self._update_status(f"카페 메인으로 이동하여 게시판 목록을 가져옵니다: {cafe_url}")
-            self.driver.get(cafe_url)
-            time.sleep(3)
-            
-            # 1. iframe 전환 시도 (기존 방식)
-            self._switch_to_cafe_iframe()
-            
-            # 2. 게시판 링크 찾기 (왼쪽 메뉴 영역 집중 탐색)
-            # SPA 방식과 iframe 방식의 모든 메뉴 선택자 포함
-            menu_selectors = [
-                "#groupArea a[href*='menuid=']",
-                "#menuLinka[href*='menuid=']",
-                ".cafe-menu-list a[href*='menuid=']",
-                "a[href*='ArticleList.nhn?search.clubid=']",
-                "a[href*='/menus/']",
-                ".menu_name a",
-                "a.item" # 추가
-            ]
-            
-            found_links = []
-            for selector in menu_selectors:
-                try:
-                    links = self.driver.find_elements(By.CSS_SELECTOR, selector)
-                    for l in links:
-                        if l not in found_links:
-                            found_links.append(l)
-                except: continue
-            
-            # 만약 위 선택자로 못 찾았다면 전체 <a> 태그 중 menuid 포함된 것 찾기
-            if not found_links:
-                all_a = self.driver.find_elements(By.TAG_NAME, "a")
-                found_links = [a for a in all_a if "menuid=" in (a.get_attribute("href") or "")]
-
-            self._update_status(f"✅ 메뉴 영역에서 {len(found_links)}개 링크 발견")
-            
-            seen_menu_ids = set()
-            for link in found_links:
-                try:
-                    href = link.get_attribute("href")
-                    name = link.text.strip() or link.get_attribute("innerText").strip()
-                    
-                    if not href or not name or any(p in href for p in ["javascript", "#", "mailto"]):
-                        continue
-                        
-                    menu_id = None
-                    if "menuid=" in href:
-                        match = re.search(r'menuid=(\d+)', href)
-                        if match: menu_id = match.group(1)
-                    elif "/menus/" in href:
-                        match = re.search(r'/menus/(\d+)', href)
-                        if match: menu_id = match.group(1)
-                        
-                    if menu_id and menu_id not in seen_menu_ids:
-                        # 게시판 성격이 아닌 메뉴(전체글보기, 공지사항 등) 제외 필터링 (필요시)
-                        seen_menu_ids.add(menu_id)
-                        
-                        # URL 정규화
-                        if href.startswith("/"):
-                            href = f"https://cafe.naver.com{href}"
-                        
-                        boards.append({
-                            "menu_id": menu_id,
-                            "menu_name": name,
-                            "board_url": href
-                        })
-                        self._update_status(f"✅ 게시판 발견: {name} (ID: {menu_id})")
-                except:
-                    continue
-            
-            self._update_status(f"✅ 총 {len(boards)}개의 게시판 목록을 확보했습니다.")
-            
-            # 3. 만약 게시판을 하나도 못 찾았다면, 현재 URL이라도 추가 (최후의 수단)
-            if not boards:
-                current_url = self.driver.current_url
-                if "menuid=" in current_url or "/menus/" in current_url:
-                    boards.append({
-                        "menu_id": "current",
-                        "menu_name": "현재 게시판",
-                        "board_url": current_url
-                    })
-                    self._update_status("⚠️ 메뉴를 찾지 못해 현재 페이지를 수집 대상으로 설정합니다.")
-
-            return boards
-        except Exception as e:
-            self._update_status(f"⚠️ 게시판 목록 조회 실패: {e}")
-            return []
-            
-            # 3. 게시판 링크 찾기 (더 포괄적인 선택자)
-            board_selectors = [
-                "a[href*='menuid=']",
-                "a[href*='/menus/']",
-                ".menu_list a",
-                ".board_list a",
-                "[class*='menu'] a"
-            ]
-            
-            found_links = []
-            for selector in board_selectors:
-                try:
-                    links = self.driver.find_elements(By.CSS_SELECTOR, selector)
-                    for l in links:
-                        if l not in found_links:
-                            found_links.append(l)
-                except: continue
-            
-            self._update_status(f"✅ 후보 링크 {len(found_links)}개 발견")
-            
-            seen_menu_ids = set()
-            for link in found_links:
-                try:
-                    href = link.get_attribute("href")
-                    name = link.text.strip()
-                    
-                    if not href or not name or any(p in href for p in ["javascript", "#", "mailto"]):
-                        continue
-                        
-                    menu_id = None
-                    if "menuid=" in href:
-                        match = re.search(r'menuid=(\d+)', href)
-                        if match: menu_id = match.group(1)
-                    elif "/menus/" in href:
-                        match = re.search(r'/menus/(\d+)', href)
-                        if match: menu_id = match.group(1)
-                        
-                    if menu_id and menu_id not in seen_menu_ids:
-                        seen_menu_ids.add(menu_id)
-                        
-                        # URL 정규화
-                        if href.startswith("/"):
-                            href = f"https://cafe.naver.com{href}"
-                        elif not href.startswith("http"):
-                            href = f"https://cafe.naver.com/{href}"
-                            
-                        boards.append({
-                            "menu_id": menu_id,
-                            "menu_name": name,
-                            "board_url": href
-                        })
-                        self._update_status(f"✅ 게시판 추가: {name} (ID: {menu_id})")
-                except:
-                    continue
-            
-            self._update_status(f"✅ 게시판 목록 조회 완료: {len(boards)}개")
-            return boards
-        except Exception as e:
-            self._update_status(f"⚠️ 게시판 목록 조회 실패: {e}")
-            return []
-    
-    def _get_cafe_board_urls(self) -> List[str]:
-        """카페 게시판 URL 목록 조회 (레거시 메서드)"""
-        boards = self.get_cafe_boards(self.driver.current_url if self.driver else "")
-        return [board["board_url"] for board in boards]
-    
-    def scrape_board_articles(self, board_url: str, max_pages: int = 5, cutoff_date: Optional[datetime] = None) -> List[Dict[str, Any]]:
-        """게시판에서 게시글 리스트 수집 (날짜 필터링 포함)"""
-        articles = []
-        page = 1
-        
-        self._update_status(f"게시판 스크래핑 시작: {board_url}")
-        
-        while page <= max_pages:
+            # 표준 PC 버전: cafe_main iframe 전환
             try:
-                self._update_status(f"페이지 {page}/{max_pages} 처리 중...")
+                wait = WebDriverWait(self.driver, 5)
+                iframe = wait.until(EC.presence_of_element_located((By.ID, "cafe_main")))
+                self.driver.switch_to.frame(iframe)
+                if self.debug_mode:
+                    self._update_status(f"[디버그] ✅ iframe 전환 성공 (cafe_main)")
+                return True
+            except:
+                if self.debug_mode:
+                    self._update_status(f"[디버그] ⚠️ iframe 없음 (이미 본문 프레임?)")
+                return True
+        except Exception as e:
+            if self.debug_mode:
+                self._update_status(f"[디버그] ❌ iframe 전환 실패: {e}")
+            return False
+
+    def _random_delay(self, min_sec: float = 2.0, max_sec: float = 5.0):
+        time.sleep(random.uniform(min_sec, max_sec))
+
+    def _parse_date(self, date_str: str) -> Optional[datetime]:
+        if not date_str: return None
+        date_str = date_str.strip()
+        try:
+            if "전" in date_str: return datetime.now()
+            if ":" in date_str and "." not in date_str:
+                return datetime.now().replace(hour=int(date_str.split(":")[0]), minute=int(date_str.split(":")[1]))
+            
+            clean_date = re.sub(r'[^0-9.]', '', date_str).strip('.')
+            parts = clean_date.split('.')
+            if len(parts) == 3:
+                return datetime(int(parts[0]), int(parts[1]), int(parts[2]))
+            return None
+        except:
+            return None
+
+    def scrape_board_list(self, board_url: str, start_date: datetime, end_date: datetime) -> List[Dict[str, Any]]:
+        """게시판 리스트에서 날짜 범위 내 게시글 링크 추출 (undetected 버전)"""
+        if not board_url:
+            self._update_status("❌ 게시판 URL이 비어 있습니다.")
+            return []
+            
+        all_articles = []
+        page = 1
+        should_continue = True
+        
+        while should_continue and page <= 50:
+            sep = "&" if "?" in str(board_url) else "?"
+            target_page_url = f"{board_url}{sep}page={page}"
+            
+            self._update_status(f"🚀 {page}페이지 분석 시작 (누적: {len(all_articles)}개)")
+            
+            try:
+                # 페이지 이동 (undetected는 알아서 부드럽게 처리)
+                if self.driver.current_url != target_page_url:
+                    self.driver.get(target_page_url)
+                    time.sleep(3)  # 로딩 대기
                 
-                # 페이지 URL 구성
-                if "/ca-fe/web/" in board_url:
-                    sep = "&" if "?" in board_url else "?"
-                    page_url = f"{board_url}{sep}page={page}"
-                else:
-                    sep = "&" if "?" in board_url else "?"
-                    page_url = f"{board_url}{sep}page={page}"
-                
-                # 페이지 이동
-                if self.driver.current_url != page_url:
-                    self._switch_to_default_content()
-                    self.driver.get(page_url)
-                
-                # 페이지 로딩 및 iframe 전환 대기
-                time.sleep(2)
                 self._switch_to_cafe_iframe()
                 
-                # 게시글 목록이 나타날 때까지 대기 (최대 10초)
-                wait_selectors = [
-                    "form[name='ArticleList']", 
-                    "div.article-board", 
-                    "table.board-list",
-                    ".article_list",
-                    "div[class*='ArticleItem']"
-                ]
+                # 스크롤하여 동적 콘텐츠 로딩
+                self.driver.execute_script("window.scrollTo(0, 1000);")
+                time.sleep(1.5)
                 
-                found_list = False
-                for selector in wait_selectors:
+                # 게시글 행 찾기 (최신 SPA 구조 우선)
+                rows = self.driver.find_elements(By.CSS_SELECTOR, "div[class*='ArticleItem'], li[class*='article'], div.article-board table tbody tr")
+                
+                if not rows:
+                    self._update_status(f"⚠️ {page}페이지에서 게시글을 찾지 못했습니다.")
+                    break
+                    
+                page_found_count = 0
+                for idx, row in enumerate(rows):
                     try:
-                        WebDriverWait(self.driver, 5).until(
-                            EC.presence_of_element_located((By.CSS_SELECTOR, selector))
-                        )
-                        found_list = True
-                        break
-                    except: continue
-                
-                if not found_list:
-                    self._update_status("⚠️ 게시글 목록 요소를 찾을 수 없습니다. 계속 진행 시도...")
-
-                # 게시글 리스트 추출
-                page_articles = self._extract_article_links_from_board()
-                
-                if not page_articles:
-                    # 디버깅용: 왜 못 찾았는지 샘플 링크 출력
-                    try:
-                        all_a = self.driver.find_elements(By.TAG_NAME, "a")
-                        sample_hrefs = [a.get_attribute("href") for a in all_a[:10] if a.get_attribute("href")]
-                        self._update_status(f"⚠️ 페이지 {page}에서 게시글 추출 실패. 발견된 링크 샘플: {sample_hrefs}")
-                    except: pass
-                    
-                    self._update_status(f"페이지 {page}에서 게시글을 찾을 수 없습니다. 다음 단계 진행.")
-                    page += 1 # 무한 루프 방지를 위해 다음 페이지로
-                    continue
-                
-                # 날짜 필터링
-                if cutoff_date:
-                    filtered_articles = []
-                    should_stop = False
-                    
-                    for article in page_articles:
-                        posted_at = article.get('posted_at')
-                        if posted_at and self._is_date_before_cutoff(posted_at, cutoff_date):
-                            should_stop = True
-                            break
-                        filtered_articles.append(article)
-                    
-                    articles.extend(filtered_articles)
-                    
-                    if should_stop:
-                        self._update_status(f"종료 날짜({cutoff_date.strftime('%Y-%m-%d')}) 이전 게시글 발견. 수집 중단.")
-                        break
-                else:
-                    articles.extend(page_articles)
-                
-                self._update_status(f"페이지 {page} 완료: {len(page_articles)}개 게시글 (누적: {len(articles)}개)")
-                
-                page += 1
-                # 페이지 간 딜레이 증가 (오류 방지)
-                self._random_delay(5, 15)  # 5-15초 랜덤 딜레이
-                
-            except Exception as e:
-                self._update_status(f"⚠️ 페이지 {page} 처리 실패: {e}")
-                break
-        
-        self._update_status(f"게시판 스크래핑 완료: 총 {len(articles)}개 게시글")
-        return articles
-    
-    def _extract_article_links_from_board(self) -> List[Dict[str, Any]]:
-        """게시판 페이지에서 게시글 링크 추출 (강화된 버전)"""
-        articles = []
-        
-        try:
-            current_url = self.driver.current_url
-            self._update_status(f"현재 페이지 분석 중: {current_url}")
-            
-            # 새로운 형식의 페이지인 경우 스크롤 및 대기
-            if "/ca-fe/web/cafes/" in current_url:
-                self._update_status("ℹ️ 새로운 형식 페이지 분석 중...")
-                # 여러 번 스크롤하여 동적 콘텐츠 로드
-                for _ in range(2):
-                    self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                    time.sleep(1.5)
-                    self.driver.execute_script("window.scrollTo(0, 0);")
-                    time.sleep(0.5)
-            
-            # 게시글 링크 선택자 (더 구체적이고 포괄적으로)
-            article_selectors = [
-                # 기존 형식 (iframe 내부 테이블)
-                "a.article",
-                "a[href*='ArticleRead.nhn?articleid=']",
-                "a[href*='ArticleRead.nhn'][href*='articleid=']",
-                "td.td_article a.article",
-                "div.board-list td.td_article a",
-                
-                # 새로운 형식 (SPA)
-                "a[href*='/articles/']",
-                "a[class*='article']",
-                "a[class*='post']",
-                ".article_item a",
-                ".article_list a",
-                "div[class*='ArticleItem'] a",
-                "div[class*='article_'] a", # 추가
-                "a[class*='tit']", # 추가 (제목 링크)
-                
-                # 공통/기타
-                "tr td a[href*='articleid']",
-                "li a[href*='articleid']",
-                "a.aaa", # 네이버 카페 특정 클래스
-                "a[href*='/vpqtnl/']" # 카페 ID가 포함된 모든 링크 (최후의 수단)
-            ]
-            
-            found_links = []
-            for selector in article_selectors:
-                try:
-                    elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
-                    for el in elements:
-                        href = el.get_attribute("href")
-                        if href and href not in [l.get_attribute("href") for l in found_links]:
-                            # 광고나 공지사항 제외 필터링 (필요시)
-                            found_links.append(el)
-                except:
-                    continue
-            
-            if not found_links:
-                # 최후의 수단: 모든 <a> 태그 중 articleid가 포함된 것 찾기
-                all_a = self.driver.find_elements(By.TAG_NAME, "a")
-                for a in all_a:
-                    try:
-                        href = a.get_attribute("href")
-                        if href and ("articleid=" in href or "/articles/" in href):
-                            if href not in [l.get_attribute("href") for l in found_links]:
-                                found_links.append(a)
-                    except:
-                        continue
-
-            self._update_status(f"✅ 후보 링크 {len(found_links)}개 발견")
-            if found_links:
-                sample_hrefs = [l.get_attribute("href") for l in found_links[:3]]
-                self._update_status(f"ℹ️ 링크 샘플: {sample_hrefs}")
-            
-            for link in found_links:
-                try:
-                    href = link.get_attribute("href")
-                    if not href: continue
-                    
-                    # 1. 공지사항 제외 로직 강화
-                    try:
-                        # 부모 행(tr)을 찾아서 공지사항인지 확인
-                        parent_tr = link.find_element(By.XPATH, "ancestor::tr")
-                        tr_class = parent_tr.get_attribute("class") or ""
-                        tr_text = parent_tr.text
+                        # 공지 스킵
+                        row_class = (row.get_attribute("class") or "").lower()
+                        if "notice" in row_class or "top" in row_class: continue
                         
-                        # '공지', '필독' 단어가 포함되어 있거나 클래스명이 notice인 경우 제외
-                        if "notice" in tr_class.lower() or "공지" in tr_text[:10] or "필독" in tr_text[:10]:
-                            continue
-                    except:
-                        # tr 구조가 아닌 경우(SPA) 클래스명으로 판단
-                        link_class = link.get_attribute("class") or ""
-                        if "notice" in link_class.lower():
-                            continue
-
-                    # 2. 메뉴/카페 설정 등 불필요한 링크 제외
-                    is_potential_article = ("/articles/" in href or "articleid=" in href or re.search(r'/\d+(?:\?|#|$)', href))
-                    if any(p in href for p in ["/menus/", "/cafes/", "javascript:", "#", "MyCafeIntro", "BoardList.nhn"]):
-                        if not is_potential_article:
-                            continue
-                        
-                    # 제목 추출
-                    title = link.text.strip()
-                    if not title:
-                        try:
-                            title = self.driver.execute_script("return arguments[0].innerText;", link).strip()
-                        except:
-                            title = "제목 없음"
-                    
-                    # 작성자 및 날짜 추출
-                    author = "알 수 없음"
-                    date = "알 수 없음"
-                    
-                    try:
-                        parent = None
-                        for p_tag in ["tr", "li", "div[class*='item']", "div[class*='ArticleItem']"]:
+                        # 날짜 추출
+                        date_val = None
+                        date_selectors = ["span[class*='Date']", "span.date", "td.td_date", ".date"]
+                        for ds in date_selectors:
                             try:
-                                parent = link.find_element(By.XPATH, f"ancestor::{p_tag}")
-                                if parent: break
+                                el = row.find_element(By.CSS_SELECTOR, ds)
+                                date_val = self._parse_date(el.text.strip())
+                                if date_val: break
+                            except: continue
+                        
+                        if not date_val:
+                            date_match = re.search(r'(\d{4}\.\d{1,2}\.\d{1,2}|\d{1,2}\.\d{1,2}|\d{1,2}:\d{2})', row.text)
+                            if date_match: date_val = self._parse_date(date_match.group(1))
+                        
+                        if not date_val: continue
+                        if date_val > end_date: continue
+                        if date_val < start_date:
+                            self._update_status(f"⏱️ 시작일 이전 도달. 종료합니다.")
+                            should_continue = False
+                            break
+                        
+                        # 링크/제목
+                        link_el = None
+                        for ls in ["a[class*='ArticleLink']", "a.article", "a[href*='articleid']"]:
+                            try:
+                                link_el = row.find_element(By.CSS_SELECTOR, ls)
+                                if link_el: break
                             except: continue
                             
-                        if parent:
-                            author_selectors = [".nick", ".nickname", ".author", "[class*='writer']", "[class*='nick']", ".m-tcol-c", ".p-nick"]
-                            for selector in author_selectors:
-                                try:
-                                    els = parent.find_elements(By.CSS_SELECTOR, selector)
-                                    if els and els[0].text.strip():
-                                        author = els[0].text.strip()
-                                        break
-                                except: continue
-                            
-                            date_selectors = [".date", ".time", "[class*='date']", "[class*='time']", "td.td_date", "span.date"]
-                            for selector in date_selectors:
-                                try:
-                                    els = parent.find_elements(By.CSS_SELECTOR, selector)
-                                    if els and els[0].text.strip():
-                                        date = els[0].text.strip()
-                                        break
-                                except: continue
-                    except: pass
-                    
-                    # 게시글 ID 추출 로직 강화
-                    article_id = "unknown"
-                    
-                    # 1. data-article-id 속성 확인
-                    try:
-                        article_id = link.get_attribute("data-article-id")
-                    except: pass
-                    
-                    if not article_id or article_id == "unknown":
-                        # 2. href에서 추출
-                        if "articleid=" in href:
-                            match = re.search(r'articleid=(\d+)', href)
-                            if match: article_id = match.group(1)
-                        elif "/articles/" in href:
-                            parts = href.split("/articles/")
-                            if len(parts) > 1:
-                                article_id = parts[1].split("?")[0].split("/")[0]
-                        else:
-                            # 3. 최후의 수단: URL의 마지막 부분이 숫자인지 확인 (예: /vpqtnl/123)
-                            match = re.search(r'/(\d+)(?:\?|#|$)', href)
-                            if match:
-                                article_id = match.group(1)
-                    
-                    if not article_id or article_id == "unknown" or not str(article_id).isdigit():
-                        continue
-
-                    articles.append({
-                        "article_id": article_id,
-                        "article_url": href,
-                        "title": title,
-                        "author_nickname": author,
-                        "posted_at": date,
-                        "scraped_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    })
-                except:
-                    continue
-                    
-            # 중복 제거
-            seen_ids = set()
-            unique_articles = []
-            for a in articles:
-                if a["article_id"] not in seen_ids:
-                    unique_articles.append(a)
-                    seen_ids.add(a["article_id"])
-            
-            self._update_status(f"✅ 최종 게시글 {len(unique_articles)}개 추출 완료")
-            return unique_articles
-            
-        except Exception as e:
-            self._update_status(f"⚠️ 게시글 추출 중 오류: {e}")
-            return []
-    
-    def scrape_article_detail(self, article_url: str, include_nicks: List[str] = None, exclude_nicks: List[str] = None) -> Dict[str, Any]:
-        """개별 게시글 상세 정보 수집"""
-        try:
-            self._update_status(f"게시글 상세 수집: {article_url}")
-            
-            self._switch_to_default_content()
-            self.driver.get(article_url)
-            self._random_delay(2, 4)
-            
-            self._switch_to_cafe_iframe()
-            self._random_delay(1, 2)
-            
-            # 카페 ID, 게시글 ID 추출
-            cafe_id = article_url.split("cafe.naver.com/")[1].split("/")[0] if "cafe.naver.com" in article_url else "unknown"
-            article_id = article_url.split("/")[-1] if "/" in article_url else "unknown"
-            
-            # 제목 추출
-            title_selectors = [
-                ".title_text", ".se-title-text", "h3.title", ".article_title",
-                ".board_title", ".article_title_text", "h1", "h2", "h3"
-            ]
-            title = self._safe_extract(title_selectors, default="제목을 찾을 수 없음")
-            
-            # 작성자 추출
-            author_selectors = [
-                ".nick", ".nickname", ".author", ".writer",
-                ".nickname_text", ".author_name", ".writer_name"
-            ]
-            author = self._safe_extract(author_selectors, default="작성자를 찾을 수 없음")
-            
-            # 내용 추출
-            content_selectors = [
-                ".se-main-container", ".se-component-content", ".article_content",
-                ".content", ".article_text", ".board_text", ".post_content"
-            ]
-            content_text = self._safe_extract(content_selectors, default="내용을 찾을 수 없음")
-            content_html = self._safe_extract_html(content_selectors, default="<p>내용을 찾을 수 없음</p>")
-            
-            # 날짜 추출
-            date_selectors = [
-                ".date", ".time", ".created_at", ".article_date",
-                ".post_date", ".board_date"
-            ]
-            posted_at = self._safe_extract(date_selectors, default=None)
-            if posted_at == "알 수 없음":
-                posted_at = None
-            
-            # 이미지 추출
-            images = self._extract_images()
-            
-            # 댓글 추출
-            comments = self._extract_comments(include_nicks, exclude_nicks)
-            
-            result = {
-                "cafe_id": cafe_id,
-                "article_id": article_id,
-                "article_url": article_url,
-                "title": title,
-                "author_nickname": author,
-                "posted_at": posted_at,
-                "content_text": content_text,
-                "content_html": content_html,
-                "images_base64": images,
-                "comments": comments,
-                "scraped_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            }
-            
-            self._update_status(f"✅ 게시글 수집 완료: {title[:30]}...")
-            return result
-            
-        except Exception as e:
-            self._update_status(f"❌ 게시글 수집 실패: {e}")
-            return {
-                "article_url": article_url,
-                "title": "수집 실패",
-                "error": str(e),
-                "scraped_at": None
-            }
-    
-    def _safe_extract(self, selectors: List[str], timeout: int = 2, default: str = "알 수 없음") -> str:
-        """안전하게 텍스트 추출"""
-        for selector in selectors:
-            try:
-                element = WebDriverWait(self.driver, timeout).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, selector))
-                )
-                if element and element.text.strip():
-                    return element.text.strip()
-            except:
-                continue
-        return default
-    
-    def _safe_extract_html(self, selectors: List[str], timeout: int = 2, default: str = "<p>알 수 없음</p>") -> str:
-        """안전하게 HTML 추출"""
-        for selector in selectors:
-            try:
-                element = WebDriverWait(self.driver, timeout).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, selector))
-                )
-                if element and element.get_attribute("innerHTML"):
-                    return element.get_attribute("innerHTML").strip()
-            except:
-                continue
-        return default
-    
-    def _extract_images(self, max_images: int = 10) -> List[Dict[str, Any]]:
-        """이미지 추출 및 Base64 변환"""
-        images = []
-        try:
-            image_elements = self.driver.find_elements(By.TAG_NAME, "img")
-            
-            if len(image_elements) > max_images:
-                image_elements = image_elements[:max_images]
-            
-            for i, img in enumerate(image_elements):
-                try:
-                    src = img.get_attribute("src")
-                    if not src or src.startswith("data:"):
-                        continue
-                    
-                    response = requests.get(src, timeout=10)
-                    if response.status_code == 200:
-                        image_data = response.content
-                        size_mb = len(image_data) / (1024 * 1024)
+                        if not link_el: continue
+                        href = link_el.get_attribute("href")
+                        title = link_el.text.strip()
                         
-                        if size_mb > 5.0:  # 5MB 제한
-                            continue
+                        match = re.search(r'articleid=(\d+)', href) or re.search(r'/articles/(\d+)', href)
+                        if not match: continue
                         
-                        base64_data = base64.b64encode(image_data).decode('utf-8')
-                        mime_type = "image/jpeg"
-                        if src.lower().endswith('.png'):
-                            mime_type = "image/png"
-                        elif src.lower().endswith('.gif'):
-                            mime_type = "image/gif"
+                        # 작성자 정보 추출 (통합 ID 추출 엔진 적용)
+                        member_id = "unknown"
+                        nickname = "unknown"
+                        nick_selectors = [
+                            "a[class*='Nickname']",
+                            "span[class*='Nickname']",
+                            ".nick a",
+                            ".nick span",
+                            "td.td_name a",
+                            "a[class*='Writer']",
+                            "span[class*='Writer']",
+                            ".writer_nick a",
+                            ".writer a",
+                        ]
                         
-                        images.append({
-                            "mime": mime_type,
-                            "data": base64_data,
-                            "filename": f"image_{i+1}.jpg",
-                            "size_mb": round(size_mb, 2)
+                        for nick_sel in nick_selectors:
+                            try:
+                                nick_el = row.find_element(By.CSS_SELECTOR, nick_sel)
+                                nickname = self._extract_text_from_element(nick_el) or "unknown"
+                                # 리스트에서는 레이어 클릭이 가장 확실 (정규식 실패 시에만)
+                                member_id = self._extract_member_id_from_nick(nick_el, prefer_layer=True)
+                                if member_id != "unknown":
+                                    break
+                            except: continue
+                        
+                        all_articles.append({
+                            "post_id": match.group(1),
+                            "member_id": member_id,
+                            "url": href,
+                            "title": title,
+                            "date": date_val.strftime("%Y-%m-%d"),
+                            "nickname": nickname
                         })
-                except:
-                    continue
-        except Exception as e:
-            self._update_status(f"⚠️ 이미지 추출 실패: {e}")
-        
-        return images
-    
-    def _extract_comments(self, include_nicks: List[str] = None, exclude_nicks: List[str] = None) -> List[Dict[str, Any]]:
-        """댓글 추출 및 필터링"""
-        comments = []
-        try:
-            comment_selectors = [
-                ".comment", ".reply", ".comment_item",
-                ".comment_list .comment", ".reply_list .reply"
-            ]
-            
-            comment_elements = []
-            for selector in comment_selectors:
-                try:
-                    elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
-                    if elements:
-                        comment_elements = elements
-                        break
-                except:
-                    continue
-            
-            for comment_element in comment_elements:
-                try:
-                    text_element = comment_element.find_elements(By.CSS_SELECTOR, ".comment_text, .reply_text, .content")
-                    text = text_element[0].text if text_element else "댓글 내용 없음"
-                    
-                    author_element = comment_element.find_elements(By.CSS_SELECTOR, ".nick, .nickname, .author")
-                    author = author_element[0].text if author_element else "알 수 없음"
-                    
-                    date_element = comment_element.find_elements(By.CSS_SELECTOR, ".date, .time")
-                    date = date_element[0].text if date_element else None
-                    
-                    # 필터링
-                    should_include = True
-                    
-                    if include_nicks:
-                        should_include = any(nick in author for nick in include_nicks)
-                    
-                    if exclude_nicks:
-                        should_include = should_include and not any(nick in author for nick in exclude_nicks)
-                    
-                    if should_include:
-                        comments.append({
-                            "comment_id": f"comment_{len(comments)+1}",
-                            "nickname": author.strip() if author else "알 수 없음",
-                            "text": text.strip() if text else "댓글 내용 없음",
-                            "created_at": date.strip() if date else None
-                        })
-                except:
-                    continue
-        except Exception as e:
-            self._update_status(f"⚠️ 댓글 추출 실패: {e}")
-        
-        return comments
-    
-    def scrape_comments_only(self, cafe_url: str, comment_author_nickname: str, exclude_own_posts: bool = True, max_pages: int = 10, cutoff_date: Optional[datetime] = None) -> List[Dict[str, Any]]:
-        """댓글만 수집 - 특정 닉네임의 댓글이 있는 게시글 찾기"""
-        self._update_status(f"댓글만 수집 모드: '{comment_author_nickname}' 닉네임의 댓글 찾기")
-        
-        articles = []
-        self.navigate_to_cafe(cafe_url)
-        
-        # 게시판 목록 조회
-        boards = self.get_cafe_boards(cafe_url)
-        
-        if not boards:
-            self._update_status("⚠️ 게시판을 찾을 수 없습니다.")
-            return articles
-        
-        self._update_status(f"발견된 게시판: {len(boards)}개")
-        
-        # 각 게시판을 순회하며 댓글 찾기
-        for board_idx, board in enumerate(boards[:max_pages], 1):
-            if len(articles) >= 100:  # 최대 100개로 제한
+                        page_found_count += 1
+                        
+                    except: continue
+                
+                self._update_status(f"✅ {page}페이지 완료: {page_found_count}개 수집 (총 {len(all_articles)}개 누적)")
+                
+                if not should_continue: break
+                page += 1
+                time.sleep(random.uniform(3, 6))
+                
+            except Exception as e:
+                self._update_status(f"❌ {page}페이지 처리 중 오류: {e}")
                 break
             
-            self._update_status(f"게시판 {board_idx}/{min(len(boards), max_pages)}: {board['menu_name']} 검색 중...")
-            
-            # 게시판 페이지별 순회
-            for page in range(1, max_pages + 1):
+        return all_articles
+
+    def _normalize_article_url(self, article_url: str) -> str:
+        if 'ArticleRead.nhn' in article_url or '/ArticleRead.nhn' in article_url:
+            return article_url
+        match = re.search(r'/cafes/(\d+)/articles/(\d+)', article_url)
+        if match:
+            return f"https://cafe.naver.com/ArticleRead.nhn?clubid={match.group(1)}&articleid={match.group(2)}"
+        return article_url
+    
+    def scrape_article_detail(self, article_url: str, post_author_id: str, admin_nicks: List[str]) -> Dict[str, Any]:
+        """본문 텍스트 추출 및 관계 중심 댓글 필터링"""
+        try:
+            article_url = self._normalize_article_url(article_url)
+            self.driver.get(article_url)
+            time.sleep(3)
+            self._switch_to_cafe_iframe()
+
+            # 상세에서는 API가 가장 빠르고 정확 (가능하면 여기서 writer id 확보)
+            club_id, article_id = self._parse_club_article_ids(article_url)
+            writer_info = self._get_writer_info_via_article_api(club_id, article_id)
+            api_author_id = writer_info.get("member_id", "unknown")
+            api_author_nick = writer_info.get("nickname", "unknown")
+            if api_author_id and api_author_id != "unknown":
+                post_author_id = api_author_id
+
+            # 게시글 닉네임은 API에서 비어있는 경우가 있어서, DOM에서 한번 더 복구
+            if api_author_nick == "unknown":
                 try:
-                    if "?" in board['board_url']:
-                        page_url = f"{board['board_url']}&page={page}"
-                    else:
-                        page_url = f"{board['board_url']}?page={page}"
-                    
-                    self._switch_to_default_content()
-                    self.driver.get(page_url)
-                    self._switch_to_cafe_iframe()
-                    self._random_delay(2, 4)
-                    
-                    # 게시글 리스트 추출
-                    page_articles = self._extract_article_links_from_board()
-                    
-                    if not page_articles:
-                        break  # 더 이상 게시글이 없으면 다음 게시판으로
-                    
-                    # 각 게시글에서 댓글 확인
-                    for article in page_articles:
-                        # 날짜 필터링
-                        if cutoff_date:
-                            posted_at = article.get('posted_at')
-                            if posted_at and self._is_date_before_cutoff(posted_at, cutoff_date):
-                                continue
-                        
-                        # 게시글 상세 페이지로 이동하여 댓글 확인
+                    author_nick_selectors = [
+                        ".ArticleWriter a",
+                        ".ArticleWriter .nick",
+                        ".article_writer a",
+                        ".article_writer .nick",
+                        ".writer a",
+                        "a[class*='nickname']",
+                        "span[class*='nickname']",
+                        "a[class*='Nick']",
+                        "span[class*='Nick']",
+                    ]
+                    for sel in author_nick_selectors:
                         try:
-                            article_url = article['article_url']
-                            self._switch_to_default_content()
-                            self.driver.get(article_url)
-                            self._switch_to_cafe_iframe()
-                            self._random_delay(1, 2)
-                            
-                            # 게시글 작성자 확인
-                            article_author = self._safe_extract([
-                                ".nick", ".nickname", ".author", ".writer",
-                                ".nickname_text", ".author_name", ".writer_name"
-                            ], default="")
-                            
-                            # 자신의 게시글 제외 옵션
-                            if exclude_own_posts and article_author == comment_author_nickname:
-                                continue
-                            
-                            # 댓글 확인 (전체 댓글 추출)
-                            all_comments = self._extract_comments(include_nicks=None, exclude_nicks=None)
-                            
-                            # 지정된 닉네임의 댓글이 있는지 확인
-                            has_target_comment = any(
-                                comment_author_nickname in comment.get('nickname', '') 
-                                for comment in all_comments
-                            )
-                            
-                            if has_target_comment:
-                                articles.append(article)
-                                self._update_status(f"✅ 발견: {article.get('title', '')[:30]}... ({len(all_comments)}개 댓글)")
-                                
-                                if len(articles) >= 100:
-                                    break
-                            
-                        except Exception as e:
-                            self._update_status(f"⚠️ 게시글 확인 실패: {e}")
+                            el = self.driver.find_element(By.CSS_SELECTOR, sel)
+                            nick = self._extract_text_from_element(el)
+                            if nick:
+                                api_author_nick = nick
+                                break
+                        except:
                             continue
+                except:
+                    pass
+            
+            # 본문 추출
+            content = ""
+            content_selectors = [".se-main-container", "div[class*='ArticleContentBox']", "#articleBody", "div.article_viewer"]
+            for content_sel in content_selectors:
+                try:
+                    content_area = WebDriverWait(self.driver, 5).until(EC.presence_of_element_located((By.CSS_SELECTOR, content_sel)))
+                    content = content_area.text.strip()
+                    if content and len(content) > 10: break
+                except: continue
+
+            # 치유일기 고정 안내문 제거(해당 패턴일 때만)
+            content = self._strip_healing_diary_preamble(content)
+            
+            # 작성자 ID 재추출 (리스트에서 실패한 경우)
+            if post_author_id == "unknown":
+                try:
+                    author_selectors = [".ArticleWriter a", ".article_writer a", ".writer a", "a[class*='nickname']", "a[class*='Writer']"]
+                    for author_sel in author_selectors:
+                        try:
+                            author_el = self.driver.find_element(By.CSS_SELECTOR, author_sel)
+                            post_author_id = self._extract_member_id_from_nick(author_el, prefer_layer=True)
+                            if post_author_id != "unknown": break
+                        except: continue
+                except: pass
+
+            if post_author_id == "unknown":
+                post_author_id = self._get_member_id_via_js_state()
+            
+            # 댓글 필터링
+            filtered_comments = []
+            try:
+                # 1) 댓글 JSON 우회(가장 안정) 시도
+                api_comments = self._get_comments_via_commentview(club_id, article_id)
+                if api_comments:
+                    for c in api_comments:
+                        writer_id = c.get("writer_id", "unknown")
+                        nick = c.get("nickname", "unknown")
+                        is_author = (writer_id == post_author_id and post_author_id != "unknown")
+                        is_admin = any(admin_nick.strip() in (nick or "") for admin_nick in admin_nicks)
+                        if is_author or is_admin:
+                            filtered_comments.append(
+                                {
+                                    "writer_id": writer_id,
+                                    "nickname": nick,
+                                    "content": c.get("content", ""),
+                                    "is_target": 1,
+                                }
+                            )
+                    return {"content": content, "comments": filtered_comments, "member_id": post_author_id, "nickname": api_author_nick}
+
+                # 2) 실패 시 Selenium DOM 방식으로 폴백
+                comment_elements = self.driver.find_elements(By.CSS_SELECTOR, "li.CommentItem, .comment_list li, div[class*='Comment']")
+                layer_attempts = 0
+                for item in comment_elements:
+                    try:
+                        nick_el = item.find_element(By.CSS_SELECTOR, ".comment_nickname a, .nick a, a[class*='nickname']")
+                        nick = self._extract_text_from_element(nick_el) or "unknown"
+                        writer_id = self._extract_id_from_element(nick_el)
                         
-                        self._random_delay(1, 3)  # 게시글 간 딜레이
-                    
-                    if len(articles) >= 100:
-                        break
-                    
-                    self._random_delay(2, 4)  # 페이지 간 딜레이
-                    
-                except Exception as e:
-                    self._update_status(f"⚠️ 페이지 {page} 처리 실패: {e}")
-                    break
-        
-        self._update_status(f"댓글 수집 완료: {len(articles)}개 게시글 발견")
-        return articles
-    
-    def scrape_multiple_articles(self, article_urls: List[str], include_nicks: List[str] = None, exclude_nicks: List[str] = None) -> List[Dict[str, Any]]:
-        """여러 게시글 상세 수집"""
-        results = []
-        total = len(article_urls)
-        
-        for i, url in enumerate(article_urls, 1):
-            self._update_status(f"[{i}/{total}] 게시글 수집 중...")
-            
-            result = self.scrape_article_detail(url, include_nicks, exclude_nicks)
-            results.append(result)
-            
-            if i < total:
-                self._random_delay(3, 10)  # 게시글 간 딜레이
-        
-        return results
-    
+                        is_author = (writer_id == post_author_id and post_author_id != "unknown")
+                        is_admin = any(admin_nick.strip() in nick for admin_nick in admin_nicks)
+
+                        # 운영자 댓글인데 ID가 unknown이면, 레이어 클릭으로 보강 (너무 느려지지 않게 제한)
+                        if writer_id == "unknown" and is_admin and layer_attempts < 5:
+                            writer_id = self._get_member_id_via_layer(nick_el)
+                            layer_attempts += 1
+                            is_author = (writer_id == post_author_id and post_author_id != "unknown")
+                        
+                        if is_author or is_admin:
+                            text_el = item.find_element(By.CSS_SELECTOR, ".comment_text_view, .txt, div[class*='comment_text']")
+                            filtered_comments.append({
+                                "writer_id": writer_id,
+                                "nickname": nick,
+                                "content": text_el.text.strip(),
+                                "is_target": 1
+                            })
+                    except: continue
+            except: pass
+                
+            return {"content": content, "comments": filtered_comments, "member_id": post_author_id, "nickname": api_author_nick}
+        except Exception as e:
+            return {"content": "", "comments": [], "member_id": post_author_id if post_author_id else "unknown", "nickname": "unknown"}
+
     def close(self):
-        """브라우저 종료"""
         if self.driver:
             self.driver.quit()
             self.driver = None
-            self._update_status("브라우저 종료 완료")
