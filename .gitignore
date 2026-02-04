@@ -1,0 +1,36 @@
+## Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+## Virtualenv
+.venv/
+venv/
+ENV/
+
+## Local runtime outputs (Project DAYBREAK)
+logs/
+*.log
+
+## Local databases / backups
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+## Browser/session artifacts (Chrome profile, cookies, caches)
+sessions/
+*.pkl
+*cookies*.json
+*cookies*.pkl
+
+## Debug dumps
+debug_*.html
+debug_*.png
+
+## Local config (uncomment if you do NOT want to track UI settings)
+# crawler_config.json
+
+## OS
+.DS_Store
+Thumbs.db
