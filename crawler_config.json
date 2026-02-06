@@ -1,8 +1,9 @@
 {
     "admin_nicks": "마법사멀린, 멀린스타크, 멀린",
     "exclude_boards": "공지&이벤트\n자유 게시판\n먹거리 / 맛집\n멘토단 전용 (중상급자)\n음악 웃음 힐링\n제품사은품후기\n진급축하 / 진급문의\n회원상품 홍보\n(조사기)중고 직거래\n썬드림 앱's",
-    "start_date": "2026-02-01",
-    "end_date": "2026-02-04",
+    "start_date": "2025-01-01",
+    "end_date": "2026-02-06",
     "cafe_url": "https://cafe.naver.com/sundreamd",
-    "board_url": "https://cafe.naver.com/f-e/cafes/27870803/menus/0?viewType=L"
+    "board_url": "https://cafe.naver.com/f-e/cafes/27870803/menus/0?viewType=L",
+    "db_path": ""
 }

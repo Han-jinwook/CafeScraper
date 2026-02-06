@@ -436,11 +436,60 @@ class NaverCafeCrawler:
                     content = re.sub(r"<[^>]+>", " ", content)
                     content = re.sub(r"\s+", " ", content).strip()
 
+                # 댓글 작성일(일자만) 추출: 필드명이 자주 바뀌므로 후보군 방어
+                raw_date = (
+                    it.get("regDate")
+                    or it.get("registerDate")
+                    or it.get("registeredDate")
+                    or it.get("writeDate")
+                    or it.get("writtenDate")
+                    or it.get("createDate")
+                    or it.get("createdDate")
+                    or it.get("commentDate")
+                    or it.get("commentRegDate")
+                    or it.get("date")
+                    or it.get("time")
+                    or it.get("timestamp")
+                )
+                comment_ymd = self._to_ymd(raw_date)
+
+                # 댓글 ID / 등급(멤버등급) 후보군 방어
+                comment_id = (
+                    it.get("commentId")
+                    or it.get("comment_id")
+                    or it.get("commentid")
+                    or it.get("id")
+                    or it.get("commentNo")
+                    or it.get("commentNoEnc")
+                    or ""
+                )
+                raw_level = (
+                    it.get("memberLevelName")
+                    or it.get("memberLevel")
+                    or it.get("levelName")
+                    or it.get("level")
+                    or it.get("gradeName")
+                    or it.get("grade")
+                    or it.get("writerLevelName")
+                    or it.get("writerGradeName")
+                    or it.get("writerLevel")
+                    or it.get("writerGrade")
+                    or ""
+                )
+                level_name = self._clean_text(raw_level) if isinstance(raw_level, str) else str(raw_level or "").strip()
+                if not level_name:
+                    found_level = self._deep_find_first_string(it, ["level", "grade"])
+                    if found_level:
+                        level_name = self._clean_text(found_level)
+
                 out.append(
                     {
                         "writer_id": str(writer_id) if writer_id is not None else "unknown",
                         "nickname": str(nickname) if nickname is not None else "unknown",
                         "content": str(content) if content is not None else "",
+                        "date": comment_ymd,
+                        "comment_id": str(comment_id) if comment_id is not None else "",
+                        "level": level_name,
                     }
                 )
 
@@ -449,6 +498,19 @@ class NaverCafeCrawler:
             if self.debug_mode:
                 self._update_status(f"[디버그] CommentView 댓글 추출 실패: {e}")
             return None
+
+    def get_all_comments_for_article(self, article_url: str) -> List[Dict[str, Any]]:
+        """
+        이벤트/분석용: 특정 게시글의 '모든 댓글'을 API 기반으로 수집.
+        - 반환: [{"writer_id","nickname","content","date"}...]
+        """
+        try:
+            normalized = self._normalize_article_url(article_url or "")
+            club_id, article_id = self._parse_club_article_ids(normalized)
+            api_comments = self._get_comments_via_commentview(club_id, article_id)
+            return api_comments or []
+        except:
+            return []
 
     def _get_member_id_via_js_state(self) -> str:
         """전략 3: SPA 전역 상태/Next.js 데이터에서 writer id 추출"""
@@ -716,6 +778,44 @@ class NaverCafeCrawler:
             return None
         except:
             return None
+
+    def _to_ymd(self, raw: Any) -> str:
+        """
+        날짜 값을 YYYY-MM-DD로 정규화.
+        - int/float: epoch seconds/ms 허용
+        - str: 2026.02.05 / 2026-02-05 / 2026/02/05 등에서 날짜만 추출
+        """
+        try:
+            if raw is None:
+                return ""
+
+            if isinstance(raw, (int, float)):
+                v = int(raw)
+                if v > 10_000_000_000:  # ms
+                    dt = datetime.fromtimestamp(v / 1000.0)
+                elif v > 1_000_000_000:  # sec
+                    dt = datetime.fromtimestamp(v)
+                else:
+                    return ""
+                return dt.strftime("%Y-%m-%d")
+
+            s = str(raw).strip()
+            if not s:
+                return ""
+
+            # YYYYMMDD 형태도 방어
+            m0 = re.search(r"\b(\d{4})(\d{2})(\d{2})\b", s)
+            if m0:
+                y, mo, d = int(m0.group(1)), int(m0.group(2)), int(m0.group(3))
+                return datetime(y, mo, d).strftime("%Y-%m-%d")
+
+            m = re.search(r"(\d{4})[./-](\d{1,2})[./-](\d{1,2})", s)
+            if m:
+                y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+                return datetime(y, mo, d).strftime("%Y-%m-%d")
+        except:
+            return ""
+        return ""
 
     def scrape_board_list(
         self,

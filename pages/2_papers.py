@@ -9,14 +9,33 @@ from pathlib import Path
 
 from crawler import VitaminDWikiCrawler
 from app.utils.sqlite_db import init_db
+from app.utils.paths import get_config_path, resolve_db_path
 
 
 st.set_page_config(page_title="VitaminDWiki 전수 조사", layout="wide")
 
 # 프로젝트 루트 기준 경로 고정 (실행 위치가 달라도 DB/설정이 안 갈라지게)
-BASE_DIR = Path(__file__).resolve().parents[1]
-DB_PATH = str(BASE_DIR / "cafe_data.db")
-CONFIG_PATH = str(BASE_DIR / "crawler_config.json")
+CONFIG_PATH = str(get_config_path())
+
+
+def load_config():
+    if os.path.exists(CONFIG_PATH):
+        try:
+            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+
+def save_config(config):
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(config, f, ensure_ascii=False, indent=4)
+
+
+# 설정 로드 및 DB 경로 확정 (환경변수/설정값/기본값)
+config = load_config()
+DB_PATH = str(resolve_db_path(config.get("db_path")))
 
 init_db(DB_PATH)
 
@@ -45,21 +64,6 @@ def ensure_papers_schema():
 
 # DB 스키마 보정(구 DB 호환)
 ensure_papers_schema()
-
-
-def load_config():
-    if os.path.exists(CONFIG_PATH):
-        try:
-            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except:
-            return {}
-    return {}
-
-
-def save_config(config):
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(config, f, ensure_ascii=False, indent=4)
 
 
 def save_paper_to_sqlite(paper: dict):
@@ -101,7 +105,7 @@ def save_paper_to_sqlite(paper: dict):
 
 def get_papers_count() -> int:
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(DB_PATH, timeout=30.0)
         cnt = pd.read_sql_query("SELECT COUNT(*) as cnt FROM papers", conn)["cnt"][0]
         conn.close()
         return int(cnt)
@@ -112,7 +116,7 @@ def get_papers_count() -> int:
 def load_existing_paper_urls() -> set[str]:
     """DB에 이미 저장된 papers.url 목록을 메모리 set으로 로드 (resume/중복방지)."""
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(DB_PATH, timeout=30.0)
         rows = pd.read_sql_query("SELECT url FROM papers", conn)["url"].tolist()
         conn.close()
         return {str(u) for u in rows if u}
@@ -167,8 +171,6 @@ def update_logs(msg=None):
     except:
         pass
 
-
-config = load_config()
 
 with st.sidebar:
     st.header("⚙️ 설정")
@@ -264,7 +266,7 @@ st.markdown("---")
 st.header("📊 데이터 관리 (papers)")
 
 try:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30.0)
     df = pd.read_sql_query(
         """
         SELECT url, title, category, collected_date, summary, content

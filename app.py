@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 from crawler import NaverCafeCrawler
 from app.utils.sqlite_db import init_db
+from app.utils.paths import get_config_path, get_logs_dir, get_project_root, resolve_db_path
 
 # 페이지 설정
 st.set_page_config(page_title="Project DAYBREAK - Cafe Scraper", layout="wide")
@@ -36,12 +37,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # 프로젝트 루트 기준 경로 고정 (실행 위치가 달라도 DB/설정이 안 갈라지게)
-BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = str(BASE_DIR / "cafe_data.db")
-CONFIG_PATH = str(BASE_DIR / "crawler_config.json")
-
-# 기존 DB가 있어도 CREATE TABLE IF NOT EXISTS는 안전하므로 항상 보장
-init_db(DB_PATH)
+PROJECT_ROOT = get_project_root()
+CONFIG_PATH = str(get_config_path())
 
 def load_config():
     if os.path.exists(CONFIG_PATH):
@@ -55,6 +52,13 @@ def load_config():
 def save_config(config):
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(config, f, ensure_ascii=False, indent=4)
+
+# 설정 로드 및 DB 경로 확정 (환경변수/설정값/기본값)
+config = load_config()
+DB_PATH = str(resolve_db_path(config.get("db_path")))
+
+# 기존 DB가 있어도 CREATE TABLE IF NOT EXISTS는 안전하므로 항상 보장
+init_db(DB_PATH)
 
 def save_to_sqlite(post_data: dict, comments: list):
     """SQLite에 게시글 및 댓글 저장 (timeout 및 재시도 추가)"""
@@ -144,7 +148,7 @@ def update_logs(msg=None):
         st.session_state.status_messages.append(log_entry)
         
         # 로그를 파일로도 저장 (영구 보관)
-        log_dir = str(BASE_DIR / "logs")
+        log_dir = str(get_logs_dir())
         os.makedirs(log_dir, exist_ok=True)
         log_file = os.path.join(log_dir, f"crawler_{datetime.now().strftime('%Y%m%d')}.log")
         
@@ -162,9 +166,6 @@ def update_logs(msg=None):
         log_placeholder.text_area("", recent_logs, height=300, label_visibility="collapsed", disabled=True)
     except:
         pass  # UI 에러 무시
-
-# 설정 로드
-config = load_config()
 
 with st.sidebar:
     st.header("⚙️ 설정")
@@ -216,6 +217,14 @@ with st.sidebar:
     if st.session_state.debug_mode:
         st.info("디버그 모드: 각 게시글 분석 과정을 상세히 표시합니다 (속도 저하)")
 
+    st.subheader("💾 DB 경로 (옵션)")
+    db_path_override = st.text_input(
+        "외부 DB 절대경로를 지정할 수 있어요 (비워두면 이 프로젝트 폴더의 cafe_data.db 사용)",
+        value=str(config.get("db_path", "")),
+        placeholder=r"D:\OtherProject\data\cafe_data.db",
+    )
+    st.caption("우선순위: 환경변수 `CAFESCRAPER_DB_PATH` > 여기 입력한 경로 > 기본값")
+
     if st.button("💾 설정 저장", use_container_width=True):
         new_config = {
             "admin_nicks": admin_nicks,
@@ -223,10 +232,12 @@ with st.sidebar:
             "start_date": start_date.strftime("%Y-%m-%d"),
             "end_date": end_date.strftime("%Y-%m-%d"),
             "cafe_url": cafe_url,
-            "board_url": board_url
+            "board_url": board_url,
+            "db_path": db_path_override.strip(),
         }
         save_config(new_config)
-        st.success("✅ 설정이 로컬에 저장되었습니다!")
+        st.success("✅ 설정이 로컬에 저장되었습니다! (DB 경로를 바꿨다면 앱이 자동으로 재시작됩니다)")
+        st.rerun()
     
     # 로컬 DB 경로 및 통계
     st.markdown("---")
@@ -235,7 +246,7 @@ with st.sidebar:
     
     # DB 통계 실시간 표시
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(DB_PATH, timeout=30.0)
         post_count = pd.read_sql_query("SELECT COUNT(*) as cnt FROM posts", conn)['cnt'][0]
         comment_count = pd.read_sql_query("SELECT COUNT(*) as cnt FROM comments", conn)['cnt'][0]
         conn.close()
@@ -266,7 +277,7 @@ with st.sidebar:
     # 로그 파일 보기
     st.markdown("---")
     st.subheader("📋 로그 파일")
-    log_dir = os.path.join(os.getcwd(), "logs")
+    log_dir = str(get_logs_dir())
     log_file_today = os.path.join(log_dir, f"crawler_{datetime.now().strftime('%Y%m%d')}.log")
     
     if os.path.exists(log_file_today):
@@ -313,7 +324,7 @@ with step_col2:
                 update_logs(f"✅ 총 {len(articles)}개의 대상 게시글을 찾았습니다.")
                 
                 # 중복 체크
-                conn = sqlite3.connect(DB_PATH)
+                conn = sqlite3.connect(DB_PATH, timeout=30.0)
                 existing_ids = pd.read_sql_query("SELECT post_id FROM posts", conn)['post_id'].tolist()
                 conn.close()
                 
@@ -399,7 +410,7 @@ tab1, tab2 = st.tabs(["📝 게시글 관리", "💬 댓글 관리"])
 
 with tab1:
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(DB_PATH, timeout=30.0)
         df_posts = pd.read_sql_query("SELECT post_id, member_id, nickname, title, content, date, url FROM posts ORDER BY date DESC LIMIT 100", conn)
         
         if not df_posts.empty:
@@ -534,7 +545,7 @@ with tab1:
 
 with tab2:
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(DB_PATH, timeout=30.0)
         df_comments = pd.read_sql_query("""
             SELECT c.comment_id, c.post_id, c.writer_id, c.nickname, c.content, c.is_target, p.title as post_title
             FROM comments c
