@@ -33,7 +33,6 @@ def save_config(config):
         json.dump(config, f, ensure_ascii=False, indent=4)
 
 
-# 설정 로드 및 DB 경로 확정 (환경변수/설정값/기본값)
 config = load_config()
 DB_PATH = str(resolve_db_path(config.get("db_path")))
 
@@ -140,7 +139,7 @@ st.title("📚 논문 수집 (VitaminDWiki 전체)")
 st.caption("카페 수집과 독립된 전수 조사 페이지입니다.")
 col_nav1, col_nav2 = st.columns([1, 3])
 with col_nav1:
-    if st.button("🏠 카페 수집", use_container_width=True):
+    if st.button("🏠 카페 수집", width="stretch"):
         # 1) switch_page 우선
         try:
             st.switch_page("app.py")
@@ -197,7 +196,7 @@ with st.sidebar:
     )
     skip_existing = st.checkbox("✅ 이미 수집한 URL 재방문 스킵(추천)", value=bool(config.get("wiki_skip_existing", True)))
 
-    if st.button("💾 설정 저장", use_container_width=True):
+    if st.button("💾 설정 저장", width="stretch"):
         config["wiki_debug_mode"] = bool(st.session_state.wiki_debug_mode)
         config["wiki_start_url"] = wiki_start_url
         config["wiki_delay"] = float(wiki_delay)
@@ -221,9 +220,9 @@ metric_placeholder.metric("현재 수집된 논문 수", f"{get_papers_count():,
 
 col_run1, col_run2 = st.columns([1, 1])
 with col_run1:
-    start_btn = st.button("🚀 전수 조사 시작", type="primary", use_container_width=True)
+    start_btn = st.button("🚀 전수 조사 시작", type="primary", width="stretch")
 with col_run2:
-    refresh_btn = st.button("🔄 카운트 새로고침", use_container_width=True)
+    refresh_btn = st.button("🔄 카운트 새로고침", width="stretch")
 
 if refresh_btn:
     metric_placeholder.metric("현재 수집된 논문 수", f"{get_papers_count():,}개")
@@ -307,7 +306,7 @@ try:
                 "요약미리보기": st.column_config.TextColumn("미리보기", width="large"),
             },
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
             disabled=["url", "title", "category", "collected_date", "요약미리보기"],
             key=f"papers_editor_{st.session_state.papers_editor_refresh}",
         )
@@ -317,12 +316,12 @@ try:
         st.markdown("---")
         a1, a2, a3 = st.columns([1, 1, 1])
         with a1:
-            if st.button("☑️ 전체 선택", use_container_width=True, key="select_all_papers"):
+            if st.button("☑️ 전체 선택", width="stretch", key="select_all_papers"):
                 st.session_state.selected_papers = df["url"].tolist()
                 st.session_state.papers_editor_refresh += 1
                 st.rerun()
         with a2:
-            if st.button("⬜ 전체 해제", use_container_width=True, key="deselect_all_papers"):
+            if st.button("⬜ 전체 해제", width="stretch", key="deselect_all_papers"):
                 st.session_state.selected_papers = []
                 st.session_state.papers_editor_refresh += 1
                 st.rerun()
@@ -331,7 +330,7 @@ try:
                 if st.button(
                     f"🗑️ 선택 항목 삭제 ({len(st.session_state.selected_papers)})",
                     type="primary",
-                    use_container_width=True,
+                    width="stretch",
                     key="delete_papers",
                 ):
                     cur = conn.cursor()
@@ -343,7 +342,7 @@ try:
                     st.session_state.papers_editor_refresh += 1
                     st.rerun()
             else:
-                st.button("🗑️ 선택 항목 삭제", disabled=True, use_container_width=True, key="delete_papers_disabled")
+                st.button("🗑️ 선택 항목 삭제", disabled=True, width="stretch", key="delete_papers_disabled")
 
         st.markdown("---")
         st.subheader("📄 논문 상세 보기")

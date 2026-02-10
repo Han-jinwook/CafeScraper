@@ -27,10 +27,26 @@ def init_db(db_path="cafe_data.db"):
             content TEXT,
             date TEXT,
             board_name TEXT,
+            category TEXT,
+            view_count INTEGER DEFAULT 0,
+            like_count INTEGER DEFAULT 0,
             url TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
+
+    # 구버전 DB 호환(컬럼 추가)
+    try:
+        cursor.execute("PRAGMA table_info(posts)")
+        cols = [row[1] for row in cursor.fetchall()]
+        if "category" not in cols:
+            cursor.execute("ALTER TABLE posts ADD COLUMN category TEXT DEFAULT ''")
+        if "view_count" not in cols:
+            cursor.execute("ALTER TABLE posts ADD COLUMN view_count INTEGER DEFAULT 0")
+        if "like_count" not in cols:
+            cursor.execute("ALTER TABLE posts ADD COLUMN like_count INTEGER DEFAULT 0")
+    except Exception:
+        pass
 
     # 댓글 테이블 (comments)
     # is_target: 수집 대상 여부 (1: 본문 작성자 or 운영자, 0: 기타)

@@ -71,6 +71,27 @@ with st.sidebar:
         value=config.get("event_board_url", "https://cafe.naver.com/f-e/cafes/27870803/menus/0"),
     )
 
+    st.subheader("🚫 제외 게시판")
+    default_exclude_boards = "\n".join(
+        [
+            "공지&이벤트",
+            "자유 게시판",
+            "먹거리 / 맛집",
+            "멘토단 전용 (중상급자)",
+            "음악 웃음 힐링",
+            "제품사은품후기",
+            "진급축하 / 진급문의",
+            "회원상품 홍보",
+            "(조사기)중고 직거래",
+            "썬드림 앱's",
+        ]
+    )
+    exclude_boards_text = st.text_area(
+        "줄바꿈으로 구분 (해당 게시판 글은 목록 단계에서 제외)",
+        value=config.get("event_exclude_boards", default_exclude_boards),
+        height=120,
+    )
+
     st.subheader("📅 기간 (게시글 작성일 기준)")
     default_start = datetime.now() - timedelta(days=7)
     if config.get("event_start_date"):
@@ -111,9 +132,10 @@ with st.sidebar:
     st.caption(f"현재 사용 DB: `{os.path.abspath(EVENT_DB_PATH)}`")
     st.metric("저장된 이벤트 댓글 수", f"{get_event_comments_count(EVENT_DB_PATH):,}개")
 
-    if st.button("💾 설정 저장", use_container_width=True):
+    if st.button("💾 설정 저장", width="stretch"):
         config["event_cafe_url"] = cafe_url
         config["event_board_url"] = board_url
+        config["event_exclude_boards"] = exclude_boards_text
         config["event_start_date"] = start_date.strftime("%Y-%m-%d")
         config["event_end_date"] = end_date.strftime("%Y-%m-%d")
         config["event_delay_min"] = float(delay_min)
@@ -128,14 +150,14 @@ with st.sidebar:
 
 col1, col2, col3 = st.columns([1, 1, 2])
 with col1:
-    if st.button("1단계: 브라우저 열기", use_container_width=True):
+    if st.button("1단계: 브라우저 열기", width="stretch"):
         if not st.session_state.event_crawler:
             st.session_state.event_crawler = NaverCafeCrawler("", debug_mode=False)
             st.session_state.event_crawler.set_status_callback(update_logs)
         st.session_state.event_crawler.start_browser()
         update_logs("✅ 브라우저가 열렸습니다. 로그인 후 2단계를 진행하세요.")
 with col2:
-    if st.button("2단계: 댓글 수집 시작", type="primary", use_container_width=True):
+    if st.button("2단계: 댓글 수집 시작", type="primary", width="stretch"):
         if not st.session_state.event_crawler or not st.session_state.event_crawler.driver:
             st.error("먼저 브라우저를 열어주세요.")
         else:
@@ -144,7 +166,8 @@ with col2:
 
             update_logs("🔍 기간 내 게시글 목록 수집 시작...")
             # 게시글 리스트 수집(기간 필터는 기존 로직 사용)
-            articles = st.session_state.event_crawler.scrape_board_list(board_url, start_dt, end_dt, exclude_boards=None)
+            exclude_boards = [x.strip() for x in (exclude_boards_text or "").splitlines() if x.strip()]
+            articles = st.session_state.event_crawler.scrape_board_list(board_url, start_dt, end_dt, exclude_boards=exclude_boards)
             if not articles:
                 update_logs("⚠️ 기간 내 게시글을 찾지 못했습니다. URL/기간을 확인하세요.")
             else:
@@ -306,7 +329,7 @@ try:
                 "post_url": st.column_config.LinkColumn("원글 링크"),
             },
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
             disabled=[c for c in df_display.columns if c != "선택"],
             key=f"event_editor_{st.session_state.event_editor_refresh}",
         )
@@ -316,12 +339,12 @@ try:
         st.markdown("---")
         a1, a2, a3 = st.columns([1, 1, 2])
         with a1:
-            if st.button("☑️ 전체 선택", use_container_width=True, key="select_all_event_rows"):
+            if st.button("☑️ 전체 선택", width="stretch", key="select_all_event_rows"):
                 st.session_state.selected_event_ids = df_display["id"].tolist()
                 st.session_state.event_editor_refresh += 1
                 st.rerun()
         with a2:
-            if st.button("⬜ 전체 해제", use_container_width=True, key="deselect_all_event_rows"):
+            if st.button("⬜ 전체 해제", width="stretch", key="deselect_all_event_rows"):
                 st.session_state.selected_event_ids = []
                 st.session_state.event_editor_refresh += 1
                 st.rerun()
@@ -330,7 +353,7 @@ try:
                 if st.button(
                     f"🗑️ 선택 삭제 ({len(st.session_state.selected_event_ids):,})",
                     type="primary",
-                    use_container_width=True,
+                    width="stretch",
                     key="delete_selected_event_rows",
                 ):
                     conn_del = sqlite3.connect(EVENT_DB_PATH, timeout=30.0)
@@ -344,7 +367,7 @@ try:
                     st.success("✅ 선택 항목 삭제 완료")
                     st.rerun()
             else:
-                st.button("🗑️ 선택 삭제", disabled=True, use_container_width=True, key="delete_selected_event_rows_disabled")
+                st.button("🗑️ 선택 삭제", disabled=True, width="stretch", key="delete_selected_event_rows_disabled")
 
         # 전체 삭제(확인 2단계)
         st.markdown("---")
@@ -354,15 +377,15 @@ try:
         b1, b2 = st.columns([1, 3])
         with b1:
             if not st.session_state.confirm_delete_all:
-                if st.button("🧨 전체 삭제", use_container_width=True, key="arm_delete_all"):
+                if st.button("🧨 전체 삭제", width="stretch", key="arm_delete_all"):
                     st.session_state.confirm_delete_all = True
                     st.warning("⚠️ 전체 삭제를 누르셨습니다. 오른쪽 버튼으로 최종 확인하세요.")
             else:
-                if st.button("✅ 전체 삭제 취소", use_container_width=True, key="cancel_delete_all"):
+                if st.button("✅ 전체 삭제 취소", width="stretch", key="cancel_delete_all"):
                     st.session_state.confirm_delete_all = False
         with b2:
             if st.session_state.confirm_delete_all:
-                if st.button("🧨 정말로 전체 삭제(복구 불가)", type="primary", use_container_width=True, key="confirm_delete_all"):
+                if st.button("🧨 정말로 전체 삭제(복구 불가)", type="primary", width="stretch", key="confirm_delete_all"):
                     conn_all = sqlite3.connect(EVENT_DB_PATH, timeout=30.0)
                     cur = conn_all.cursor()
                     cur.execute("DELETE FROM event_comments")
@@ -380,11 +403,11 @@ try:
             data=csv_bytes,
             file_name=f"event_comments_{datetime.now().strftime('%Y%m%d')}.csv",
             mime="text/csv",
-            use_container_width=True,
+            width="stretch",
         )
 
         # 전체 CSV 다운로드
-        if st.button("⬇️ CSV 다운로드(전체)", use_container_width=True):
+        if st.button("⬇️ CSV 다운로드(전체)", width="stretch"):
             conn2 = sqlite3.connect(EVENT_DB_PATH, timeout=30.0)
             df_all = pd.read_sql_query(
                 """
@@ -410,7 +433,7 @@ try:
                 data=all_bytes,
                 file_name=f"event_comments_ALL_{datetime.now().strftime('%Y%m%d')}.csv",
                 mime="text/csv",
-                use_container_width=True,
+                width="stretch",
                 key="download_all_csv",
             )
 except Exception as e:
@@ -438,14 +461,14 @@ try:
     if df_sum.empty:
         st.info("아직 집계할 데이터가 없습니다.")
     else:
-        st.dataframe(df_sum, use_container_width=True, hide_index=True)
+        st.dataframe(df_sum, width="stretch", hide_index=True)
         sum_bytes = df_sum.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
         st.download_button(
             "⬇️ 집계 CSV 다운로드",
             data=sum_bytes,
             file_name=f"event_summary_{datetime.now().strftime('%Y%m%d')}.csv",
             mime="text/csv",
-            use_container_width=True,
+            width="stretch",
         )
 except Exception as e:
     st.error(f"집계 오류: {e}")

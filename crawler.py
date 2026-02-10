@@ -167,6 +167,288 @@ class NaverCafeCrawler:
             pass
         return ""
 
+    def _deep_find_first_int(self, obj: Any, key_hints: List[str], max_depth: int = 6) -> Optional[int]:
+        """
+        dict/list 중첩에서 key_hints(부분 문자열 포함)로 첫 숫자 값을 찾는다.
+        """
+        try:
+            key_hints_l = [k.lower() for k in key_hints]
+            seen = set()
+            q = [(obj, 0)]
+            while q:
+                cur, depth = q.pop(0)
+                if id(cur) in seen:
+                    continue
+                seen.add(id(cur))
+                if depth > max_depth:
+                    continue
+                if isinstance(cur, dict):
+                    for k, v in cur.items():
+                        kl = str(k).lower()
+                        if any(h in kl for h in key_hints_l):
+                            if isinstance(v, (int, float)):
+                                return int(v)
+                            if isinstance(v, str):
+                                m = re.search(r"\d+", v.replace(",", ""))
+                                if m:
+                                    return int(m.group(0))
+                        if isinstance(v, (dict, list)):
+                            q.append((v, depth + 1))
+                elif isinstance(cur, list):
+                    for v in cur:
+                        if isinstance(v, (dict, list)):
+                            q.append((v, depth + 1))
+        except:
+            pass
+        return None
+
+    def _deep_collect_ints(self, obj: Any, max_depth: int = 7) -> List[tuple[str, int]]:
+        """
+        중첩 dict/list에서 (정규화된 key, int value) 후보들을 전부 수집.
+        - key 정규화: 소문자 + 비영숫자 제거
+        """
+        out: List[tuple[str, int]] = []
+        try:
+            seen = set()
+            q = [(obj, 0)]
+            while q:
+                cur, depth = q.pop(0)
+                if id(cur) in seen:
+                    continue
+                seen.add(id(cur))
+                if depth > max_depth:
+                    continue
+                if isinstance(cur, dict):
+                    for k, v in cur.items():
+                        kl = re.sub(r"[^a-z0-9]", "", str(k).lower())
+                        if isinstance(v, (int, float)):
+                            out.append((kl, int(v)))
+                        elif isinstance(v, str):
+                            m = re.search(r"^\s*\d[\d,]*\s*$", v)
+                            if m:
+                                try:
+                                    out.append((kl, int(v.replace(",", "").strip())))
+                                except:
+                                    pass
+                        if isinstance(v, (dict, list)):
+                            q.append((v, depth + 1))
+                elif isinstance(cur, list):
+                    for v in cur:
+                        if isinstance(v, (dict, list)):
+                            q.append((v, depth + 1))
+        except:
+            pass
+        return out
+
+    def _get_article_meta_via_article_api(self, club_id: Optional[str], article_id: Optional[str]) -> Dict[str, Any]:
+        """
+        게시글 메타(API 기반):
+        - 조회수(view_count)
+        - 좋아요(like_count)
+        - 카테고리(category)  (말머리/카테고리명 후보)
+        """
+        out: Dict[str, Any] = {"view_count": 0, "like_count": 0, "category": ""}
+        if not club_id or not article_id:
+            return out
+        try:
+            s = self._build_requests_session_from_driver()
+            url = f"https://apis.naver.com/cafe-web/cafe-article/v1/articles/{article_id}?useCafeId=false&buid={club_id}"
+            headers = {
+                "Referer": f"https://m.cafe.naver.com/ca-fe/web/cafes/{club_id}/articles/{article_id}",
+                "Origin": "https://m.cafe.naver.com",
+                "Accept": "application/json, text/plain, */*",
+            }
+
+            # 네이버가 간헐적으로 429/5xx 또는 HTML을 반환하는 경우가 있어 재시도/방어
+            last_err: str | None = None
+            data = None
+            for attempt in range(3):
+                try:
+                    r = s.get(url, headers=headers, timeout=10)
+                    if r.status_code == 200:
+                        try:
+                            data = r.json()
+                            break
+                        except Exception as json_err:
+                            # JSON이 아닌 응답(예: HTML/빈본문)일 수 있음
+                            last_err = f"json_decode_failed: {json_err}"
+                    else:
+                        last_err = f"http_{r.status_code}"
+                        # 401/403/429/5xx는 잠깐 쉬고 재시도할 가치가 있음
+                        if r.status_code in (401, 403, 408, 429, 500, 502, 503, 504):
+                            time.sleep(0.8 * (attempt + 1))
+                            continue
+                except Exception as req_err:
+                    last_err = f"request_failed: {req_err}"
+                    time.sleep(0.8 * (attempt + 1))
+                    continue
+
+            if not isinstance(data, dict):
+                if self.debug_mode and last_err:
+                    self._update_status(f"[디버그] 메타 API 응답 실패: {last_err}")
+                return out
+
+            article = data.get("result", {}).get("article", {}) if isinstance(data, dict) else {}
+            if not isinstance(article, dict):
+                return out
+
+            # 조회수: "view"가 다른 단어(review 등)에도 포함되어 오탐이 잦음 → 후보 수집 후 키 prefix 기반 선택
+            candidates = self._deep_collect_ints(article, max_depth=7)
+            view_keys = ("readcount", "readcnt", "viewcount", "viewcnt", "hitcount", "hit", "hits")
+            view_vals = [v for (k, v) in candidates if any(k.startswith(p) for p in view_keys)]
+            if view_vals:
+                out["view_count"] = int(max(view_vals))
+            else:
+                # fallback: 아주 제한적으로만 (reviewCount 같은 오탐을 피하려고 startswith 사용)
+                broad_vals = [v for (k, v) in candidates if k.startswith("read") or k.startswith("view") or k.startswith("hit")]
+                out["view_count"] = int(max(broad_vals)) if broad_vals else 0
+
+            # 좋아요: like* 후보 중 최댓값 선택
+            like_keys = ("likecount", "likecnt", "likeitcount", "like")
+            like_vals = [v for (k, v) in candidates if any(k.startswith(p) for p in like_keys)]
+            out["like_count"] = int(max(like_vals)) if like_vals else 0
+
+            cat = (
+                article.get("headName")
+                or article.get("headTitle")
+                or article.get("categoryName")
+                or article.get("category")
+                or ""
+            )
+            if isinstance(cat, str) and cat.strip():
+                out["category"] = self._clean_text(cat)
+            else:
+                found_s = self._deep_find_first_string(article, ["headname", "headtitle", "head", "categoryname", "category"])
+                if found_s:
+                    out["category"] = self._clean_text(found_s)
+
+            if self.debug_mode:
+                # 값이 0으로만 떨어질 때 디버그 힌트(상위 후보 일부)
+                if out.get("view_count", 0) == 0:
+                    top_view = sorted([(k, v) for (k, v) in candidates if "read" in k or "view" in k or "hit" in k], key=lambda x: x[1], reverse=True)[:8]
+                    if top_view:
+                        self._update_status(f"[디버그] view 후보(top): {top_view}")
+                if out.get("like_count", 0) == 0:
+                    top_like = sorted([(k, v) for (k, v) in candidates if "like" in k], key=lambda x: x[1], reverse=True)[:8]
+                    if top_like:
+                        self._update_status(f"[디버그] like 후보(top): {top_like}")
+        except Exception as e:
+            if self.debug_mode:
+                self._update_status(f"[디버그] API 메타 추출 실패: {e}")
+        return out
+
+    def get_article_meta(self, article_url: str) -> Dict[str, Any]:
+        """
+        외부에서 호출 가능한 메타 추출 헬퍼.
+        - 입력 URL이 f-e/ca-fe여도 club/article id를 파싱해 API로 조회수/좋아요/카테고리 반환
+        """
+        try:
+            normalized = self._normalize_article_url(article_url or "")
+            club_id, article_id = self._parse_club_article_ids(normalized)
+            api_meta = self._get_article_meta_via_article_api(club_id, article_id)
+
+            # 네이버가 API 응답을 막거나(HTML/403/429) 필드를 바꾸면 0으로만 떨어질 수 있음.
+            # 이 경우 화면(PC 버전) 기반 폴백을 한 번 더 시도한다. (가장 확실한 방법)
+            if (
+                (api_meta.get("view_count", 0) or 0) == 0
+                and (api_meta.get("like_count", 0) or 0) == 0
+            ):
+                screen_meta = self._get_article_meta_via_screen(normalized)
+                # screen_meta가 뭔가라도 건지면 그걸 우선 사용
+                if (
+                    (screen_meta.get("view_count", 0) or 0) != 0
+                    or (screen_meta.get("like_count", 0) or 0) != 0
+                ):
+                    # 카테고리는 기존 API 값이 있으면 유지 (화면에서 긁기 어려울 수 있음)
+                    if api_meta.get("category"):
+                        screen_meta["category"] = api_meta["category"]
+                    return screen_meta
+            return api_meta
+        except:
+            return {"view_count": 0, "like_count": 0, "category": ""}
+
+    def _get_article_meta_via_screen(self, article_url: str) -> Dict[str, Any]:
+        """
+        [최후의 수단] PC 버전 화면으로 직접 이동해서 화면에 보이는 숫자를 긁어온다.
+        - API가 막혀도, 브라우저에 보이면 가져온다.
+        """
+        out: Dict[str, Any] = {"view_count": 0, "like_count": 0, "category": ""}
+        if not self.driver:
+            return out
+
+        try:
+            # PC 버전 URL로 이동 (로그인 세션 활용)
+            self.driver.get(article_url)
+            time.sleep(2.0)
+            
+            # iframe 전환
+            if not self._switch_to_cafe_iframe():
+                return out
+
+            # 조회수 찾기 (다양한 Selector 시도)
+            # 예: "조회 1,234" 텍스트에서 숫자만 추출
+            view_selectors = [
+                ".article_info .count",  # 신형
+                ".article_tit .count",   # 구형
+                "span.b",                # 아주 구형
+                ".t_view",               # 일부 스킨
+                ".p-view .num"           # 스마트에디터 등
+            ]
+            for sel in view_selectors:
+                try:
+                    els = self.driver.find_elements(By.CSS_SELECTOR, sel)
+                    for el in els:
+                        txt = el.text.strip()
+                        # "조회 123" or "123"
+                        if "조회" in txt or re.match(r"[\d,]+", txt):
+                            nums = re.findall(r"\d+", txt.replace(",", ""))
+                            if nums:
+                                out["view_count"] = int(nums[0])
+                                break
+                    if out["view_count"] > 0:
+                        break
+                except:
+                    continue
+
+            # 좋아요 찾기 (동적 로딩 가능성 있음 - Wait 시도)
+            # 보통 .u_cnt, .like_article, .like_count 등이 쓰임
+            like_selectors = [
+                "em.u_cnt",             # 네이버 공통 좋아요 카운트
+                ".like_article .u_cnt", # 카페 좋아요
+                ".like_area .num",      # 구형
+                "#likeItCount",         # ID 기반
+                ".u_likeit_list_module .u_cnt"
+            ]
+            
+            # 좋아요는 늦게 뜰 수 있으므로 1초 정도 대기하며 확인
+            for _ in range(5): # 0.2초 * 5회
+                for sel in like_selectors:
+                    try:
+                        els = self.driver.find_elements(By.CSS_SELECTOR, sel)
+                        for el in els:
+                            txt = el.text.strip()
+                            if txt and txt.isdigit():
+                                out["like_count"] = int(txt)
+                                break
+                        if out["like_count"] > 0:
+                            break
+                    except:
+                        pass
+                if out["like_count"] > 0:
+                    break
+                time.sleep(0.2)
+
+            if self.debug_mode:
+                self._update_status(
+                    f"[디버그] 화면 스크래핑 결과: view={out['view_count']} like={out['like_count']}"
+                )
+
+        except Exception as e:
+            if self.debug_mode:
+                self._update_status(f"[디버그] 화면 스크래핑 실패: {e}")
+        
+        return out
+
     def _strip_healing_diary_preamble(self, content: str) -> str:
         """
         '치유일기'류 게시글에 포함되는 고정 안내문을 본문에서 제거.
@@ -337,7 +619,7 @@ class NaverCafeCrawler:
                 if isinstance(v, str) and v.strip():
                     out["member_id"] = v.strip()
                     break
-
+            
             for k in ["nickname", "nickName", "writerNick", "writerName", "displayName", "name"]:
                 v = writer.get(k)
                 if isinstance(v, str) and v.strip():
@@ -713,7 +995,8 @@ class NaverCafeCrawler:
             
             # undetected_chromedriver 옵션 설정
             options = uc.ChromeOptions()
-            options.add_argument("--start-maximized")
+            # options.add_argument("--start-maximized")
+            options.add_argument("--window-size=960,1080")  # 화면 절반 크기로 시작
             options.add_argument("--disable-gpu")
             options.add_argument("--no-sandbox")
             options.add_argument("--disable-dev-shm-usage")
@@ -823,6 +1106,7 @@ class NaverCafeCrawler:
         start_date: datetime,
         end_date: datetime,
         exclude_boards: Optional[List[str]] = None,
+        max_pages: int = 5000,
     ) -> List[Dict[str, Any]]:
         """게시판 리스트에서 날짜 범위 내 게시글 링크 추출 (undetected 버전)"""
         if not board_url:
@@ -837,11 +1121,18 @@ class NaverCafeCrawler:
         page = 1
         should_continue = True
         
-        while should_continue and page <= 50:
+        # 기존엔 50페이지로 고정되어 있어 기간이 길면 몇 달치에서 끊길 수 있음
+        # (전체글보기 기본 표시개수 기준 50p ≈ 수백~천개 수준)
+        while should_continue and page <= int(max_pages):
             sep = "&" if "?" in str(board_url) else "?"
             target_page_url = f"{board_url}{sep}page={page}"
             
             self._update_status(f"🚀 {page}페이지 분석 시작 (누적: {len(all_articles)}개)")
+            
+            # 20페이지마다 휴식 (리스트 수집 중 차단 방지)
+            if page > 1 and page % 20 == 0:
+                 self._update_status(f"☕ (리스트 수집) 네이버 차단 방지를 위해 30초간 휴식합니다... ({page}페이지 완료)")
+                 time.sleep(30)
             
             try:
                 # 페이지 이동 (undetected는 알아서 부드럽게 처리)
@@ -976,6 +1267,8 @@ class NaverCafeCrawler:
                 self._update_status(f"❌ {page}페이지 처리 중 오류: {e}")
                 break
             
+        if should_continue and page > int(max_pages):
+            self._update_status(f"⛔ 최대 페이지 제한({int(max_pages):,}p)에 도달했습니다. 기간이 길면 max_pages를 더 키워주세요.")
         return all_articles
 
     def _normalize_article_url(self, article_url: str) -> str:
@@ -997,6 +1290,14 @@ class NaverCafeCrawler:
             # 상세에서는 API가 가장 빠르고 정확 (가능하면 여기서 writer id 확보)
             club_id, article_id = self._parse_club_article_ids(article_url)
             writer_info = self._get_writer_info_via_article_api(club_id, article_id)
+            meta_info = self._get_article_meta_via_article_api(club_id, article_id)
+            
+            # API가 실패했으면(0) 화면에서 재시도 (PC 버전 Selector)
+            if (meta_info.get("view_count", 0) or 0) == 0 and (meta_info.get("like_count", 0) or 0) == 0:
+                screen_meta = self._get_article_meta_via_screen(article_url)
+                if screen_meta.get("view_count"): meta_info["view_count"] = screen_meta["view_count"]
+                if screen_meta.get("like_count"): meta_info["like_count"] = screen_meta["like_count"]
+
             api_author_id = writer_info.get("member_id", "unknown")
             api_author_nick = writer_info.get("nickname", "unknown")
             if api_author_id and api_author_id != "unknown":
@@ -1062,6 +1363,28 @@ class NaverCafeCrawler:
 
             # 치유일기 고정 안내문 제거(해당 패턴일 때만)
             content = self._strip_healing_diary_preamble(content)
+
+            # 카테고리(말머리) DOM 백업
+            category = str(meta_info.get("category") or "").strip()
+            if not category:
+                try:
+                    for sel in [
+                        "span.head",
+                        "span[class*='Head']",
+                        "span[class*='Category']",
+                        ".ArticleTopInfo__head",
+                        ".article_header .head",
+                    ]:
+                        try:
+                            el = self.driver.find_element(By.CSS_SELECTOR, sel)
+                            t = self._extract_text_from_element(el)
+                            if t and len(t) <= 40:
+                                category = t
+                                break
+                        except:
+                            continue
+                except:
+                    pass
             
             # 작성자 ID 재추출 (리스트에서 실패한 경우)
             if post_author_id == "unknown":
@@ -1098,7 +1421,16 @@ class NaverCafeCrawler:
                                     "is_target": 1,
                                 }
                             )
-                    return {"content": content, "comments": filtered_comments, "member_id": post_author_id, "nickname": api_author_nick, "board_name": board_name}
+                    return {
+                        "content": content,
+                        "comments": filtered_comments,
+                        "member_id": post_author_id,
+                        "nickname": api_author_nick,
+                        "board_name": board_name,
+                        "category": category,
+                        "view_count": int(meta_info.get("view_count", 0) or 0),
+                        "like_count": int(meta_info.get("like_count", 0) or 0),
+                    }
 
                 # 2) 실패 시 Selenium DOM 방식으로 폴백
                 comment_elements = self.driver.find_elements(By.CSS_SELECTOR, "li.CommentItem, .comment_list li, div[class*='Comment']")
@@ -1129,9 +1461,27 @@ class NaverCafeCrawler:
                     except: continue
             except: pass
                 
-            return {"content": content, "comments": filtered_comments, "member_id": post_author_id, "nickname": api_author_nick, "board_name": board_name}
+            return {
+                "content": content,
+                "comments": filtered_comments,
+                "member_id": post_author_id,
+                "nickname": api_author_nick,
+                "board_name": board_name,
+                "category": category,
+                "view_count": int(meta_info.get("view_count", 0) or 0),
+                "like_count": int(meta_info.get("like_count", 0) or 0),
+            }
         except Exception as e:
-            return {"content": "", "comments": [], "member_id": post_author_id if post_author_id else "unknown", "nickname": "unknown", "board_name": ""}
+            return {
+                "content": "",
+                "comments": [],
+                "member_id": post_author_id if post_author_id else "unknown",
+                "nickname": "unknown",
+                "board_name": "",
+                "category": "",
+                "view_count": 0,
+                "like_count": 0,
+            }
 
     def close(self):
         if self.driver:

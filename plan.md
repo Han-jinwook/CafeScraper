@@ -385,3 +385,26 @@ CafeScraper/
 └── CURRENT_STATUS.md
 ```
 >>>>>>> 9540633dc9880bb288d4ebffde1c3da4da964713
+
+## 🔄 **2026-01-27 업데이트: 조회수/좋아요 "0" 문제 해결 및 안정화**
+
+### ✅ **주요 성과**
+1. **Screen Scraping(화면 긁기) 도입**:
+   - API가 막히거나 "0"을 반환할 때, 실제 브라우저 화면(DOM)에서 숫자를 긁어오는 하이브리드 방식 구현.
+   - `_get_article_meta_via_screen` 함수 추가: `cafe_main` iframe 전환 후 다양한 CSS Selector로 조회수/좋아요 추출.
+2. **Streamlit UI 개선**:
+   - `use_container_width` Deprecation Warning 해결 (`width="stretch"`로 변경).
+   - 메타데이터 보강 시 "카테고리" 제외 옵션 추가 (사용자 요청).
+3. **장기 수집 안정성 확보**:
+   - 1년치 수집을 위해 "인간적인 휴식(Human Mimicry)" 로직 강화.
+   - 리스트 수집 시 20페이지마다 30초 휴식.
+   - 상세 수집 시 30개마다 60초 휴식.
+   - 브라우저 창 크기를 "절반(960x1080)"으로 줄여 사용자 편의성 증대.
+
+### 🔜 **다음 단계: 상용화 패키징 및 댓글 자동화**
+1. **모듈화(Refactoring)**:
+   - 단일 파일(`crawler.py`) 구조에서 `app/products/scraper`, `app/products/commenter` 등 모듈형 구조로 변경.
+   - 독립 실행 파일(.exe) 생성을 위한 기반 마련.
+2. **댓글 자동화(Commenter)**:
+   - 수집된 DB 기반으로 "안전한 댓글 달기" 봇 개발.
+   - 닉네임 치환, 랜덤 딜레이, 업무 시간 준수 등 "인간지능" 로직 탑재 예정.
