@@ -13,7 +13,7 @@ from pathlib import Path
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
-from app.scraper.naver import NaverScraper
+from app.products.scraper.naver import NaverScraper
 
 def test_session_stability():
     """세션 안정성 테스트"""

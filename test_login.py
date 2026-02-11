@@ -10,7 +10,7 @@ from pathlib import Path
 # Add app directory to path
 sys.path.append(str(Path(__file__).parent))
 
-from app.scraper.naver import NaverScraper
+from app.products.scraper.naver import NaverScraper
 
 async def test_login():
     """테스트 로그인 기능"""

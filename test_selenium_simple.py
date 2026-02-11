@@ -9,7 +9,7 @@ from pathlib import Path
 # Add app directory to path
 sys.path.append(str(Path(__file__).parent))
 
-from app.scraper.naver import NaverScraper
+from app.products.scraper.naver import NaverScraper
 
 async def test_selenium_basic():
     """기본 Selenium 기능 테스트"""

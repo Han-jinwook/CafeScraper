@@ -7,7 +7,7 @@ import time
 import random
 import json
 
-from crawler import NaverCafeCrawler
+from app.products.scraper.crawler import NaverCafeCrawler
 from app.utils.paths import get_config_path, resolve_event_db_path, get_project_root
 from app.utils.event_db import init_event_db, save_event_comments, get_event_comments_count
 
@@ -43,19 +43,19 @@ if "event_logs" not in st.session_state:
     st.session_state.event_logs = []
 
 
-log_placeholder = st.empty()
+# log_placeholder = st.empty()
 
 
 def update_logs(msg: str | None = None):
     if msg:
         ts = datetime.now().strftime("%H:%M:%S")
         st.session_state.event_logs.append(f"[{ts}] {msg}")
-    try:
-        log_placeholder.markdown("### 📋 실시간 로그")
-        recent = "\n\n".join(reversed(st.session_state.event_logs[-40:]))
-        log_placeholder.text_area("", recent, height=280, label_visibility="collapsed", disabled=True)
-    except:
-        pass
+    # try:
+    #     log_placeholder.markdown("### 📋 실시간 로그")
+    #     recent = "\n\n".join(reversed(st.session_state.event_logs[-40:]))
+    #     log_placeholder.text_area("", recent, height=280, label_visibility="collapsed", disabled=True)
+    # except:
+    #     pass
 
 
 st.title("🎫 카페 이벤트용 댓글 수집기")
@@ -472,4 +472,3 @@ try:
         )
 except Exception as e:
     st.error(f"집계 오류: {e}")
-

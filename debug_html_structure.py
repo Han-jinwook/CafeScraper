@@ -13,7 +13,7 @@ from pathlib import Path
 # 프로젝트 루트를 Python 경로에 추가
 sys.path.append(str(Path(__file__).parent))
 
-from app.scraper.naver import NaverScraper
+from app.products.scraper.naver import NaverScraper
 
 def analyze_html_structure():
     """실제 게시글 페이지의 HTML 구조를 분석합니다."""

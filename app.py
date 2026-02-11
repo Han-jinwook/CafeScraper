@@ -8,7 +8,7 @@ import time
 import random
 import json
 from pathlib import Path
-from crawler import NaverCafeCrawler
+from app.products.scraper.crawler import NaverCafeCrawler
 from app.utils.sqlite_db import init_db
 from app.utils.paths import get_config_path, get_logs_dir, get_project_root, resolve_db_path
 import shutil
@@ -75,9 +75,9 @@ def save_to_sqlite(post_data: dict, comments: list, replace_comments: bool = Tru
             # 1. 게시글 저장 (Upsert)
             cursor.execute('''
                 INSERT OR REPLACE INTO posts (
-                    post_id, member_id, nickname, title, content, date, board_name, category, view_count, like_count, url
+                    post_id, member_id, nickname, title, content, date, board_name, category, view_count, like_count, url, member_level
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 post_data['post_id'],
                 post_data.get('member_id', 'unknown'),
@@ -90,6 +90,7 @@ def save_to_sqlite(post_data: dict, comments: list, replace_comments: bool = Tru
                 int(post_data.get('view_count', 0) or 0),
                 int(post_data.get('like_count', 0) or 0),
                 post_data['url'],
+                post_data.get('member_level', ''),
             ))
             
             # 2. 댓글 저장 (재실행/업데이트 시 중복 방지 옵션)
@@ -145,16 +146,31 @@ def _go_to_papers_page():
 
 
 col_nav1, col_nav2 = st.columns([1, 3])
-with col_nav1:
-    if st.button("📚 논문 수집", width="stretch"):
-        _go_to_papers_page()
-with col_nav2:
+# with col_nav1:
+#     if st.button("📚 논문 수집", width="stretch"):
+#         _go_to_papers_page()
+# with col_nav2:
     # page_link는 특정 환경에서 KeyError(url_pathname)로 앱을 죽여서 기본 사용은 보류
-    st.caption("페이지 목록이 안 보이면 Streamlit 재시작이 필요할 수 있습니다.")
-st.markdown("---")
+    # st.caption("페이지 목록이 안 보이면 Streamlit 재시작이 필요할 수 있습니다.")
+# st.markdown("---")
+
+st.markdown("""
+<style>
+    /* 로그 영역 스타일 개선 - 박스 제거 및 폰트 조정 */
+    textarea[disabled] {
+        background-color: transparent !important;
+        border: none !important;
+        color: #666 !important;
+        font-family: monospace;
+        font-size: 0.9em;
+        padding: 0 !important;
+        resize: none;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # 실시간 로그 출력을 위한 placeholder (사이드바 아래 또는 메인에 배치)
-log_placeholder = st.empty()
+# log_placeholder = st.empty()
 
 def update_logs(msg=None):
     if msg:
@@ -174,13 +190,12 @@ def update_logs(msg=None):
             pass
     
     # 안정적인 로그 업데이트 (에러 방지)
-    try:
-        log_placeholder.markdown("### 📋 실시간 로그")
-        # 최근 20개 로그만 표시
-        recent_logs = "\n\n".join(reversed(st.session_state.status_messages[-20:]))
-        log_placeholder.text_area("", recent_logs, height=300, label_visibility="collapsed", disabled=True)
-    except:
-        pass  # UI 에러 무시
+    # try:
+    #     # 최근 20개 로그만 표시 - 제목 없이 깔끔하게 텍스트만
+    #     recent_logs = "\n".join(reversed(st.session_state.status_messages[-20:]))
+    #     log_placeholder.text_area("", recent_logs, height=300, label_visibility="collapsed", disabled=True)
+    # except:
+    #     pass  # UI 에러 무시
 
 with st.sidebar:
     st.header("⚙️ 수집 설정")
@@ -234,9 +249,9 @@ with st.sidebar:
 
     with st.expander("고급 옵션", expanded=False):
         st.session_state.debug_mode = st.checkbox("디버그 모드(상세 로그)", value=st.session_state.debug_mode)
-        meta_backfill = st.checkbox(
-            "기존 글 메타 보강(조회수/좋아요만)",
-            value=bool(config.get("meta_backfill", False)),
+        level_backfill = st.checkbox(
+            "기존 글 등급 보강(member_level만)",
+            value=bool(config.get("level_backfill", config.get("meta_backfill", False))),
         )
 
     st.markdown("---")
@@ -248,7 +263,9 @@ with st.sidebar:
             "end_date": end_date.strftime("%Y-%m-%d"),
             "cafe_url": cafe_url,
             "board_url": board_url,
-            "meta_backfill": bool(meta_backfill),
+            "level_backfill": bool(level_backfill),
+            # 하위 호환: 기존 키를 읽는 코드가 있어도 동일 동작하도록 동기화
+            "meta_backfill": bool(level_backfill),
             "db_path": str(config.get("db_path", "") or "").strip(),
         }
         save_config(new_config)
@@ -369,9 +386,13 @@ with step_col2:
                 existing_ids = pd.read_sql_query("SELECT post_id FROM posts", conn)['post_id'].tolist()
                 conn.close()
                 # 과거 설정키(update_existing/meta_only) 호환:
-                # - 기존: update_existing=True & meta_only=True  => 메타 보강
-                legacy_meta_backfill = bool(config.get("update_existing", False)) and bool(config.get("meta_only", True))
-                meta_backfill_mode = bool(config.get("meta_backfill", False)) or legacy_meta_backfill
+                # - 기존: update_existing=True & meta_only=True => 기존글 보강 모드
+                legacy_backfill = bool(config.get("update_existing", False)) and bool(config.get("meta_only", True))
+                level_backfill_mode = (
+                    bool(config.get("level_backfill", False))
+                    or bool(config.get("meta_backfill", False))
+                    or legacy_backfill
+                )
                 
                 # 2단계: 상세 수집
                 update_logs("🚀 2단계: 본문 및 댓글 상세 수집 시작...")
@@ -380,7 +401,7 @@ with step_col2:
                 
                 skip_count = 0
                 error_count = 0
-                updated_meta_count = 0
+                updated_level_count = 0
                 
                 for i, art in enumerate(articles):
                     try:
@@ -390,36 +411,44 @@ with step_col2:
                             time.sleep(60)
 
                         exists = art['post_id'] in existing_ids
-                        if (not meta_backfill_mode) and exists:
+                        if (not level_backfill_mode) and exists:
                             skip_count += 1
                             progress_bar.progress((i + 1) / len(articles))
                             continue
 
-                        # ✅ 메타만 업데이트 모드: 기존 글은 본문/댓글 건드리지 않고 API로 메타만 보강
-                        if exists and meta_backfill_mode:
-                            status_text.text(f"📈 메타 보강 중: {art['title'][:40]}...")
-                            update_logs(f"📈 메타 보강: '{art['title'][:20]}...' ({i+1}/{len(articles)})")
+                        # ✅ 등급만 업데이트 모드: 기존 글은 본문/댓글 저장 없이 member_level만 보강
+                        if exists and level_backfill_mode:
+                            status_text.text(f"🏷️ 등급 보강 중: {art['title'][:40]}...")
+                            update_logs(f"🏷️ 등급 보강: '{art['title'][:20]}...' ({i+1}/{len(articles)})")
                             try:
                                 meta = st.session_state.crawler.get_article_meta(art["url"])
+                                lvl = str(meta.get("member_level", "") or "").strip()
+
+                                # API에서 비어있으면 상세 1회 폴백 (등급 추출 성공률 향상)
+                                if not lvl:
+                                    detail = st.session_state.crawler.scrape_article_detail(
+                                        art["url"],
+                                        art.get("member_id", "unknown"),
+                                        admin_list
+                                    )
+                                    lvl = str(detail.get("member_level", "") or "").strip()
+
                                 conn_u = sqlite3.connect(DB_PATH, timeout=30.0)
                                 cur_u = conn_u.cursor()
-                                cur_u.execute(
-                                    "UPDATE posts SET view_count = ?, like_count = ? WHERE post_id = ?",
-                                    (
-                                        int(meta.get("view_count", 0) or 0),
-                                        int(meta.get("like_count", 0) or 0),
-                                        art["post_id"],
-                                    ),
-                                )
+                                if lvl:
+                                    cur_u.execute(
+                                        "UPDATE posts SET member_level = ? WHERE post_id = ?",
+                                        (lvl, art["post_id"]),
+                                    )
+                                    updated_level_count += 1
                                 conn_u.commit()
                                 conn_u.close()
-                                updated_meta_count += 1
                             except Exception as meta_err:
                                 error_count += 1
-                                update_logs(f"⚠️ 메타 보강 실패: {meta_err}")
+                                update_logs(f"⚠️ 등급 보강 실패: {meta_err}")
 
                             progress_bar.progress((i + 1) / len(articles))
-                            # 메타만은 가볍게(짧은 딜레이)
+                            # 등급 보강 모드는 상대적으로 가볍게
                             time.sleep(random.uniform(1.0, 2.5))
                             continue
                             
@@ -469,8 +498,8 @@ with step_col2:
                 # 최종 결과 표시
                 if skip_count > 0:
                     update_logs(f"💡 기존 수집분 {skip_count}개를 건너뛰었습니다.")
-                if updated_meta_count > 0:
-                    update_logs(f"📈 메타 보강 완료: {updated_meta_count}개")
+                if updated_level_count > 0:
+                    update_logs(f"🏷️ 등급 보강 완료: {updated_level_count}개")
                 if error_count > 0:
                     update_logs(f"⚠️ {error_count}개 항목 수집 실패 (나머지는 정상 처리)")
                 
@@ -504,7 +533,7 @@ with tab1:
         post_limit_sql = None if post_show_limit == "전체" else int(post_show_limit)
         df_posts = pd.read_sql_query(
             (
-                "SELECT post_id, member_id, nickname, title, content, date, board_name, view_count, like_count, url "
+                "SELECT post_id, member_id, nickname, member_level, title, content, date, board_name, view_count, like_count, url "
                 "FROM posts ORDER BY date DESC"
                 + (f" LIMIT {post_limit_sql}" if post_limit_sql else "")
             ),
@@ -538,6 +567,7 @@ with tab1:
                     "post_id": "게시글 ID",
                     "member_id": "작성자 ID",
                     "nickname": "닉네임",
+                    "member_level": "등급",
                     "board_name": "게시판",
                     "view_count": "조회수",
                     "like_count": "좋아요",
@@ -552,6 +582,7 @@ with tab1:
                     "post_id",
                     "member_id",
                     "nickname",
+                    "member_level",
                     "board_name",
                     "view_count",
                     "like_count",
@@ -631,10 +662,11 @@ with tab1:
             if selected_post_id:
                 post_detail = df_posts[df_posts['post_id'] == selected_post_id].iloc[0]
                 
-                col_d1, col_d2, col_d3 = st.columns([1, 1, 2])
+                col_d1, col_d2, col_d3, col_d4 = st.columns([1, 1, 1, 1])
                 col_d1.metric("작성자 ID", post_detail['member_id'])
                 col_d2.metric("닉네임", post_detail['nickname'])
-                col_d3.metric("작성일", post_detail['date'])
+                col_d3.metric("등급", post_detail.get('member_level', ''))
+                col_d4.metric("작성일", post_detail['date'])
                 
                 st.markdown(f"**제목:** {post_detail['title']}")
                 st.markdown(f"**URL:** {post_detail['url']}")

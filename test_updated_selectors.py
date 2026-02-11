@@ -12,7 +12,7 @@ from pathlib import Path
 # 프로젝트 루트를 Python 경로에 추가
 sys.path.append(str(Path(__file__).parent))
 
-from app.scraper.naver import NaverScraper
+from app.products.scraper.naver import NaverScraper
 
 def test_updated_selectors():
     """업데이트된 셀렉터로 스크래핑 테스트"""

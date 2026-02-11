@@ -30,6 +30,7 @@ def init_db(db_path="cafe_data.db"):
             category TEXT,
             view_count INTEGER DEFAULT 0,
             like_count INTEGER DEFAULT 0,
+            member_level TEXT,
             url TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
@@ -45,6 +46,8 @@ def init_db(db_path="cafe_data.db"):
             cursor.execute("ALTER TABLE posts ADD COLUMN view_count INTEGER DEFAULT 0")
         if "like_count" not in cols:
             cursor.execute("ALTER TABLE posts ADD COLUMN like_count INTEGER DEFAULT 0")
+        if "member_level" not in cols:
+            cursor.execute("ALTER TABLE posts ADD COLUMN member_level TEXT DEFAULT ''")
     except Exception:
         pass
 

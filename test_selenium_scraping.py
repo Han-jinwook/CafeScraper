@@ -7,7 +7,7 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from app.scraper.naver import NaverScraper
+from app.products.scraper.naver import NaverScraper
 import time
 
 def test_selenium_scraping():

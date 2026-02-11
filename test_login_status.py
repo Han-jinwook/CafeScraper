@@ -8,7 +8,7 @@ from pathlib import Path
 # Add app directory to path
 sys.path.append(str(Path(__file__).parent))
 
-from app.scraper.naver import NaverScraper
+from app.products.scraper.naver import NaverScraper
 
 def test_login_and_cafe_access():
     """로그인 상태 및 카페 접근 테스트"""

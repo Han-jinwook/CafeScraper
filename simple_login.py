@@ -8,7 +8,7 @@ from pathlib import Path
 # Add app directory to path
 sys.path.append(str(Path(__file__).parent))
 
-from app.scraper.naver import NaverScraper
+from app.products.scraper.naver import NaverScraper
 
 def simple_login():
     """간단한 로그인 프로세스"""

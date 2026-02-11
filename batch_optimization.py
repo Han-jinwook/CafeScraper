@@ -8,7 +8,7 @@ from pathlib import Path
 # Add app directory to path
 sys.path.append(str(Path(__file__).parent))
 
-from app.scraper.naver import NaverScraper
+from app.products.scraper.naver import NaverScraper
 
 def test_batch_optimization():
     """배치 크롤링 최적화 테스트"""

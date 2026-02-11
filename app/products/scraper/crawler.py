@@ -340,12 +340,15 @@ class NaverCafeCrawler:
     def get_article_meta(self, article_url: str) -> Dict[str, Any]:
         """
         외부에서 호출 가능한 메타 추출 헬퍼.
-        - 입력 URL이 f-e/ca-fe여도 club/article id를 파싱해 API로 조회수/좋아요/카테고리 반환
+        - 입력 URL이 f-e/ca-fe여도 club/article id를 파싱해 API로
+          조회수/좋아요/카테고리 + 작성자 등급(member_level) 반환
         """
         try:
             normalized = self._normalize_article_url(article_url or "")
             club_id, article_id = self._parse_club_article_ids(normalized)
             api_meta = self._get_article_meta_via_article_api(club_id, article_id)
+            writer_info = self._get_writer_info_via_article_api(club_id, article_id)
+            api_meta["member_level"] = str(writer_info.get("member_level", "") or "").strip()
 
             # 네이버가 API 응답을 막거나(HTML/403/429) 필드를 바꾸면 0으로만 떨어질 수 있음.
             # 이 경우 화면(PC 버전) 기반 폴백을 한 번 더 시도한다. (가장 확실한 방법)
@@ -359,13 +362,14 @@ class NaverCafeCrawler:
                     (screen_meta.get("view_count", 0) or 0) != 0
                     or (screen_meta.get("like_count", 0) or 0) != 0
                 ):
-                    # 카테고리는 기존 API 값이 있으면 유지 (화면에서 긁기 어려울 수 있음)
+                    # 카테고리/등급은 API 값이 있으면 유지 (화면에서 긁기 어려울 수 있음)
                     if api_meta.get("category"):
                         screen_meta["category"] = api_meta["category"]
+                    screen_meta["member_level"] = api_meta.get("member_level", "")
                     return screen_meta
             return api_meta
         except:
-            return {"view_count": 0, "like_count": 0, "category": ""}
+            return {"view_count": 0, "like_count": 0, "category": "", "member_level": ""}
 
     def _get_article_meta_via_screen(self, article_url: str) -> Dict[str, Any]:
         """
@@ -589,8 +593,9 @@ class NaverCafeCrawler:
         게시글 작성자 원본 정보(API 기반).
         - member_id: 네이버가 쓰는 긴 고유키(MemberKey 계열 포함)
         - nickname: 표시 닉네임
+        - member_level: 등급명 (새싹멤버, 열심멤버 등)
         """
-        out = {"member_id": "unknown", "nickname": "unknown"}
+        out = {"member_id": "unknown", "nickname": "unknown", "member_level": ""}
         if not club_id or not article_id:
             return out
         try:
@@ -625,6 +630,17 @@ class NaverCafeCrawler:
                 if isinstance(v, str) and v.strip():
                     out["nickname"] = v.strip()
                     break
+            
+            # 등급 추출
+            for k in ["memberLevelName", "memberLevel", "levelName", "gradeName", "level"]:
+                v = writer.get(k)
+                if v:
+                    if isinstance(v, str):
+                        out["member_level"] = self._clean_text(v)
+                    elif isinstance(v, dict) and "name" in v: # object인 경우
+                        out["member_level"] = self._clean_text(v.get("name", ""))
+                    if out["member_level"]:
+                        break
 
             # 중첩 구조까지 탐색 (최근 구조 변경 대응)
             if out["nickname"] == "unknown":
@@ -1020,6 +1036,19 @@ class NaverCafeCrawler:
             self.driver.switch_to.default_content()
             current_url = self.driver.current_url
             
+            # 관리자 페이지(ManageMember)는 무조건 iframe 전환 시도해야 함 (구형 방식)
+            if "ManageMember" in current_url:
+                try:
+                    wait = WebDriverWait(self.driver, 5)
+                    iframe = wait.until(EC.presence_of_element_located((By.ID, "cafe_main")))
+                    self.driver.switch_to.frame(iframe)
+                    if self.debug_mode:
+                        self._update_status(f"[디버그] ✅ 관리자 페이지 iframe 전환 성공")
+                    return True
+                except:
+                    # iframe이 없을 수도 있음 (새 창 등)
+                    pass
+
             # SPA 형식은 iframe 없음 (이미 URL 정규화했으므로 여기는 안 올 것)
             if "/ca-fe/" in current_url or "/f-e/" in current_url:
                 if self.debug_mode:
@@ -1300,6 +1329,7 @@ class NaverCafeCrawler:
 
             api_author_id = writer_info.get("member_id", "unknown")
             api_author_nick = writer_info.get("nickname", "unknown")
+            api_member_level = writer_info.get("member_level", "")
             if api_author_id and api_author_id != "unknown":
                 post_author_id = api_author_id
 
@@ -1386,6 +1416,29 @@ class NaverCafeCrawler:
                 except:
                     pass
             
+            # 등급(Level) DOM 백업
+            if not api_member_level:
+                try:
+                    level_selectors = [
+                        "em.icon_level",
+                        "img.icon_level",
+                        ".nick_level",
+                        ".level_icon"
+                    ]
+                    for sel in level_selectors:
+                        try:
+                            el = self.driver.find_element(By.CSS_SELECTOR, sel)
+                            # 텍스트가 있으면 텍스트, 없으면 title/alt/src 확인
+                            txt = el.text.strip()
+                            if not txt:
+                                txt = el.get_attribute("title") or el.get_attribute("alt") or ""
+                            # 이미지 src에서 등급 추출 (예: level_1.gif) 하는건 복잡하므로 일단 텍스트/타이틀 위주
+                            if txt:
+                                api_member_level = txt
+                                break
+                        except: continue
+                except: pass
+
             # 작성자 ID 재추출 (리스트에서 실패한 경우)
             if post_author_id == "unknown":
                 try:
@@ -1426,6 +1479,7 @@ class NaverCafeCrawler:
                         "comments": filtered_comments,
                         "member_id": post_author_id,
                         "nickname": api_author_nick,
+                        "member_level": api_member_level,
                         "board_name": board_name,
                         "category": category,
                         "view_count": int(meta_info.get("view_count", 0) or 0),
@@ -1466,6 +1520,7 @@ class NaverCafeCrawler:
                 "comments": filtered_comments,
                 "member_id": post_author_id,
                 "nickname": api_author_nick,
+                "member_level": api_member_level,
                 "board_name": board_name,
                 "category": category,
                 "view_count": int(meta_info.get("view_count", 0) or 0),
@@ -1477,6 +1532,7 @@ class NaverCafeCrawler:
                 "comments": [],
                 "member_id": post_author_id if post_author_id else "unknown",
                 "nickname": "unknown",
+                "member_level": "",
                 "board_name": "",
                 "category": "",
                 "view_count": 0,

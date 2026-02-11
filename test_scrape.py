@@ -10,7 +10,7 @@ from pathlib import Path
 # Add app directory to path
 sys.path.append(str(Path(__file__).parent))
 
-from app.scraper.naver import NaverScraper
+from app.products.scraper.naver import NaverScraper
 from app.utils.csv_writer import append_article_bundle_row
 
 async def test_scrape_article():

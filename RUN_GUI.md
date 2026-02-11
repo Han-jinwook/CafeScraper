@@ -13,7 +13,7 @@ pip install -r requirements.txt
 
 ### 2. Streamlit 앱 실행
 ```powershell
-streamlit run app.py
+streamlit run 카페_게시글_댓글_크롤러.py
 ```
 
 브라우저가 자동으로 열리고 크롤러 GUI가 표시됩니다.

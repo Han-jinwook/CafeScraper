@@ -7,7 +7,7 @@ import time
 import json
 from pathlib import Path
 
-from crawler import VitaminDWikiCrawler
+from app.products.scraper.crawler import VitaminDWikiCrawler
 from app.utils.sqlite_db import init_db
 from app.utils.paths import get_config_path, resolve_db_path
 
@@ -137,25 +137,25 @@ if "papers_editor_refresh" not in st.session_state:
 
 st.title("📚 논문 수집 (VitaminDWiki 전체)")
 st.caption("카페 수집과 독립된 전수 조사 페이지입니다.")
-col_nav1, col_nav2 = st.columns([1, 3])
-with col_nav1:
-    if st.button("🏠 카페 수집", width="stretch"):
-        # 1) switch_page 우선
-        try:
-            st.switch_page("app.py")
-            st.stop()
-        except Exception:
-            pass
-
-        st.error(
-            "메인 페이지로 이동할 수 없습니다. "
-            "왼쪽 사이드바 페이지 목록에서 메인 페이지를 선택하거나, Streamlit을 재시작해 주세요."
-        )
-with col_nav2:
-    st.caption("돌아가기 버튼이 안 되면, 왼쪽 사이드바에서 메인 페이지를 선택하세요.")
+# col_nav1, col_nav2 = st.columns([1, 3])
+# with col_nav1:
+#     if st.button("🏠 카페 수집", width="stretch"):
+#         # 1) switch_page 우선
+#         try:
+#             st.switch_page("app.py")
+#             st.stop()
+#         except Exception:
+#             pass
+#
+#         st.error(
+#             "메인 페이지로 이동할 수 없습니다. "
+#             "왼쪽 사이드바 페이지 목록에서 메인 페이지를 선택하거나, Streamlit을 재시작해 주세요."
+#         )
+# with col_nav2:
+#     st.caption("돌아가기 버튼이 안 되면, 왼쪽 사이드바에서 메인 페이지를 선택하세요.")
 st.markdown("---")
 
-log_placeholder = st.empty()
+# log_placeholder = st.empty()
 
 
 def update_logs(msg=None):
@@ -163,12 +163,12 @@ def update_logs(msg=None):
         timestamp = datetime.now().strftime("%H:%M:%S")
         st.session_state.wiki_status_messages.append(f"[{timestamp}] {msg}")
 
-    try:
-        log_placeholder.markdown("### 📋 실시간 로그")
-        recent = "\n\n".join(reversed(st.session_state.wiki_status_messages[-30:]))
-        log_placeholder.text_area("", recent, height=280, label_visibility="collapsed", disabled=True)
-    except:
-        pass
+    # try:
+    #     log_placeholder.markdown("### 📋 실시간 로그")
+    #     recent = "\n\n".join(reversed(st.session_state.wiki_status_messages[-30:]))
+    #     log_placeholder.text_area("", recent, height=280, label_visibility="collapsed", disabled=True)
+    # except:
+    #     pass
 
 
 with st.sidebar:
@@ -371,4 +371,3 @@ try:
     conn.close()
 except Exception as e:
     st.error(f"DB 조회 중 오류: {e}")
-

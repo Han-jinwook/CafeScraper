@@ -12,7 +12,7 @@ from pathlib import Path
 # 프로젝트 루트를 Python 경로에 추가
 sys.path.append(str(Path(__file__).parent))
 
-from app.scraper.naver import NaverScraper
+from app.products.scraper.naver import NaverScraper
 
 def test_desktop_version():
     """데스크톱 버전으로 강제 접근하여 테스트"""

@@ -12,7 +12,7 @@ from pathlib import Path
 # 프로젝트 루트를 Python 경로에 추가
 sys.path.append(str(Path(__file__).parent))
 
-from app.scraper.naver import NaverScraper
+from app.products.scraper.naver import NaverScraper
 
 def test_login_and_wait():
     """로그인 상태 확인 및 JavaScript 로딩 대기"""

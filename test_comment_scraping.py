@@ -8,7 +8,7 @@ from pathlib import Path
 # Add app directory to path
 sys.path.append(str(Path(__file__).parent))
 
-from app.scraper.naver import NaverScraper
+from app.products.scraper.naver import NaverScraper
 
 def test_comment_scraping():
     """댓글 긁어오기 기능 테스트"""

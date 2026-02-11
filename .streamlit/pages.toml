@@ -1,6 +1,6 @@
 [[pages]]
-path = "app.py"
-name = "메인"
+path = "카페_게시글_댓글_크롤러.py"
+name = "카페 게시글/댓글 크롤러"
 
 [[pages]]
 path = "pages/02_논문_수집.py"
