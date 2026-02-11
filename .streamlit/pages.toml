@@ -1,0 +1,15 @@
+[[pages]]
+path = "app.py"
+name = "메인"
+
+[[pages]]
+path = "pages/02_논문_수집.py"
+name = "논문 수집"
+
+[[pages]]
+path = "pages/03_이벤트_댓글_추첨.py"
+name = "이벤트 댓글 추첨"
+
+[[pages]]
+path = "pages/04_자동_댓글러.py"
+name = "자동 댓글러"

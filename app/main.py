@@ -18,7 +18,7 @@ logging.basicConfig(
 
 # Lazy imports for optional heavy deps
 try:
-	from app.scraper.naver import NaverScraper
+	from app.products.scraper.naver import NaverScraper
 except Exception:
 	NaverScraper = None  # type: ignore
 
@@ -211,11 +211,7 @@ async def login_start() -> JSONResponse:
 	"""Start manual login process with browser window."""
 	try:
 		scraper = NaverScraper(SESSIONS_DIR, SNAPSHOTS_DIR)
-<<<<<<< HEAD
 		success = scraper.ensure_logged_in()
-=======
-		success = scraper.manual_login()
->>>>>>> 9540633dc9880bb288d4ebffde1c3da4da964713
 		scraper.close()
 		
 		if success:
@@ -583,10 +579,6 @@ async def cleanup_old_metrics(days: int = 30) -> JSONResponse:
 			"message": f"메트릭 정리 실패: {str(e)}"
 		}, status_code=500)
 
-<<<<<<< HEAD
-=======
-
->>>>>>> 9540633dc9880bb288d4ebffde1c3da4da964713
 if __name__ == "__main__":
 	import uvicorn
 	uvicorn.run(app, host="127.0.0.1", port=8001)
