@@ -1,10 +1,17 @@
 {
     "admin_nicks": "마법사멀린, 멀린스타크, 멀린",
     "exclude_boards": "공지&이벤트\n자유 게시판\n먹거리 / 맛집\n멘토단 전용 (중상급자)\n음악 웃음 힐링\n제품사은품후기\n진급축하 / 진급문의\n회원상품 홍보\n(조사기)중고 직거래\n썬드림 앱's",
-    "start_date": "2025-01-01",
+    "start_date": "2024-02-28",
     "end_date": "2026-02-06",
     "cafe_url": "https://cafe.naver.com/sundreamd",
     "board_url": "https://cafe.naver.com/f-e/cafes/27870803/menus/0?viewType=L",
+    "level_backfill": true,
     "meta_backfill": true,
+    "quick_recovery_mode": true,
+    "fail_safe_enabled": true,
+    "fail_safe_threshold": 40,
+    "progress_log_every": 100,
+    "delay_min_sec": 1,
+    "delay_max_sec": 2,
     "db_path": "D:\\CafeBreaker\\cafe_data.db"
 }

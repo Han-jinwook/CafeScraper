@@ -14,6 +14,11 @@ from app.utils.event_db import init_event_db, save_event_comments, get_event_com
 
 st.set_page_config(page_title="이벤트 댓글 수집", layout="wide")
 
+# 메인 크롤링 구동 중에는 다른 메뉴 작업을 잠시 차단
+if st.session_state.get("crawl_running", False):
+    st.warning("메인 크롤링이 진행 중입니다. 메인 페이지에서 중단 후 다시 시도해주세요.")
+    st.stop()
+
 CONFIG_PATH = str(get_config_path())
 
 

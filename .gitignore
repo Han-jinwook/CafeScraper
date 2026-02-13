@@ -11,6 +11,7 @@ ENV/
 ## Local runtime outputs (Project DAYBREAK)
 logs/
 *.log
+build_products/
 
 ## Local databases / backups
 *.db

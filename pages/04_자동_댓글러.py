@@ -12,6 +12,11 @@ from app.utils.sqlite_db import init_db
 
 st.set_page_config(page_title="댓글 자동화 - CafeScraper", layout="wide")
 
+# 메인 크롤링 구동 중에는 다른 메뉴 작업을 잠시 차단
+if st.session_state.get("crawl_running", False):
+    st.warning("메인 크롤링이 진행 중입니다. 메인 페이지에서 중단 후 다시 시도해주세요.")
+    st.stop()
+
 # DB 경로 설정
 PROJECT_ROOT = get_project_root()
 MAIN_DB_PATH = "cafe_data.db"

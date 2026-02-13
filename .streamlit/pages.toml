@@ -1,5 +1,5 @@
 [[pages]]
-path = "카페_게시글_댓글_크롤러.py"
+path = "app.py"
 name = "카페 게시글/댓글 크롤러"
 
 [[pages]]

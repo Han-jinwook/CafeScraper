@@ -1,0 +1,93 @@
+{
+  "integrated": {
+    "brand_name_ko": "카페 몬스터",
+    "display_name": "[카페 몬스터] 통합본 Master",
+    "system_id": "CafeMonster_MasterSuite",
+    "version": "V1.0",
+    "entry_script": "카페_게시글_댓글_크롤러.py",
+    "page_title": "[카페 몬스터] 통합본 Master V1.0",
+    "pages": [
+      {
+        "path": "카페_게시글_댓글_크롤러.py",
+        "name": "카페 추출기 Pro"
+      },
+      {
+        "path": "pages/02_논문_수집.py",
+        "name": "논문 수집"
+      },
+      {
+        "path": "pages/03_이벤트_댓글_추첨.py",
+        "name": "이벤트 댓글 추첨"
+      },
+      {
+        "path": "pages/04_자동_댓글러.py",
+        "name": "자동 댓글러"
+      }
+    ]
+  },
+  "crawler_basic": {
+    "brand_name_ko": "카페 몬스터",
+    "display_name": "[카페 몬스터] 카페 추출기 Pro",
+    "system_id": "CafeMonster_Crawler_Pro",
+    "version": "V1.0",
+    "entry_script": "카페_게시글_댓글_크롤러.py",
+    "page_title": "[카페 몬스터] 카페 추출기 Pro V1.0",
+    "pages": [
+      {
+        "path": "카페_게시글_댓글_크롤러.py",
+        "name": "카페 추출기 Pro"
+      }
+    ]
+  },
+  "event_picker": {
+    "brand_name_ko": "카페 몬스터",
+    "display_name": "[카페 몬스터] 이벤트 추첨기",
+    "system_id": "CafeMonster_EventPicker",
+    "version": "V1.0",
+    "entry_script": "app.py",
+    "page_title": "[카페 몬스터] 이벤트 추첨기 V1.0",
+    "pages": [
+      {
+        "path": "pages/03_이벤트_댓글_추첨.py",
+        "name": "이벤트 댓글 추첨"
+      }
+    ]
+  },
+  "commenter": {
+    "brand_name_ko": "카페 몬스터",
+    "display_name": "[카페 몬스터] 스텔스 댓글러",
+    "system_id": "CafeMonster_StealthComment",
+    "version": "V1.0",
+    "entry_script": "app.py",
+    "page_title": "[카페 몬스터] 스텔스 댓글러 V1.0",
+    "pages": [
+      {
+        "path": "pages/04_자동_댓글러.py",
+        "name": "스텔스 댓글러"
+      }
+    ]
+  },
+  "paper_collector": {
+    "brand_name_ko": "카페 몬스터",
+    "display_name": "[카페 몬스터] 논문 수집기",
+    "system_id": "CafeMonster_PaperCrawler",
+    "version": "V1.0",
+    "entry_script": "app.py",
+    "page_title": "[카페 몬스터] 논문 수집기 V1.0",
+    "pages": [
+      {
+        "path": "pages/02_논문_수집.py",
+        "name": "논문 수집"
+      }
+    ]
+  },
+  "place_db_pro": {
+    "brand_name_ko": "카페 몬스터",
+    "display_name": "[카페 몬스터] 플레이스 DB Pro",
+    "system_id": "CafeMonster_PlaceDB_Pro",
+    "version": "V1.0",
+    "entry_script": "app.py",
+    "page_title": "[카페 몬스터] 플레이스 DB Pro V1.0",
+    "pages": []
+  }
+}

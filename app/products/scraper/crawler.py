@@ -371,6 +371,20 @@ class NaverCafeCrawler:
         except:
             return {"view_count": 0, "like_count": 0, "category": "", "member_level": ""}
 
+    def get_article_member_level(self, article_url: str) -> str:
+        """
+        등급(member_level)만 빠르게 조회.
+        - API 기반 작성자 정보만 사용 (브라우저 이동/화면 폴백 없음)
+        - 대량 보강 시 속도 저하를 막기 위한 전용 경로
+        """
+        try:
+            normalized = self._normalize_article_url(article_url or "")
+            club_id, article_id = self._parse_club_article_ids(normalized)
+            writer_info = self._get_writer_info_via_article_api(club_id, article_id)
+            return str(writer_info.get("member_level", "") or "").strip()
+        except:
+            return ""
+
     def _get_article_meta_via_screen(self, article_url: str) -> Dict[str, Any]:
         """
         [최후의 수단] PC 버전 화면으로 직접 이동해서 화면에 보이는 숫자를 긁어온다.
@@ -647,6 +661,12 @@ class NaverCafeCrawler:
                 found = self._deep_find_first_string(writer, ["nick", "nickname", "display", "name"])
                 if found:
                     out["nickname"] = found
+            
+            # (추가) API 호출은 성공했으나 등급이 없는 경우 -> 탈퇴로 간주
+            # 통신 성공(200)했으므로 닉네임 유무와 무관하게 등급 필드가 없으면 탈퇴 회원일 확률이 높음
+            if not out["member_level"]:
+                 out["member_level"] = "탈퇴"
+
         except Exception as e:
             if self.debug_mode:
                 self._update_status(f"[디버그] API writer 정보 추출 실패: {e}")
@@ -1438,6 +1458,10 @@ class NaverCafeCrawler:
                                 break
                         except: continue
                 except: pass
+            
+            # (추가) 끝까지 등급이 없으면 탈퇴로 간주
+            if not api_member_level:
+                 api_member_level = "탈퇴"
 
             # 작성자 ID 재추출 (리스트에서 실패한 경우)
             if post_author_id == "unknown":

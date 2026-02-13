@@ -80,7 +80,7 @@ def init_db(db_path="cafe_data.db"):
 
     conn.commit()
     conn.close()
-    print(f"✅ DB 초기화 완료: {os.path.abspath(db_path)}")
+    # print(f"✅ DB 초기화 완료: {os.path.abspath(db_path)}")
 
 if __name__ == "__main__":
     init_db()
