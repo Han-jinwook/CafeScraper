@@ -662,11 +662,6 @@ class NaverCafeCrawler:
                 if found:
                     out["nickname"] = found
             
-            # (추가) API 호출은 성공했으나 등급이 없는 경우 -> 탈퇴로 간주
-            # 통신 성공(200)했으므로 닉네임 유무와 무관하게 등급 필드가 없으면 탈퇴 회원일 확률이 높음
-            if not out["member_level"]:
-                 out["member_level"] = "탈퇴"
-
         except Exception as e:
             if self.debug_mode:
                 self._update_status(f"[디버그] API writer 정보 추출 실패: {e}")
@@ -878,6 +873,83 @@ class NaverCafeCrawler:
             if self.debug_mode:
                 self._update_status(f"[디버그] JS state member_id 추출 실패: {e}")
         return "unknown"
+
+    def _get_member_level_via_js_state(self) -> str:
+        """전략: SPA 전역 상태에서 등급명(member level) 추출"""
+        if not self.driver:
+            return ""
+        try:
+            js = r"""
+                try {
+                    const roots = [];
+                    if (window.__INITIAL_STATE__) roots.push(window.__INITIAL_STATE__);
+                    if (window.__NEXT_DATA__) roots.push(window.__NEXT_DATA__);
+                    if (window.__APOLLO_STATE__) roots.push(window.__APOLLO_STATE__);
+
+                    const KEY_HINTS = ["memberlevelname","memberlevel","levelname","gradename","level","grade"];
+                    const BAD = new Set(["", "null", "undefined", "unknown"]);
+
+                    function clean(s) {
+                        return String(s || "").replace(/\s+/g, " ").trim();
+                    }
+
+                    function isLikelyLevel(v) {
+                        const t = clean(v);
+                        if (!t) return false;
+                        const tl = t.toLowerCase();
+                        if (BAD.has(tl)) return false;
+                        // 카페 등급명에서 자주 보이는 패턴 우선
+                        return /멤버|매니저|부\s*매니저|스탭|운영|새싹|초급|중급|상급|정회원/.test(t);
+                    }
+
+                    function dig(obj, depth, seen) {
+                        if (!obj || depth > 8 || typeof obj !== "object") return "";
+                        if (seen.has(obj)) return "";
+                        seen.add(obj);
+
+                        if (Array.isArray(obj)) {
+                            for (const v of obj) {
+                                const found = dig(v, depth + 1, seen);
+                                if (found) return found;
+                            }
+                            return "";
+                        }
+
+                        // 1) 키 힌트 기반 직접 추출
+                        for (const [k, v] of Object.entries(obj)) {
+                            const kl = String(k || "").toLowerCase();
+                            if (KEY_HINTS.some(h => kl.includes(h))) {
+                                if (typeof v === "string" && isLikelyLevel(v)) return clean(v);
+                                if (v && typeof v === "object" && typeof v.name === "string" && isLikelyLevel(v.name)) return clean(v.name);
+                            }
+                        }
+
+                        // 2) 재귀 탐색
+                        for (const v of Object.values(obj)) {
+                            if (v && typeof v === "object") {
+                                const found = dig(v, depth + 1, seen);
+                                if (found) return found;
+                            }
+                        }
+                        return "";
+                    }
+
+                    for (const root of roots) {
+                        const found = dig(root, 0, new WeakSet());
+                        if (found) return found;
+                    }
+                    return "";
+                } catch (e) {
+                    return "";
+                }
+            """
+            lvl = self.driver.execute_script(js)
+            if isinstance(lvl, str):
+                return self._clean_text(lvl)
+        except Exception as e:
+            if self.debug_mode:
+                self._update_status(f"[디버그] JS state member_level 추출 실패: {e}")
+        return ""
 
     def _get_member_id_via_layer(self, nickname_element) -> str:
         """전략 1: 닉네임 클릭 → 작성자 레이어에서 blogId 파싱 (리스트/댓글에서 특히 유용)"""
@@ -1106,7 +1178,17 @@ class NaverCafeCrawler:
             clean_date = re.sub(r'[^0-9.]', '', date_str).strip('.')
             parts = clean_date.split('.')
             if len(parts) == 3:
-                return datetime(int(parts[0]), int(parts[1]), int(parts[2]))
+                y, m, d = int(parts[0]), int(parts[1]), int(parts[2])
+                # 2자리 연도(YY) 보정: 1900년대일 확률은 낮으므로 2000을 더함
+                if y < 100:
+                    y += 2000
+                return datetime(y, m, d)
+            
+            # (추가) MM.DD 형식 대응 (올해로 가정)
+            if len(parts) == 2:
+                m, d = int(parts[0]), int(parts[1])
+                return datetime(datetime.now().year, m, d)
+
             return None
         except:
             return None
@@ -1149,65 +1231,140 @@ class NaverCafeCrawler:
             return ""
         return ""
 
+    def set_stop_check_callback(self, callback):
+        self.stop_check_callback = callback
+
+    def _should_stop(self):
+        if self.status_callback and hasattr(self, 'stop_check_callback') and self.stop_check_callback:
+            return self.stop_check_callback()
+        return False
+
+    def _convert_to_legacy_board_url(self, url: str) -> str:
+        """
+        SPA URL(f-e)을 Legacy URL(ArticleList.nhn)로 변환하여
+        userDisplay=50 등의 파라미터가 잘 먹히도록 함.
+        """
+        try:
+            # https://cafe.naver.com/f-e/cafes/27870803/menus/0
+            if "/f-e/cafes/" in url and "/menus/" in url:
+                m = re.search(r"/cafes/(\d+)/menus/(\d+)", url)
+                if m:
+                    club_id = m.group(1)
+                    menu_id = m.group(2)
+                    
+                    # menu_id가 0이면(전체글보기), menuid 파라미터를 빼야 정상 동작할 수 있음
+                    # 또는 search.menuid를 넣지 않고 clubid만으로 전체보기가 됨
+                    base = f"https://cafe.naver.com/ArticleList.nhn?search.clubid={club_id}&search.boardtype=L"
+                    if menu_id != "0":
+                        base += f"&search.menuid={menu_id}"
+                    
+                    return base
+        except:
+            pass
+        return url
+
     def scrape_board_list(
         self,
         board_url: str,
         start_date: datetime,
         end_date: datetime,
         exclude_boards: Optional[List[str]] = None,
-        max_pages: int = 5000,
-    ) -> List[Dict[str, Any]]:
-        """게시판 리스트에서 날짜 범위 내 게시글 링크 추출 (undetected 버전)"""
+        start_page: int = 1,
+        max_pages: int = 50,
+    ) -> tuple[List[Dict[str, Any]], bool]:
+        """
+        게시판 리스트에서 날짜 범위 내 게시글 링크 추출 (배치 처리 지원)
+        - start_page: 시작 페이지 번호
+        - max_pages: 이번 호출에서 스캔할 최대 페이지 수 (배치 크기)
+        - Returns: (collected_articles, is_finished)
+          - is_finished: True면 더 이상 수집할 필요 없음 (날짜 초과 또는 게시판 끝)
+        """
         if not board_url:
             self._update_status("❌ 게시판 URL이 비어 있습니다.")
-            return []
+            return [], True
+
+        # (수정) URL을 레거시 포맷으로 변환하여 50개씩 보기가 확실히 적용되도록 함
+        board_url = self._convert_to_legacy_board_url(board_url)
 
         exclude_norm = set()
         if exclude_boards:
             exclude_norm = {self._normalize_board_name(x) for x in exclude_boards if str(x).strip()}
             
         all_articles = []
-        page = 1
+        page = start_page
+        end_page = start_page + max_pages - 1
         should_continue = True
+        is_finished = False
         
-        # 기존엔 50페이지로 고정되어 있어 기간이 길면 몇 달치에서 끊길 수 있음
-        # (전체글보기 기본 표시개수 기준 50p ≈ 수백~천개 수준)
-        while should_continue and page <= int(max_pages):
+        last_first_post_id = None # (추가) 무한 루프 방지용
+
+        while should_continue and page <= end_page:
+            # (추가) 중단 요청 확인
+            if self._should_stop():
+                self._update_status("🛑 사용자 요청으로 목록 수집을 중단합니다.")
+                should_continue = False
+                break
+
             sep = "&" if "?" in str(board_url) else "?"
-            target_page_url = f"{board_url}{sep}page={page}"
+            # (수정) 50개씩 보기 강제 적용 (userDisplay=50)
+            target_page_url = f"{board_url}{sep}page={page}&userDisplay=50"
             
-            self._update_status(f"🚀 {page}페이지 분석 시작 (누적: {len(all_articles)}개)")
+            self._update_status(f"🚀 {page}페이지 분석 시작 (이번 배치 누적: {len(all_articles)}개)")
             
             # 20페이지마다 휴식 (리스트 수집 중 차단 방지)
             if page > 1 and page % 20 == 0:
-                 self._update_status(f"☕ (리스트 수집) 네이버 차단 방지를 위해 30초간 휴식합니다... ({page}페이지 완료)")
-                 time.sleep(30)
+                 self._update_status(f"☕ (리스트 수집) 네이버 차단 방지를 위해 5초간 휴식합니다... ({page}페이지 완료)")
+                 time.sleep(5)
             
             try:
                 # 페이지 이동 (undetected는 알아서 부드럽게 처리)
                 if self.driver.current_url != target_page_url:
                     self.driver.get(target_page_url)
-                    time.sleep(3)  # 로딩 대기
+                    time.sleep(2.5)  # 로딩 대기
                 
                 self._switch_to_cafe_iframe()
                 
                 # 스크롤하여 동적 콘텐츠 로딩
                 self.driver.execute_script("window.scrollTo(0, 1000);")
-                time.sleep(1.5)
+                time.sleep(1.0)
                 
                 # 게시글 행 찾기 (최신 SPA 구조 우선)
                 rows = self.driver.find_elements(By.CSS_SELECTOR, "div[class*='ArticleItem'], li[class*='article'], div.article-board table tbody tr")
                 
                 if not rows:
-                    self._update_status(f"⚠️ {page}페이지에서 게시글을 찾지 못했습니다.")
+                    self._update_status(f"⚠️ {page}페이지에서 게시글을 찾지 못했습니다. (게시판 끝 추정)")
+                    is_finished = True
                     break
-                    
+                
+                # (추가) 50개씩 보기 적용 확인
+                if len(rows) < 20 and len(rows) > 0:
+                     self._update_status(f"⚠️ 경고: 페이지당 게시글이 {len(rows)}개만 감지됨. (50개 설정 미적용 가능성)")
+
                 page_found_count = 0
+                page_dates = [] # (추가) 페이지 내 유효한(공지 제외) 게시글 날짜 수집
+                
+                # (추가) 무한 루프(페이지 고착) 감지
+                # 첫 번째 게시글(공지 제외)의 ID를 확인하여 이전 페이지와 동일하면 중단
+                current_first_post_id = None
+
                 for idx, row in enumerate(rows):
                     try:
-                        # 공지 스킵
+                        # 공지 스킵 강화
                         row_class = (row.get_attribute("class") or "").lower()
-                        if "notice" in row_class or "top" in row_class: continue
+                        is_notice = False
+                        if "notice" in row_class or "top" in row_class: 
+                            is_notice = True
+                        
+                        # (추가) 텍스트/아이콘 기반 공지 확인
+                        if not is_notice:
+                            try:
+                                if row.find_elements(By.CSS_SELECTOR, ".ico_notice, .icon_notice, .td_notice"):
+                                    is_notice = True
+                                elif "공지" in row.text[:10]: # 텍스트 앞부분에 '공지' 포함 시
+                                    is_notice = True
+                            except: pass
+                        
+                        if is_notice: continue
                         
                         # 날짜 추출
                         date_val = None
@@ -1224,10 +1381,35 @@ class NaverCafeCrawler:
                             if date_match: date_val = self._parse_date(date_match.group(1))
                         
                         if not date_val: continue
+                        
+                        # (추가) 무한 루프 감지용 ID 수집 (첫 번째 유효 게시글)
+                        if current_first_post_id is None:
+                            try:
+                                # href에서 articleid 추출
+                                link_el_temp = None
+                                for ls in ["a[class*='ArticleLink']", "a.article", "a[href*='articleid']"]:
+                                    try:
+                                        link_el_temp = row.find_element(By.CSS_SELECTOR, ls)
+                                        if link_el_temp: break
+                                    except: continue
+                                if link_el_temp:
+                                    href_temp = link_el_temp.get_attribute("href")
+                                    m_temp = re.search(r'articleid=(\d+)', href_temp) or re.search(r'/articles/(\d+)', href_temp)
+                                    if m_temp:
+                                        current_first_post_id = m_temp.group(1)
+                            except: pass
+
+                        # (추가) 유효한 게시글 날짜만 수집
+                        page_dates.append(date_val)
+
                         if date_val > end_date: continue
                         if date_val < start_date:
-                            self._update_status(f"⏱️ 시작일 이전 도달. 종료합니다.")
+                            # (수정) 여기가 실행되어야 멈추는데, 만약 날짜 파싱 오류로 date_val이 이상하면 안 멈출 수 있음
+                            # 디버깅용 로그 추가
+                            # self._update_status(f"[디버그] 날짜 도달: {date_val} < {start_date}")
+                            self._update_status(f"⏱️ 시작일 이전 도달 ({date_val.strftime('%Y년 %m월 %d일')}). 종료합니다.")
                             should_continue = False
+                            is_finished = True
                             break
                         
                         # 링크/제목
@@ -1306,19 +1488,42 @@ class NaverCafeCrawler:
                         
                     except: continue
                 
-                self._update_status(f"✅ {page}페이지 완료: {page_found_count}개 수집 (총 {len(all_articles)}개 누적)")
+                # (추가) 무한 루프 체크
+                if current_first_post_id and current_first_post_id == last_first_post_id:
+                    self._update_status(f"⚠️ 페이지 고착 감지: {page}페이지 내용이 이전 페이지와 동일합니다. (더 이상 글이 없거나 오류)")
+                    is_finished = True
+                    break
+                last_first_post_id = current_first_post_id
+
+                # self._update_status(f"✅ {page}페이지 완료: {page_found_count}개 수집 (배치 누적 {len(all_articles)}개)")
+                
+                # (수정) 사용자 안심용 로그: 수집된 게 없어도 현재 탐색 위치(날짜)를 알려줌
+                if page_found_count == 0:
+                     if page_dates:
+                         # 공지가 아닌 유효 게시글 중 가장 오래된(과거) 날짜를 기준으로 표시
+                         min_date = min(page_dates)
+                         last_seen_date_str = min_date.strftime("%Y년 %m월 %d일")
+                         self._update_status(f"🔎 {page}p 탐색 중... (현재 글 날짜: {last_seen_date_str} → 이전 수집 시작일: {start_date.strftime('%Y년 %m월 %d일')}까지 이동 중)")
+                     elif 'last_seen_date_str' in locals():
+                         # 이번 페이지엔 공지밖에 없었지만, 이전 페이지 기록이 있는 경우
+                         self._update_status(f"🔎 {page}p 탐색 중... (공지/광고 스킵됨, 이전 기준: {last_seen_date_str} → 목표: {start_date.strftime('%Y년 %m월 %d일')})")
+                     else:
+                         self._update_status(f"🔎 {page}p 탐색 중... (현재 페이지에 유효한 날짜를 찾지 못함)")
+                else:
+                     # (수정) 50개씩 보기 모드임을 감안하여 로그 메시지 수정
+                     self._update_status(f"✅ {page}페이지 완료 (50개씩 보기): {page_found_count}개 수집 (배치 누적 {len(all_articles)}개)")
                 
                 if not should_continue: break
                 page += 1
-                time.sleep(random.uniform(3, 6))
+                time.sleep(random.uniform(2, 4))
                 
             except Exception as e:
                 self._update_status(f"❌ {page}페이지 처리 중 오류: {e}")
+                # 에러가 나도 다음 페이지 시도해볼 수 있으나, 연속 에러 방지 위해 일단 break?
+                # 여기서는 배치 중단하고 현재까지 수집된 것 반환
                 break
             
-        if should_continue and page > int(max_pages):
-            self._update_status(f"⛔ 최대 페이지 제한({int(max_pages):,}p)에 도달했습니다. 기간이 길면 max_pages를 더 키워주세요.")
-        return all_articles
+        return all_articles, is_finished
 
     def _normalize_article_url(self, article_url: str) -> str:
         if 'ArticleRead.nhn' in article_url or '/ArticleRead.nhn' in article_url:
@@ -1437,13 +1642,16 @@ class NaverCafeCrawler:
                     pass
             
             # 등급(Level) DOM 백업
+            writer_text = ""
             if not api_member_level:
                 try:
                     level_selectors = [
                         "em.icon_level",
                         "img.icon_level",
                         ".nick_level",
-                        ".level_icon"
+                        ".level_icon",
+                        ".ArticleWriter .level", # 추가
+                        ".article_writer .level", # 추가
                     ]
                     for sel in level_selectors:
                         try:
@@ -1457,11 +1665,46 @@ class NaverCafeCrawler:
                                 api_member_level = txt
                                 break
                         except: continue
+                    
+                    # (추가) 텍스트 기반 등급 확인 (부 매니저 등)
+                    if not api_member_level:
+                         try:
+                             # 닉네임 주변 텍스트에서 '매니저', '스탭' 등이 있는지 확인
+                             writer_area = self.driver.find_element(By.CSS_SELECTOR, ".ArticleWriter, .article_writer")
+                             writer_text = writer_area.text
+                             wt = re.sub(r"\s+", "", str(writer_text or ""))
+                             if "부매니저" in wt:
+                                 api_member_level = "부 매니저"
+                             elif "매니저" in wt:
+                                 api_member_level = "매니저"
+                             elif "스탭" in wt:
+                                 api_member_level = "스탭"
+                             elif "일반멤버" in wt:
+                                 api_member_level = "일반멤버"
+                             elif "열심멤버" in wt:
+                                 api_member_level = "열심멤버"
+                             elif "새싹멤버" in wt:
+                                 api_member_level = "새싹멤버"
+                             elif "초급자" in wt:
+                                 api_member_level = "초급자"
+                             elif "중급자" in wt:
+                                 api_member_level = "중급자"
+                             elif "상급자" in wt:
+                                 api_member_level = "상급자"
+                             elif "정회원" in wt:
+                                 api_member_level = "정회원"
+                         except: pass
+
                 except: pass
-            
-            # (추가) 끝까지 등급이 없으면 탈퇴로 간주
+
+            # (추가) JS 전역 상태 폴백: DOM/API가 비어도 levelName이 남아있는 경우 복구
             if not api_member_level:
-                 api_member_level = "탈퇴"
+                js_lvl = self._get_member_level_via_js_state()
+                if js_lvl:
+                    api_member_level = js_lvl
+            
+            # NOTE: 지난주 정상 동작 버전 기준으로, 여기서 강제 '탈퇴' 판정을 하지 않는다.
+            # 등급 근거가 없으면 빈값을 유지하고 상위 로직(DB 기존값/보정맵)에서 처리한다.
 
             # 작성자 ID 재추출 (리스트에서 실패한 경우)
             if post_author_id == "unknown":
