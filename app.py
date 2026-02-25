@@ -79,6 +79,85 @@ st.markdown("""
         overflow: hidden;
     }
 
+    /* 게시글/댓글 테이블 스크롤바: 두껍게 + 상시 노출 */
+    div[data-testid="stDataFrame"] [style*="overflow"],
+    div[data-testid="stDataEditor"] [style*="overflow"] {
+        overflow: scroll !important;
+        scrollbar-gutter: stable both-edges;
+        scrollbar-width: auto;
+        scrollbar-color: #9aa4b2 #eef2f7;
+    }
+    div[data-testid="stDataFrame"] *::-webkit-scrollbar,
+    div[data-testid="stDataEditor"] *::-webkit-scrollbar {
+        width: 14px;
+        height: 14px;
+    }
+    div[data-testid="stDataFrame"] *::-webkit-scrollbar-thumb,
+    div[data-testid="stDataEditor"] *::-webkit-scrollbar-thumb {
+        background: #9aa4b2;
+        border-radius: 999px;
+        border: 3px solid #eef2f7;
+    }
+    div[data-testid="stDataFrame"] *::-webkit-scrollbar-track,
+    div[data-testid="stDataEditor"] *::-webkit-scrollbar-track {
+        background: #eef2f7;
+        border-radius: 999px;
+    }
+    div[data-testid="stDataFrame"] *::-webkit-scrollbar-corner,
+    div[data-testid="stDataEditor"] *::-webkit-scrollbar-corner {
+        background: #eef2f7;
+    }
+
+    /* 게시글 선택 행 하이라이트 (지원 브라우저에서 :has 동작) */
+    div[data-testid="stDataEditor"] [role="row"]:has(input[type="checkbox"]:checked) {
+        background-color: #fff6cf !important;
+    }
+    div[data-testid="stDataEditor"] [role="row"]:has(input[type="checkbox"]:checked) [role="gridcell"] {
+        background-color: #fff6cf !important;
+    }
+    /* data_editor DOM 변형 대응: 체크된 셀 + 같은 행의 뒤쪽 셀 하이라이트 */
+    div[data-testid="stDataEditor"] [role="gridcell"]:has(input[type="checkbox"]:checked),
+    div[data-testid="stDataEditor"] [role="gridcell"]:has(input[type="checkbox"]:checked) ~ [role="gridcell"] {
+        background-color: #fff2b3 !important;
+    }
+    /* streamlit 1.39 계열 체크박스(aria-checked) 대응 */
+    div[data-testid="stDataEditor"] [role="row"]:has([aria-checked="true"]) {
+        background-color: #fff2b3 !important;
+    }
+    div[data-testid="stDataEditor"] [role="row"]:has([aria-checked="true"]) [role="gridcell"] {
+        background-color: #fff2b3 !important;
+    }
+    div[data-testid="stDataEditor"] [role="gridcell"]:has([aria-checked="true"]),
+    div[data-testid="stDataEditor"] [role="gridcell"]:has([aria-checked="true"]) ~ [role="gridcell"] {
+        background-color: #fff2b3 !important;
+    }
+
+    /* 선택 컬럼(첫 번째 헤더) 아이콘/텍스트 완전 숨김 */
+    div[data-testid="stDataEditor"] [role="columnheader"]:first-child * {
+        display: none !important;
+    }
+    /* 선택 컬럼(첫 번째 열) 폭 최소화 */
+    div[data-testid="stDataEditor"] [role="columnheader"]:first-child,
+    div[data-testid="stDataEditor"] [role="row"] [role="gridcell"]:first-child {
+        min-width: 28px !important;
+        width: 28px !important;
+        max-width: 28px !important;
+        padding-left: 2px !important;
+        padding-right: 2px !important;
+    }
+    /* aria-colindex 기반으로도 동일 강제 (렌더러 차이 대응) */
+    div[data-testid="stDataEditor"] [role="columnheader"][aria-colindex="1"],
+    div[data-testid="stDataEditor"] [role="row"] [role="gridcell"][aria-colindex="1"] {
+        min-width: 28px !important;
+        width: 28px !important;
+        max-width: 28px !important;
+        padding-left: 2px !important;
+        padding-right: 2px !important;
+    }
+    div[data-testid="stDataEditor"] input[type="checkbox"] {
+        margin: 0 auto !important;
+    }
+
     /* expander/사이드바 카드 톤 */
     div[data-testid="stExpander"] {
         border: 1px solid #e6e8ef;
@@ -191,6 +270,8 @@ def save_to_sqlite(post_data: dict, comments: list, replace_comments: bool = Tru
             # timeout 30초로 증가 (잠금 해제 대기)
             conn = sqlite3.connect(DB_PATH, timeout=30.0)
             cursor = conn.cursor()
+            # 안전장치: 등급이 비어 있으면 기본값을 '탈퇴'로 저장
+            member_level_value = str(post_data.get("member_level", "") or "").strip() or "탈퇴"
             
             # 1. 게시글 저장 (Upsert)
             cursor.execute('''
@@ -210,7 +291,7 @@ def save_to_sqlite(post_data: dict, comments: list, replace_comments: bool = Tru
                 int(post_data.get('view_count', 0) or 0),
                 int(post_data.get('like_count', 0) or 0),
                 post_data['url'],
-                post_data.get('member_level', ''),
+                member_level_value,
             ))
             
             # 2. 댓글 저장 (재실행/업데이트 시 중복 방지 옵션)
@@ -279,15 +360,15 @@ with _col_title:
     with st.expander("📖 사용 가이드 (필독)", expanded=False):
         st.markdown(
             """
-            **1. 작업 모드 선택**
-            - **스마트 수집 (기본)**: 설정된 기간의 게시글을 수집합니다. 
-              - 새로운 글은 추가하고, 이미 수집된 글 중 **등급이 비어있는 경우 자동으로 채웁니다.**
-              - 가장 권장되는 모드입니다.
-            - **DB 등급 공백 메우기**: 게시판 목록을 훑지 않고, **DB에 저장된 글 중 등급이 없는 것만** 빠르게 찾아 복구합니다.
+            **1. 기본 수집(단일 모드)**
+            - 설정된 기간의 게시글을 수집합니다.
+            - 새로운 글은 추가하고, 이미 수집된 글 중 **등급이 비어있는 경우 자동으로 채웁니다.**
+            - 별도 복구 모드를 고르지 않아도 스마트 보강이 함께 동작합니다.
             
             **2. 속도 향상 팁 (자동 적용)**
             - **50개씩 보기**: 크롤러가 자동으로 게시판 목록을 '50개씩 보기'로 전환하여 탐색 속도를 높입니다.
-            - **페이지 점프**: 과거 데이터를 수집할 때, [속도 설정]에서 **'수집 시작 페이지'**를 지정하면 앞부분을 건너뛰고 바로 시작할 수 있습니다.
+            - **자동 시작 페이지 탐색**: 지정한 기간에 맞는 페이지를 자동으로 찾아 점프합니다.
+            - **수동 시작 페이지(선택)**: 이전 실행 로그의 마지막 페이지를 기준으로, 다음 실행 시작 위치를 직접 지정할 수 있습니다.
             
             **3. 안전 장치 (자동 적용)**
             - **연속 실패 자동 중단**: 40회 이상 연속으로 수집에 실패하면 작업이 자동 중단되고 체크포인트가 저장됩니다.
@@ -475,6 +556,8 @@ def _build_run_signature(
     quick_recovery_mode: bool,
     delay_min_sec: int,
     delay_max_sec: int,
+    speed_profile: str,
+    start_page_manual: int,
 ) -> dict:
     excludes = sorted(
         set(
@@ -492,6 +575,8 @@ def _build_run_signature(
         "quick_recovery_mode": bool(quick_recovery_mode),
         "delay_min_sec": int(delay_min_sec),
         "delay_max_sec": int(delay_max_sec),
+        "speed_profile": str(speed_profile or "stable"),
+        "start_page_manual": int(start_page_manual),
     }
 
 
@@ -508,6 +593,8 @@ def _diff_run_signature(saved_sig: dict, current_sig: dict) -> list:
         "quick_recovery_mode": "빠른 복구 모드",
         "delay_min_sec": "최소 대기(초)",
         "delay_max_sec": "최대 대기(초)",
+        "speed_profile": "속도 프로파일",
+        "start_page_manual": "탐색 시작 페이지",
     }
     mismatches = []
     for k, label in labels.items():
@@ -529,6 +616,54 @@ def _format_seconds_to_hhmmss(total_seconds: float) -> str:
     return f"{m}분 {sec}초"
 
 
+def _estimate_overall_progress(ctx: dict) -> tuple[float | None, int | None, float | None]:
+    """
+    전체 진행률/총 예상 건수/전체 ETA(초)를 추정한다.
+    기준:
+    - 기간 진행률: end_dt -> last_scan_oldest_date 로 얼마나 내려왔는지
+    - 총 예상 건수: 누적 수집건수 / 진행률
+    - ETA: 경과시간 * (남은비율 / 진행비율)
+    """
+    scan_date_txt = str(ctx.get("last_scan_oldest_date", "") or "").strip()
+    run_started_raw = str(ctx.get("run_started_at", "") or "").strip()
+    start_dt = ctx.get("start_dt")
+    end_dt = ctx.get("end_dt")
+    total_collected = int(ctx.get("total_collected", 0) or 0)
+
+    if not (
+        isinstance(start_dt, datetime)
+        and isinstance(end_dt, datetime)
+        and end_dt > start_dt
+        and scan_date_txt
+    ):
+        return None, None, None
+
+    try:
+        scan_dt = datetime.fromisoformat(scan_date_txt)
+    except:
+        return None, None, None
+
+    total_span_sec = (end_dt - start_dt).total_seconds()
+    covered_sec = (end_dt - scan_dt).total_seconds()
+    covered_sec = min(max(covered_sec, 0.0), total_span_sec)
+    progress_ratio = covered_sec / total_span_sec if total_span_sec > 0 else 0.0
+
+    est_total = None
+    if progress_ratio >= 0.02 and total_collected > 0:
+        est_total = max(total_collected, int(round(total_collected / progress_ratio)))
+
+    eta_total_sec = None
+    if run_started_raw and progress_ratio >= 0.02:
+        try:
+            started_dt = datetime.fromisoformat(run_started_raw)
+            elapsed_sec = max(1.0, (datetime.now() - started_dt).total_seconds())
+            eta_total_sec = elapsed_sec * ((1.0 - progress_ratio) / progress_ratio)
+        except:
+            eta_total_sec = None
+
+    return progress_ratio, est_total, eta_total_sec
+
+
 def _render_crawl_summary(ctx: dict, title: str = "진행 요약"):
     # 빠른 복구 모드인지 확인 (한 번에 로드하는 방식)
     is_quick_mode = bool(ctx.get("quick_recovery_mode", False))
@@ -543,13 +678,47 @@ def _render_crawl_summary(ctx: dict, title: str = "진행 요약"):
     
     if total_collected is not None and not is_quick_mode:
         # [배치/스트리밍 모드]
-        # 전체 개수를 미리 알 수 없으므로 누적 수집량과 현재 페이지를 표시
+        # 전체 진행률 기반으로 누적/총량 추정/전체 ETA 표시
         page_cursor = ctx.get("page_cursor", 1)
-        
-        c1, c2, c3 = st.columns(3)
-        c1.metric("누적 수집 완료", f"{int(total_collected):,}개")
-        c2.metric("현재 수집 위치", f"{page_cursor}페이지 ~")
-        c3.metric("대기 범위", f"{delay_min:.0f}~{delay_max:.0f}초")
+        last_scanned_page = int(ctx.get("last_scanned_page", 0) or 0)
+        progress_ratio, est_total, eta_total_sec = _estimate_overall_progress(ctx)
+        total_collected_int = int(total_collected)
+        idx = int(ctx.get("index", 0) or 0)
+        batch_total = int(ctx.get("batch_total", 0) or 0)
+        remain_in_batch = max(0, batch_total - idx)
+        is_finished_scan = bool(ctx.get("is_finished", False))
+        avg_delay = (delay_min + delay_max) / 2.0
+        eta_finish_sec = remain_in_batch * (8.0 + avg_delay)
+
+        c1, c2, c3, c4 = st.columns(4)
+        if is_finished_scan and batch_total > 0:
+            # 사용자가 가장 궁금해하는 '지금 남은 상세 처리'를 최우선으로 표시
+            c1.metric("상세 처리 진행", f"{idx:,}/{batch_total:,}건")
+            if last_scanned_page > 0:
+                c2.metric("목록 탐색", f"완료 (최근 {last_scanned_page}p)")
+            else:
+                c2.metric("목록 탐색", "완료")
+            c3.metric("대기 범위", f"{delay_min:.0f}~{delay_max:.0f}초")
+            c4.metric("마무리 남은 시간", _format_seconds_to_hhmmss(eta_finish_sec))
+            st.caption(f"목록은 끝났고, 상세 저장만 남았습니다. ({idx:,}/{batch_total:,}건 처리)")
+        else:
+            # 목록 탐색 중에는 목록 관점 수치 표시
+            if est_total:
+                c1.metric("목록 확보", f"{total_collected_int:,}/{est_total:,}개")
+            else:
+                c1.metric("목록 확보", f"{total_collected_int:,}개")
+            if last_scanned_page > 0:
+                c2.metric("탐색 페이지", f"최근 {last_scanned_page}p (다음 {page_cursor}p)")
+            else:
+                c2.metric("탐색 페이지", f"{page_cursor}p부터")
+            c3.metric("대기 범위", f"{delay_min:.0f}~{delay_max:.0f}초")
+            if eta_total_sec is not None:
+                c4.metric("예상 남은 시간(전체)", _format_seconds_to_hhmmss(eta_total_sec))
+                scan_date_txt = str(ctx.get("last_scan_oldest_date", "") or "").strip()
+                if scan_date_txt:
+                    st.caption(f"현재 탐색 기준 날짜: {scan_date_txt}")
+            else:
+                c4.metric("예상 남은 시간(전체)", "계산 중...")
         
     else:
         # [전체 로드 모드] (구버전 호환 또는 빠른 복구 모드)
@@ -630,14 +799,16 @@ with st.sidebar:
         )
 
     st.subheader("🔧 작업 모드")
-    work_mode = st.radio(
-        "작업 방식을 선택하세요",
-        ["기간별 스마트 수집 (기본)", "DB 등급 공백 메우기 (복구)"],
-        index=0,
-        help="스마트 수집: 지정된 기간의 글을 수집하며, 등급이 비어있는 경우 자동으로 채웁니다.\n공백 메우기: DB에 저장된 글 중 등급이 없는 것만 빠르게 찾아 복구합니다."
-    )
+    st.caption("기간별 스마트 수집 (기본) 단일 모드로 동작합니다.")
 
     with st.expander("속도 설정 (고급)", expanded=False):
+        speed_profile_label = st.selectbox(
+            "속도 프로파일",
+            ["안정형 (기본)", "고속형 (약 2배)"],
+            index=0 if str(config.get("speed_profile", "stable")) != "fast" else 1,
+            help="내부 고정 휴식만 조정합니다. 아래 최소/최대 대기(초) 설정은 그대로 유지됩니다.",
+        )
+        speed_profile = "fast" if speed_profile_label.startswith("고속형") else "stable"
         st.caption("크롤링 대기 시간 범위 (하한선: 1초)")
         col_delay1, col_delay2 = st.columns(2)
         delay_min_sec = col_delay1.number_input(
@@ -655,32 +826,22 @@ with st.sidebar:
             step=1,
         )
         st.caption("※ 안전 장치: 연속 40회 실패 시 작업이 자동 중단됩니다.")
-        
-        # (추가) 탈퇴 재검사 옵션
-        retry_withdrawal = st.checkbox(
-            "기존 DB에서 등급이 '탈퇴'인 항목만 다시 검사하기",
-            value=False,
-            help="체크하면, 현재 DB에서 등급이 '탈퇴'인 항목만 다시 확인하여 등급을 갱신합니다. 다른 등급 항목은 대상이 아닙니다."
+        start_page_manual = int(
+            st.number_input(
+                "탐색 시작 페이지 (선택)",
+                min_value=1,
+                max_value=10000,
+                value=max(1, int(config.get("start_page_manual", 1) or 1)),
+                step=1,
+                help="기본값 1(자동). 예: 이전 실행의 마지막 탐색이 406p면 400~420 부근으로 시작해 빠르게 범위를 찾을 수 있습니다.",
+            )
         )
-        
-        # (수정) '탈퇴 재검사' 사용 시 시작 페이지 점프는 의미가 낮아 비활성화
-        start_page_jump_disabled = bool(retry_withdrawal)
-        start_page_manual_input = st.number_input(
-            "수집 시작 페이지 (점프)",
-            min_value=1,
-            max_value=10000,
-            value=1,
-            help="과거 데이터를 수집할 때, 앞부분을 건너뛰고 특정 페이지부터 바로 시작할 수 있습니다. (예: 100페이지부터 시작)",
-            disabled=start_page_jump_disabled,
-        )
-        start_page_manual = 1 if start_page_jump_disabled else int(start_page_manual_input)
-        if start_page_jump_disabled:
-            st.caption("※ '탈퇴 항목만 재검사' 사용 시에는 DB 기반 보정 성격이라 시작 페이지 점프를 사용하지 않습니다.")
 
     # 내부 고정 설정 (사용자에게 노출하지 않음)
     st.session_state.debug_mode = False
     level_backfill = False # 스마트 로직이 알아서 하므로 강제 옵션은 끔
-    quick_recovery_mode = (work_mode == "DB 등급 공백 메우기 (복구)")
+    quick_recovery_mode = False
+    retry_withdrawal = False
     fail_safe_enabled = True
     fail_safe_threshold = 40
     progress_log_every = 100
@@ -696,6 +857,8 @@ with st.sidebar:
             "board_url": board_url,
             "delay_min_sec": int(delay_min_sec),
             "delay_max_sec": int(delay_max_sec),
+            "speed_profile": speed_profile,
+            "start_page_manual": int(start_page_manual),
             "db_path": str(config.get("db_path", "") or "").strip(),
         }
         save_config(new_config)
@@ -783,9 +946,19 @@ with st.sidebar:
 # 메인 화면
 st.markdown("### 🚀 실행 제어")
 st.caption("1단계에서 로그인 브라우저를 준비하고, 2단계에서 수집을 실행/중단합니다.")
-step_col1, step_col2 = st.columns(2)
 
 # 2단계 활성화 조건: 브라우저가 열려 있고(드라이버 존재), 로그인 세션 쿠키가 있어야 함
+def _is_browser_opened() -> bool:
+    crawler = st.session_state.get("crawler")
+    if not crawler or not getattr(crawler, "driver", None):
+        return False
+    try:
+        handles = crawler.driver.window_handles or []
+        return len(handles) > 0
+    except:
+        return False
+
+
 def _is_step2_ready() -> bool:
     if bool(st.session_state.get("login_confirmed", False)):
         return True
@@ -801,25 +974,56 @@ def _is_step2_ready() -> bool:
         return False
 
 step2_ready = _is_step2_ready()
+browser_opened = _is_browser_opened()
 
+# 한 줄 3버튼: 1단계 -> 로그인 완료 -> 2단계
+step_col1, step_col_login, step_col2 = st.columns([2.5, 1.1, 2.5])
 with step_col1:
     if st.button(
         "1단계: 브라우저 열기",
         width="stretch",
-        disabled=bool(st.session_state.crawl_running),
+        disabled=bool(st.session_state.crawl_running) or bool(browser_opened),
         type="primary" if not step2_ready else "secondary",
         key="open_browser_btn",
     ):
+        # 기존 드라이버가 끊긴 상태면 자동 정리 후 재생성
+        crawler_ref = st.session_state.get("crawler")
+        if crawler_ref and getattr(crawler_ref, "driver", None):
+            try:
+                handles = crawler_ref.driver.window_handles or []
+                if len(handles) == 0:
+                    crawler_ref.close()
+                    st.session_state.crawler = None
+            except:
+                try:
+                    crawler_ref.close()
+                except:
+                    pass
+                st.session_state.crawler = None
+
         if not st.session_state.crawler:
             # 수동 로그인 모드
             st.session_state.crawler = NaverCafeCrawler("", debug_mode=st.session_state.debug_mode)
             st.session_state.crawler.set_status_callback(update_logs)
             # (추가) 중단 요청 실시간 확인을 위한 콜백 연결
             st.session_state.crawler.set_stop_check_callback(lambda: st.session_state.get("crawl_stop_requested", False))
+        if hasattr(st.session_state.crawler, "set_speed_profile"):
+            st.session_state.crawler.set_speed_profile(speed_profile)
         st.session_state.crawler.start_browser()
         # 브라우저를 새로 열면 로그인 확인 상태를 초기화
         st.session_state.login_confirmed = False
         update_logs()
+        st.rerun()
+
+with step_col_login:
+    if st.button(
+        "로그인 완료",
+        width="stretch",
+        key="manual_login_confirm_btn_inline",
+        disabled=bool(st.session_state.crawl_running) or (not browser_opened) or bool(step2_ready),
+    ):
+        st.session_state.login_confirmed = True
+        st.rerun()
 
 with step_col2:
     if st.session_state.crawl_running:
@@ -858,6 +1062,8 @@ with step_col2:
                     quick_recovery_mode=bool(quick_recovery_mode),
                     delay_min_sec=int(delay_min_sec),
                     delay_max_sec=int(delay_max_sec),
+                    speed_profile=speed_profile,
+                    start_page_manual=int(start_page_manual),
                 )
 
                 # 먼저 실행 상태로 전환해서 버튼이 즉시 '중단'으로 바뀌게 함
@@ -872,9 +1078,10 @@ with step_col2:
                     "level_backfill_mode": False, # 스마트 로직 사용을 위해 False 고정
                     "quick_recovery_mode": quick_mode_on,
                     "retry_withdrawal": retry_withdrawal, # (추가) 탈퇴 재검사 옵션 전달
-                    "start_page_manual": int(start_page_manual), # (추가) 시작 페이지 전달
+                    "start_page_manual": int(start_page_manual),
                     "crawl_delay_min": max(1.0, float(delay_min_sec)),
                     "crawl_delay_max": max(max(1.0, float(delay_min_sec)), float(delay_max_sec)),
+                    "speed_profile": speed_profile,
                     "fail_safe_enabled": True,
                     "fail_safe_threshold": 40,
                     "progress_log_every": 100,
@@ -884,6 +1091,7 @@ with step_col2:
                     "unchanged_level_count": 0,
                     "run_signature": run_signature,
                     "resume_base_index": 0,
+                    "run_started_at": datetime.now().isoformat(),
                 }
                 st.session_state.crawl_running = True
                 st.session_state.crawl_stop_requested = False
@@ -891,15 +1099,36 @@ with step_col2:
                 update_logs("🔍 1단계: 대상 게시글 목록 확보 시작...")
                 st.rerun()
 
-if not st.session_state.crawl_running and not step2_ready:
-    st.info("1단계 브라우저 열기 → 네이버 로그인 완료 후 2단계 버튼이 활성화됩니다.")
-    crawler = st.session_state.get("crawler")
-    if crawler and getattr(crawler, "driver", None):
-        if st.button("로그인 완료(수동 활성화)", width="stretch", key="manual_login_confirm_btn"):
-            st.session_state.login_confirmed = True
-            st.rerun()
+# 완료/오류 후 재시작이 꼬일 때를 대비한 실행 상태 초기화 버튼
+if not st.session_state.crawl_running:
+    can_reset_runtime = bool(
+        st.session_state.get("crawler")
+        or st.session_state.get("login_confirmed", False)
+        or st.session_state.get("crawl_state")
+        or st.session_state.get("crawl_checkpoint_available", False)
+    )
+    if st.button("🔄 실행 상태 초기화 (리셋)", width="stretch", key="reset_runtime_btn", disabled=not can_reset_runtime):
+        try:
+            crawler_ref = st.session_state.get("crawler")
+            if crawler_ref:
+                crawler_ref.close()
+        except:
+            pass
+        st.session_state.crawler = None
+        st.session_state.login_confirmed = False
+        st.session_state.crawl_stop_requested = False
+        st.session_state.crawl_running = False
+        st.session_state.crawl_state = {}
+        st.session_state.crawl_last_status_message = "ℹ️ 실행 상태를 초기화했습니다. 1단계부터 다시 시작하세요."
+        st.session_state.crawl_last_status_type = "info"
+        _clear_crawl_checkpoint()
+        update_logs("🔄 실행 상태 초기화 완료 (브라우저/체크포인트/진행 상태 리셋)")
+        st.rerun()
+    if not can_reset_runtime:
+        st.caption("현재 초기화할 실행 상태가 없습니다.")
 
-# 마지막 실행 결과(완료/중단/오류) 안내
+# 실행 결과/진행 창 (고정 위치)
+st.markdown("#### 📋 실행 결과 / 진행")
 if st.session_state.crawl_last_status_message:
     _msg = st.session_state.crawl_last_status_message
     _typ = st.session_state.crawl_last_status_type
@@ -911,6 +1140,18 @@ if st.session_state.crawl_last_status_message:
         st.error(_msg)
     else:
         st.info(_msg)
+else:
+    if st.session_state.crawl_running:
+        run_ctx = st.session_state.get("crawl_state", {}) or {}
+        run_idx = int(run_ctx.get("index", 0) or 0)
+        run_batch_total = int(run_ctx.get("batch_total", 0) or 0)
+        run_is_finished_scan = bool(run_ctx.get("is_finished", False))
+        if run_is_finished_scan and run_batch_total > 0 and run_idx < run_batch_total:
+            st.info(f"목록 탐색 완료 · 상세 저장 진행 중 ({run_idx:,}/{run_batch_total:,}건)")
+        else:
+            st.info("수집이 진행 중입니다. 아래 진행 요약/로그를 확인하세요.")
+    else:
+        st.info("아직 실행 결과가 없습니다. 1단계 브라우저 열기 후 2단계를 시작하세요.")
 
 # 체크포인트 UI는 전체 폭으로 표시 (좁은 컬럼에서 깨지는 현상 방지)
 if (not st.session_state.crawl_running) and st.session_state.crawl_checkpoint_available and st.session_state.crawl_state:
@@ -920,7 +1161,7 @@ if (not st.session_state.crawl_running) and st.session_state.crawl_checkpoint_av
         or bool(config.get("meta_backfill", False))
         or legacy_backfill
     )
-    current_quick_recovery_mode = bool(config.get("quick_recovery_mode", False)) and bool(current_level_backfill_mode)
+    current_quick_recovery_mode = False
     current_signature = _build_run_signature(
         board_url=board_url,
         start_date_value=start_date,
@@ -930,6 +1171,8 @@ if (not st.session_state.crawl_running) and st.session_state.crawl_checkpoint_av
         quick_recovery_mode=current_quick_recovery_mode,
         delay_min_sec=int(delay_min_sec),
         delay_max_sec=int(delay_max_sec),
+        speed_profile=speed_profile,
+        start_page_manual=int(start_page_manual),
     )
     saved_signature = st.session_state.crawl_state.get("run_signature", {})
     mismatches = _diff_run_signature(saved_signature, current_signature)
@@ -965,6 +1208,8 @@ if (not st.session_state.crawl_running) and st.session_state.crawl_checkpoint_av
         # 재개 이후 구간 통계는 새로 집계
         ctx["skip_count"] = 0
         ctx["error_count"] = 0
+        ctx["skip_reason_existing_level"] = 0
+        ctx["skip_reason_existing_withdrawal"] = 0
         ctx["updated_level_count"] = 0
         ctx["consecutive_error_count"] = 0
         ctx["last_progress_logged_index"] = int(ctx.get("index", 0) or 0)
@@ -973,7 +1218,9 @@ if (not st.session_state.crawl_running) and st.session_state.crawl_checkpoint_av
         ctx["progress_log_every"] = int(progress_log_every)
         ctx["crawl_delay_min"] = max(1.0, float(delay_min_sec))
         ctx["crawl_delay_max"] = max(max(1.0, float(delay_min_sec)), float(delay_max_sec))
+        ctx["speed_profile"] = speed_profile
         ctx["run_signature"] = current_signature
+        ctx["run_started_at"] = datetime.now().isoformat()
         st.session_state.crawl_state = ctx
         st.session_state.crawl_last_status_message = ""
         st.session_state.crawl_running = True
@@ -984,19 +1231,24 @@ if (not st.session_state.crawl_running) and st.session_state.crawl_checkpoint_av
 # 비동기처럼 동작하도록 한 건씩 처리 (중단 버튼 즉시 반영 가능)
 if st.session_state.crawl_running:
     ctx = st.session_state.crawl_state
+    if st.session_state.get("crawler") and hasattr(st.session_state.crawler, "set_speed_profile"):
+        st.session_state.crawler.set_speed_profile(str(ctx.get("speed_profile", "stable")))
     live_status = st.empty()
     phase = ctx.get("phase", "run")
 
     if phase == "prepare":
         # 초기화
-        # (수정) 사용자 지정 시작 페이지 적용
-        start_p = int(ctx.get("start_page_manual", 1))
-        ctx["page_cursor"] = start_p
+        # 사용자가 시작 페이지를 지정하면 해당 위치부터 자동 탐색을 시작한다.
+        ctx["page_cursor"] = max(1, int(ctx.get("start_page_manual", 1) or 1))
+        ctx["last_scanned_page"] = 0
         
         ctx["articles"] = [] # 버퍼
         ctx["index"] = 0
+        ctx["batch_total"] = 0
         ctx["total_collected"] = 0
         ctx["is_finished"] = False
+        ctx["skip_reason_existing_level"] = 0
+        ctx["skip_reason_existing_withdrawal"] = 0
         
         # DB Map Load (Common)
         conn = sqlite3.connect(DB_PATH, timeout=30.0)
@@ -1116,6 +1368,15 @@ if st.session_state.crawl_running:
 
                 if skip_count > 0:
                     update_logs(f"💡 기존 수집분 {skip_count}개를 건너뛰었습니다.")
+                    skip_existing_level = int(ctx.get("skip_reason_existing_level", 0) or 0)
+                    skip_existing_withdrawal = int(ctx.get("skip_reason_existing_withdrawal", 0) or 0)
+                    reasons = []
+                    if skip_existing_level > 0:
+                        reasons.append(f"기존 글(등급 보유) {skip_existing_level}건")
+                    if skip_existing_withdrawal > 0:
+                        reasons.append(f"기존 글(등급=탈퇴, 재검사 끔) {skip_existing_withdrawal}건")
+                    if reasons:
+                        update_logs(f"   └ 스킵 사유: {', '.join(reasons)}")
                 if updated_level_count > 0:
                     update_logs(f"🏷️ 등급 보강 완료: {updated_level_count}개")
                 if changed_level_count > 0 or unchanged_level_count > 0:
@@ -1128,12 +1389,23 @@ if st.session_state.crawl_running:
 
                 st.session_state.crawl_running = False
                 _clear_crawl_checkpoint()
-                done_msg = (
-                    f"✅ 작업 완료 (성공: {success_count}, 스킵: {skip_count}, 실패: {error_count}, "
-                    f"등급변경: {changed_level_count}, 등급동일: {unchanged_level_count})"
-                )
-                live_status.success(done_msg)
-                st.session_state.crawl_last_status_type = "success"
+                last_scanned_page = int(ctx.get("last_scanned_page", 0) or 0)
+                last_page_suffix = f" 마지막 탐색 페이지: {last_scanned_page}p" if last_scanned_page > 0 else ""
+                if success_count == 0:
+                    done_msg = (
+                        f"⚠️ 수집된 게시글이 없습니다. (성공: {success_count}, 스킵: {skip_count}, 실패: {error_count}, "
+                        f"등급변경: {changed_level_count}, 등급동일: {unchanged_level_count}) "
+                        f"- 기간/게시판/페이지 로딩 상태를 확인해주세요.{last_page_suffix}"
+                    )
+                    live_status.warning(done_msg)
+                    st.session_state.crawl_last_status_type = "warning"
+                else:
+                    done_msg = (
+                        f"✅ 작업 완료 (성공: {success_count}, 스킵: {skip_count}, 실패: {error_count}, "
+                        f"등급변경: {changed_level_count}, 등급동일: {unchanged_level_count}){last_page_suffix}"
+                    )
+                    live_status.success(done_msg)
+                    st.session_state.crawl_last_status_type = "success"
                 st.session_state.crawl_last_status_message = done_msg
                 st.rerun()
             else:
@@ -1165,13 +1437,20 @@ if st.session_state.crawl_running:
                     start_page=page_cursor,
                     max_pages=batch_size,
                 )
+                effective_start_page = int(getattr(st.session_state.crawler, "last_effective_start_page", page_cursor) or page_cursor)
+                scan_oldest_date = str(getattr(st.session_state.crawler, "last_scan_oldest_date", "") or "").strip()
+                last_scanned_page = int(getattr(st.session_state.crawler, "last_scanned_page", 0) or 0)
+                if scan_oldest_date:
+                    ctx["last_scan_oldest_date"] = scan_oldest_date
+                if last_scanned_page > 0:
+                    ctx["last_scanned_page"] = last_scanned_page
                 
                 # 배치 종료 후 콜백 원복 (선택사항이지만 안전하게)
                 st.session_state.crawler.set_status_callback(update_logs)
                 
                 if not new_batch and not is_finished:
                     # 이번 배치 공탕 -> 다음 페이지로 계속 (재귀적 rerun 방지 위해 cursor만 증가)
-                    ctx["page_cursor"] = page_cursor + batch_size
+                    ctx["page_cursor"] = effective_start_page + batch_size
                     _save_crawl_checkpoint()
                     st.rerun()
                 
@@ -1205,7 +1484,8 @@ if st.session_state.crawl_running:
                 # 새 배치 있음 (또는 빈 배치지만 계속 탐색)
                 ctx["articles"] = new_batch
                 ctx["index"] = 0
-                ctx["page_cursor"] = page_cursor + batch_size
+                ctx["batch_total"] = len(new_batch)
+                ctx["page_cursor"] = effective_start_page + batch_size
                 ctx["is_finished"] = is_finished
                 ctx["total_collected"] = total_collected + len(new_batch)
                 
@@ -1220,8 +1500,17 @@ if st.session_state.crawl_running:
         # 진행률 표시 (전체 개수를 모르므로, 현재 배치 내 진행률 or 그냥 스피너)
         # (수정) 중복 표시 제거: live_status가 이미 상단에 있으므로 여기서는 _render_crawl_summary만 호출
         _render_crawl_summary(ctx, title="실시간 진행 요약")
-        # progress bar는 배치가 바뀔 때마다 0~100 움직이게 됨 (어쩔 수 없음)
-        progress = st.progress((idx / total_in_buffer) if total_in_buffer > 0 else 0.0)
+        # 진행 막대는 전체 진행률(기간 기준) 우선 사용
+        overall_ratio, _, _ = _estimate_overall_progress(ctx)
+        if overall_ratio is not None:
+            progress = st.progress(float(min(max(overall_ratio, 0.0), 1.0)))
+            st.markdown(
+                f"<div style='text-align:right;color:#6b7280;font-size:0.85rem;'>{overall_ratio*100:.1f}%</div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            progress = st.progress((idx / total_in_buffer) if total_in_buffer > 0 else 0.0)
+            st.caption("전체 진행률 계산 중...")
 
         if st.session_state.crawl_stop_requested:
             st.session_state.crawl_running = False
@@ -1243,9 +1532,12 @@ if st.session_state.crawl_running:
                 # 30개마다 60초 휴식 (장시간 수집 시 차단 방지)
                 # 전체 누적 카운트 기반으로 휴식 체크
                 global_idx = int(ctx.get("global_processed_count", 0))
+                speed_profile_ctx = str(ctx.get("speed_profile", "stable") or "stable").lower()
+                rest_mult = 0.5 if speed_profile_ctx == "fast" else 1.0
                 if global_idx > 0 and global_idx % 30 == 0:
-                    update_logs(f"☕ 네이버 차단 방지를 위해 1분간 휴식합니다... (누적 {global_idx}개 처리)")
-                    time.sleep(60)
+                    rest_sec = int(max(20, 60 * rest_mult))
+                    update_logs(f"☕ 네이버 차단 방지를 위해 {rest_sec}초간 휴식합니다... (누적 {global_idx}개 처리)")
+                    time.sleep(rest_sec)
                 
                 ctx["global_processed_count"] = global_idx + 1
 
@@ -1271,7 +1563,13 @@ if st.session_state.crawl_running:
                 
                 if is_exist and not need_backfill:
                     ctx["skip_count"] = int(ctx.get("skip_count", 0)) + 1
-                    # 스킵 로그는 너무 많으므로 생략하거나 간헐적으로만 표시
+                    if db_level == "탈퇴" and not retry_withdrawal_ctx:
+                        ctx["skip_reason_existing_withdrawal"] = int(ctx.get("skip_reason_existing_withdrawal", 0) or 0) + 1
+                        skip_reason_txt = "이미 수집됨 + 기존 등급이 '탈퇴'(재검사 꺼짐)"
+                    else:
+                        ctx["skip_reason_existing_level"] = int(ctx.get("skip_reason_existing_level", 0) or 0) + 1
+                        skip_reason_txt = "이미 수집됨 + 등급 보유"
+                    update_logs(f"↩️ 스킵: '{art['title'][:20]}...' ({skip_reason_txt})")
                 else:
                     if is_exist and need_backfill:
                         live_status.text(f"🏷️ 등급 보강 중: {art['title'][:40]}...")
@@ -1367,9 +1665,24 @@ if st.session_state.crawl_running:
                                 art["nickname"] = detail["nickname"]
                             if (not art.get("board_name")) and detail.get("board_name"):
                                 art["board_name"] = detail["board_name"]
+                            # 신규 수집 등급 결정 규칙:
+                            # 1) 상세/API 등급
+                            # 2) 같은 member_id의 DB 대표 등급 보정
+                            # 3) 그래도 없으면 '탈퇴'
+                            detail_level = str(detail.get("member_level", "") or "").strip()
+                            final_level = detail_level
+                            if not final_level:
+                                mid = str(art.get("member_id") or "").strip()
+                                map_lvl = str(ctx.get("member_level_map", {}).get(mid) or "").strip()
+                                if map_lvl:
+                                    final_level = map_lvl
+                                    update_logs(f"🩹 DB 보정 적용: '{art['title'][:20]}...' (member_id 기준 → {final_level})")
+                            if not final_level:
+                                final_level = "탈퇴"
+                            art["member_level"] = final_level
                             save_to_sqlite(art, detail['comments'])
                             
-                            lvl_log = detail.get('member_level', '')
+                            lvl_log = art.get("member_level", "")
                             update_logs(f"✅ '{art['title'][:20]}...' 저장 완료 (등급: {lvl_log})")
                         except Exception as detail_error:
                             ctx["error_count"] = int(ctx.get("error_count", 0)) + 1
@@ -1470,26 +1783,30 @@ with tab1:
             if "selected_posts" not in st.session_state:
                 st.session_state.selected_posts = []
             
-            # 데이터 에디터 (체크박스 포함)
+            # 게시글 테이블 표시용 데이터 (체크박스 선택)
             df_display = df_posts.copy()
             df_display.insert(0, "선택", False)
             
             # content는 미리보기로 (100자만)
             df_display['본문미리보기'] = df_display['content'].apply(lambda x: str(x)[:100] + '...' if x and len(str(x)) > 100 else str(x))
             df_display = df_display.drop(columns=['content'])  # 전체 본문은 숨김
-            
-            # 이전 선택 복원
-            for idx, post_id in enumerate(df_display['post_id']):
+            # 작성자ID는 공간 절약을 위해 축약 표시
+            df_display["member_id"] = df_display["member_id"].apply(
+                lambda x: (f"{str(x)[:6]}...{str(x)[-4:]}" if x and len(str(x)) > 14 else str(x))
+            )
+
+            # 기존 선택 복원
+            for idx, post_id in enumerate(df_display["post_id"]):
                 if post_id in st.session_state.selected_posts:
                     df_display.at[idx, "선택"] = True
-            
+
             with st.form("posts_selection_form", clear_on_submit=False):
                 edited_df = st.data_editor(
                     df_display,
                     column_config={
-                        "선택": st.column_config.CheckboxColumn("선택", default=False),
+                        "선택": st.column_config.CheckboxColumn("선택", default=False, width="small"),
                         "post_id": "게시글 ID",
-                        "member_id": "작성자 ID",
+                        "member_id": st.column_config.TextColumn("작성자 ID", width="small"),
                         "nickname": "닉네임",
                         "member_level": "등급",
                         "board_name": "게시판",
@@ -1498,7 +1815,7 @@ with tab1:
                         "title": st.column_config.TextColumn("제목", width="medium"),
                         "본문미리보기": st.column_config.TextColumn("본문 미리보기", width="large"),
                         "date": "작성일",
-                        "url": st.column_config.LinkColumn("URL")
+                        "url": st.column_config.LinkColumn("URL", width="small")
                     },
                     hide_index=True,
                     width="stretch",
@@ -1507,21 +1824,25 @@ with tab1:
                         "member_id",
                         "nickname",
                         "member_level",
-                        "board_name",
-                        "view_count",
-                        "like_count",
                         "title",
                         "본문미리보기",
                         "date",
+                        "board_name",
+                        "view_count",
+                        "like_count",
                         "url",
                     ],
-                    key=f"posts_editor_{st.session_state.posts_editor_refresh}"
+                    key=f"posts_editor_{st.session_state.posts_editor_refresh}",
                 )
                 apply_selection = st.form_submit_button("선택 반영", width="stretch")
 
-            # 폼 제출 시에만 선택 반영 (체크 중 화면 튐 방지)
             if apply_selection:
-                st.session_state.selected_posts = edited_df[edited_df["선택"] == True]['post_id'].tolist()
+                st.session_state.selected_posts = edited_df[edited_df["선택"] == True]["post_id"].tolist()
+                st.session_state.posts_editor_refresh += 1
+                st.rerun()
+
+            st.caption("체크한 행은 즉시 하이라이트됩니다. 삭제 대상 반영은 [선택 반영] 버튼으로 확정하세요.")
+            st.caption(f"반영된 선택: {len(st.session_state.selected_posts)}개")
             
             # 전체 선택/해제/삭제 버튼 (테이블 아래에 배치)
             st.markdown("---")

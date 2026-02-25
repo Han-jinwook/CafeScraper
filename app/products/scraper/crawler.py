@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from collections import deque
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, parse_qsl, urlencode, urlunparse
 import json
 import requests
 from bs4 import BeautifulSoup, FeatureNotFound
@@ -30,6 +30,28 @@ class NaverCafeCrawler:
         self.status_callback = None
         self.admin_nickname = "멀린"
         self.debug_mode = debug_mode
+        self.last_effective_start_page = 1
+        self.last_scan_oldest_date = ""
+        self.last_scanned_page = 0
+        self.speed_profile = "stable"  # stable | fast
+
+    def set_speed_profile(self, profile: str = "stable") -> None:
+        try:
+            p = str(profile or "stable").strip().lower()
+        except:
+            p = "stable"
+        self.speed_profile = "fast" if p in ("fast", "high", "turbo") else "stable"
+
+    def _speed_mult(self) -> float:
+        # 고속형: 내부 고정 대기만 약 2배 단축
+        return 0.5 if self.speed_profile == "fast" else 1.0
+
+    def _sleep_scaled(self, seconds: float, floor: float = 0.15):
+        try:
+            s = float(seconds) * self._speed_mult()
+        except:
+            s = float(seconds)
+        time.sleep(max(float(floor), s))
 
     def set_status_callback(self, callback):
         self.status_callback = callback
@@ -1263,6 +1285,32 @@ class NaverCafeCrawler:
             pass
         return url
 
+    def _build_board_page_url(self, board_url: str, page_no: int, user_display: int = 50) -> str:
+        """
+        게시판 페이지 URL 생성.
+        - Legacy(ArticleList.nhn): search.page 우선
+        - 기타 URL: page 파라미터 사용
+        - userDisplay=50 항상 강제
+        """
+        try:
+            parsed = urlparse(str(board_url))
+            q_items = parse_qsl(parsed.query, keep_blank_values=True)
+            q: Dict[str, str] = {str(k): str(v) for k, v in q_items}
+
+            q["userDisplay"] = str(int(user_display))
+            if "ArticleList.nhn" in (parsed.path or ""):
+                q["search.page"] = str(int(page_no))
+                # 일부 환경 호환을 위해 page도 함께 유지
+                q["page"] = str(int(page_no))
+            else:
+                q["page"] = str(int(page_no))
+
+            new_query = urlencode(q, doseq=True)
+            return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
+        except:
+            sep = "&" if "?" in str(board_url) else "?"
+            return f"{board_url}{sep}page={int(page_no)}&userDisplay={int(user_display)}"
+
     def scrape_board_list(
         self,
         board_url: str,
@@ -1289,50 +1337,247 @@ class NaverCafeCrawler:
         exclude_norm = set()
         if exclude_boards:
             exclude_norm = {self._normalize_board_name(x) for x in exclude_boards if str(x).strip()}
+
+        def _read_page_date_range(page_no: int) -> tuple[Optional[datetime], Optional[datetime], int, str]:
+            """
+            특정 페이지의 날짜 범위를 읽는다.
+            Returns: (min_date, max_date, valid_row_count, first_post_id)
+            - min_date: 페이지 내 가장 오래된 글 날짜
+            - max_date: 페이지 내 가장 최신 글 날짜
+            """
+            page_url = self._build_board_page_url(board_url, page_no, user_display=50)
+            try:
+                if self.driver.current_url != page_url:
+                    self.driver.get(page_url)
+                    self._sleep_scaled(1.8)
+                self._switch_to_cafe_iframe()
+                self.driver.execute_script("window.scrollTo(0, 900);")
+                self._sleep_scaled(0.7)
+
+                rows_inner = self.driver.find_elements(
+                    By.CSS_SELECTOR,
+                    "div[class*='ArticleItem'], li[class*='article'], div.article-board table tbody tr"
+                )
+                if not rows_inner:
+                    return None, None, 0, ""
+
+                dates: List[datetime] = []
+                first_post_id = ""
+                for row_inner in rows_inner:
+                    try:
+                        row_class_inner = (row_inner.get_attribute("class") or "").lower()
+                        is_notice_inner = False
+                        if "notice" in row_class_inner or "top" in row_class_inner:
+                            is_notice_inner = True
+                        if not is_notice_inner:
+                            try:
+                                if row_inner.find_elements(By.CSS_SELECTOR, ".ico_notice, .icon_notice, .td_notice"):
+                                    is_notice_inner = True
+                                elif "공지" in row_inner.text[:12]:
+                                    is_notice_inner = True
+                            except:
+                                pass
+                        if is_notice_inner:
+                            continue
+
+                        if not first_post_id:
+                            try:
+                                link_el_inner = None
+                                for ls_inner in ["a[class*='ArticleLink']", "a.article", "a[href*='articleid']"]:
+                                    try:
+                                        link_el_inner = row_inner.find_element(By.CSS_SELECTOR, ls_inner)
+                                        if link_el_inner:
+                                            break
+                                    except:
+                                        continue
+                                if link_el_inner:
+                                    href_inner = link_el_inner.get_attribute("href") or ""
+                                    m_id = re.search(r'articleid=(\d+)', href_inner) or re.search(r'/articles/(\d+)', href_inner)
+                                    if m_id:
+                                        first_post_id = m_id.group(1)
+                            except:
+                                pass
+
+                        dval_inner = None
+                        for ds_inner in ["span[class*='Date']", "span.date", "td.td_date", ".date"]:
+                            try:
+                                el_inner = row_inner.find_element(By.CSS_SELECTOR, ds_inner)
+                                dval_inner = self._parse_date(el_inner.text.strip())
+                                if dval_inner:
+                                    break
+                            except:
+                                continue
+                        if not dval_inner:
+                            m_inner = re.search(
+                                r'(\d{4}\.\d{1,2}\.\d{1,2}|\d{1,2}\.\d{1,2}|\d{1,2}:\d{2})',
+                                row_inner.text,
+                            )
+                            if m_inner:
+                                dval_inner = self._parse_date(m_inner.group(1))
+                        if dval_inner:
+                            dates.append(dval_inner)
+                    except:
+                        continue
+
+                if not dates:
+                    return None, None, 0, first_post_id
+                return min(dates), max(dates), len(dates), first_post_id
+            except:
+                return None, None, 0, ""
+
+        def _auto_locate_start_page(target_end: datetime, initial_page: int) -> int:
+            """
+            목표 종료일(end_date)이 포함될 가능성이 높은 페이지를 자동 탐색.
+            - 페이지 번호가 커질수록 더 과거 글이 나온다는 전제.
+            - 반환 페이지는 경계 누락 방지를 위해 찾은 페이지의 1페이지 앞에서 시작.
+            """
+            if initial_page > 1:
+                return initial_page
+
+            self._update_status("🧭 해당 기간의 페이지를 찾는 중... (자동 점프 준비)")
+
+            p1_min, p1_max, p1_cnt, p1_first_id = _read_page_date_range(1)
+            if p1_cnt == 0:
+                self._update_status("⚠️ 1페이지 날짜를 읽지 못해 자동 점프를 건너뜁니다.")
+                return 1
+
+            self._update_status(
+                f"🧭 해당 기간의 페이지를 찾는 중... 1p 확인 "
+                f"(범위: {p1_max.strftime('%Y-%m-%d')} ~ {p1_min.strftime('%Y-%m-%d')})"
+            )
+
+            if p1_min <= target_end <= p1_max:
+                self._update_status("✅ 해당 기간의 페이지를 찾았습니다. 1페이지부터 시작합니다.")
+                return 1
+
+            # 목표가 1페이지보다 과거면(일반적인 과거 수집): 지수 탐색 후 이분 탐색
+            if target_end < p1_min:
+                lo = 1
+                hi = 1
+                hi_min = p1_min
+                hi_first_id = p1_first_id
+                max_probe_page = 5000
+
+                while hi < max_probe_page and hi_min and target_end < hi_min:
+                    if self._should_stop():
+                        return lo
+                    nxt = min(max_probe_page, hi * 2)
+                    n_min, n_max, n_cnt, n_first_id = _read_page_date_range(nxt)
+                    if n_cnt == 0:
+                        # 게시판 끝을 만난 경우, 마지막 유효 구간에서 마무리 탐색
+                        break
+                    if hi_first_id and n_first_id and hi_first_id == n_first_id:
+                        self._update_status("⚠️ 페이지 이동이 반영되지 않아 자동 점프를 중단합니다. (1페이지부터 순차 탐색)")
+                        return 1
+                    self._update_status(
+                        f"🧭 해당 기간의 페이지를 찾는 중... {nxt}p 확인 "
+                        f"(범위: {n_max.strftime('%Y-%m-%d')} ~ {n_min.strftime('%Y-%m-%d')})"
+                    )
+                    lo = hi
+                    hi = nxt
+                    hi_min = n_min
+                    hi_first_id = n_first_id
+
+                # hi가 목표보다 충분히 과거(또는 같은 날짜)인 구간이면 이분 탐색
+                left = lo
+                right = hi
+                found = hi
+                while left <= right:
+                    if self._should_stop():
+                        break
+                    mid = (left + right) // 2
+                    m_min, m_max, m_cnt, _ = _read_page_date_range(mid)
+                    if m_cnt == 0 or not m_min:
+                        right = mid - 1
+                        continue
+                    self._update_status(
+                        f"🧭 해당 기간의 페이지를 찾는 중... {mid}p 확인 "
+                        f"(범위: {m_max.strftime('%Y-%m-%d')} ~ {m_min.strftime('%Y-%m-%d')})"
+                    )
+                    if target_end < m_min:
+                        left = mid + 1
+                    else:
+                        found = mid
+                        right = mid - 1
+
+                jump_page = max(1, int(found) - 1)
+                self._update_status(
+                    f"✅ 해당 기간의 페이지를 찾았습니다. {jump_page}페이지부터 수집을 시작합니다."
+                )
+                return jump_page
+
+            # 목표 종료일이 1페이지보다 최신인 경우(아주 최근 범위): 1페이지 시작
+            self._update_status("✅ 해당 기간이 최신 구간으로 판단되어 1페이지부터 시작합니다.")
+            return 1
             
         all_articles = []
-        page = start_page
-        end_page = start_page + max_pages - 1
+        page = _auto_locate_start_page(end_date, start_page)
+        self.last_effective_start_page = int(page)
+        self.last_scanned_page = max(0, int(page) - 1)
+        end_page = page + max_pages - 1
         should_continue = True
         is_finished = False
         
         last_first_post_id = None # (추가) 무한 루프 방지용
 
         while should_continue and page <= end_page:
+            self.last_scanned_page = int(page)
             # (추가) 중단 요청 확인
             if self._should_stop():
                 self._update_status("🛑 사용자 요청으로 목록 수집을 중단합니다.")
                 should_continue = False
                 break
 
-            sep = "&" if "?" in str(board_url) else "?"
-            # (수정) 50개씩 보기 강제 적용 (userDisplay=50)
-            target_page_url = f"{board_url}{sep}page={page}&userDisplay=50"
+            # (수정) 페이지 파라미터를 URL 유형에 맞게 구성
+            target_page_url = self._build_board_page_url(board_url, page, user_display=50)
             
             self._update_status(f"🚀 {page}페이지 분석 시작 (이번 배치 누적: {len(all_articles)}개)")
             
             # 20페이지마다 휴식 (리스트 수집 중 차단 방지)
             if page > 1 and page % 20 == 0:
                  self._update_status(f"☕ (리스트 수집) 네이버 차단 방지를 위해 5초간 휴식합니다... ({page}페이지 완료)")
-                 time.sleep(5)
+                 self._sleep_scaled(5.0)
             
             try:
                 # 페이지 이동 (undetected는 알아서 부드럽게 처리)
                 if self.driver.current_url != target_page_url:
                     self.driver.get(target_page_url)
-                    time.sleep(2.5)  # 로딩 대기
+                    self._sleep_scaled(2.5)  # 로딩 대기
                 
                 self._switch_to_cafe_iframe()
                 
                 # 스크롤하여 동적 콘텐츠 로딩
                 self.driver.execute_script("window.scrollTo(0, 1000);")
-                time.sleep(1.0)
+                self._sleep_scaled(1.0)
                 
                 # 게시글 행 찾기 (최신 SPA 구조 우선)
-                rows = self.driver.find_elements(By.CSS_SELECTOR, "div[class*='ArticleItem'], li[class*='article'], div.article-board table tbody tr")
+                # 고속 모드에서 간헐적으로 목록 렌더링이 늦게 붙는 경우가 있어, 빈 페이지는 짧게 재확인한다.
+                row_selector = "div[class*='ArticleItem'], li[class*='article'], div.article-board table tbody tr"
+                rows = []
+                empty_retries = 3 if self.speed_profile == "fast" else 2
+                for retry_idx in range(empty_retries):
+                    rows = self.driver.find_elements(By.CSS_SELECTOR, row_selector)
+                    if rows:
+                        break
+                    if retry_idx < empty_retries - 1:
+                        self._update_status(
+                            f"⏳ {page}페이지 목록 재확인 중... ({retry_idx + 1}/{empty_retries - 1})"
+                        )
+                        try:
+                            self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                        except:
+                            pass
+                        self._sleep_scaled(1.2 + (retry_idx * 0.8), floor=0.6)
+                        try:
+                            self.driver.execute_script("window.scrollTo(0, 1000);")
+                        except:
+                            pass
+                        self._sleep_scaled(0.5, floor=0.3)
                 
                 if not rows:
-                    self._update_status(f"⚠️ {page}페이지에서 게시글을 찾지 못했습니다. (게시판 끝 추정)")
+                    self._update_status(
+                        f"⚠️ {page}페이지에서 게시글을 찾지 못했습니다. (재확인 후에도 비어 있음, 게시판 끝/로딩 지연 가능)"
+                    )
                     is_finished = True
                     break
                 
@@ -1498,6 +1743,12 @@ class NaverCafeCrawler:
                 # self._update_status(f"✅ {page}페이지 완료: {page_found_count}개 수집 (배치 누적 {len(all_articles)}개)")
                 
                 # (수정) 사용자 안심용 로그: 수집된 게 없어도 현재 탐색 위치(날짜)를 알려줌
+                if page_dates:
+                    try:
+                        self.last_scan_oldest_date = min(page_dates).strftime("%Y-%m-%d")
+                    except:
+                        pass
+
                 if page_found_count == 0:
                      if page_dates:
                          # 공지가 아닌 유효 게시글 중 가장 오래된(과거) 날짜를 기준으로 표시
@@ -1515,7 +1766,7 @@ class NaverCafeCrawler:
                 
                 if not should_continue: break
                 page += 1
-                time.sleep(random.uniform(2, 4))
+                self._sleep_scaled(random.uniform(2, 4))
                 
             except Exception as e:
                 self._update_status(f"❌ {page}페이지 처리 중 오류: {e}")
@@ -1538,7 +1789,7 @@ class NaverCafeCrawler:
         try:
             article_url = self._normalize_article_url(article_url)
             self.driver.get(article_url)
-            time.sleep(3)
+            self._sleep_scaled(3.0)
             self._switch_to_cafe_iframe()
 
             # 상세에서는 API가 가장 빠르고 정확 (가능하면 여기서 writer id 확보)
