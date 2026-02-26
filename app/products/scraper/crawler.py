@@ -1514,6 +1514,7 @@ class NaverCafeCrawler:
         end_page = page + max_pages - 1
         should_continue = True
         is_finished = False
+        consecutive_before_start_pages = 0
         
         last_first_post_id = None # (추가) 무한 루프 방지용
 
@@ -1665,13 +1666,10 @@ class NaverCafeCrawler:
                                 is_finished = False
                                 break
 
-                            # (수정) 여기가 실행되어야 멈추는데, 만약 날짜 파싱 오류로 date_val이 이상하면 안 멈출 수 있음
-                            # 디버깅용 로그 추가
-                            # self._update_status(f"[디버그] 날짜 도달: {date_val} < {start_date}")
-                            self._update_status(f"⏱️ 시작일 이전 도달 ({date_val.strftime('%Y년 %m월 %d일')}). 종료합니다.")
-                            should_continue = False
-                            is_finished = True
-                            break
+                            # 단일 행 기준 즉시 종료하지 않는다.
+                            # 장시간 수집 중 단일 이상치 날짜가 섞이면 조기 종료로 이어질 수 있으므로,
+                            # 페이지 단위(아래 page_dates 판정)로 종료 여부를 결정한다.
+                            continue
                         
                         # 링크/제목
                         link_el = None
@@ -1751,6 +1749,26 @@ class NaverCafeCrawler:
                 
                 if restart_from_page:
                     continue
+
+                if page_dates:
+                    page_min_date = min(page_dates)
+                    page_max_date = max(page_dates)
+                    if page_max_date < start_date:
+                        consecutive_before_start_pages += 1
+                        self._update_status(
+                            f"⏱️ 시작일 이전 페이지 감지 "
+                            f"({page_min_date.strftime('%Y년 %m월 %d일')} ~ {page_max_date.strftime('%Y년 %m월 %d일')}, "
+                            f"{consecutive_before_start_pages}/2)"
+                        )
+                        if consecutive_before_start_pages >= 2:
+                            self._update_status(
+                                f"⏱️ 시작일 이전 구간이 연속 확인되어 종료합니다. "
+                                f"(마지막 기준: {page_min_date.strftime('%Y년 %m월 %d일')})"
+                            )
+                            should_continue = False
+                            is_finished = True
+                    else:
+                        consecutive_before_start_pages = 0
 
                 # (추가) 무한 루프 체크
                 if current_first_post_id and current_first_post_id == last_first_post_id:
