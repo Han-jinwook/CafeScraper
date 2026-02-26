@@ -874,7 +874,9 @@ with st.sidebar:
 
     st.markdown("---")
     if st.button("💾 설정 저장", width="stretch"):
-        new_config = {
+        # 기존 키를 보존한 채, 화면에서 수정한 항목만 갱신
+        new_config = dict(config or {})
+        new_config.update({
             "cafe_name": (cafe_name or "").strip(),
             "admin_nicks": admin_nicks,
             "exclude_boards": exclude_boards_text,
@@ -884,7 +886,7 @@ with st.sidebar:
             "board_url": board_url,
             "start_page_manual": int(start_page_manual),
             "db_path": str(config.get("db_path", "") or "").strip(),
-        }
+        })
         save_config(new_config)
         st.success("✅ 설정이 저장되었습니다.")
 
