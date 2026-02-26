@@ -1407,13 +1407,8 @@ class NaverCafeCrawler:
                                     break
                             except:
                                 continue
-                        if not dval_inner:
-                            m_inner = re.search(
-                                r'(\d{4}\.\d{1,2}\.\d{1,2}|\d{1,2}\.\d{1,2}|\d{1,2}:\d{2})',
-                                row_inner.text,
-                            )
-                            if m_inner:
-                                dval_inner = self._parse_date(m_inner.group(1))
+                        # row 전체 텍스트 정규식 폴백은 제목/본문의 숫자를 날짜로 오인할 수 있어 비활성화
+                        # (예: "2013..." 같은 문자열을 작성일로 잘못 해석)
                         if dval_inner:
                             dates.append(dval_inner)
                     except:
@@ -1624,10 +1619,7 @@ class NaverCafeCrawler:
                                 if date_val: break
                             except: continue
                         
-                        if not date_val:
-                            date_match = re.search(r'(\d{4}\.\d{1,2}\.\d{1,2}|\d{1,2}\.\d{1,2}|\d{1,2}:\d{2})', row.text)
-                            if date_match: date_val = self._parse_date(date_match.group(1))
-                        
+                        # row 전체 텍스트 정규식 폴백은 날짜 오인 가능성이 높아 사용하지 않음
                         if not date_val: continue
                         
                         # (추가) 무한 루프 감지용 ID 수집 (첫 번째 유효 게시글)
