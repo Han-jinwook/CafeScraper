@@ -1513,6 +1513,8 @@ class NaverCafeCrawler:
         all_articles = []
         page = _auto_locate_start_page(end_date, start_page)
         self.last_effective_start_page = int(page)
+        initial_effective_page = int(page)
+        manual_start_relocated = False
         self.last_scanned_page = max(0, int(page) - 1)
         end_page = page + max_pages - 1
         should_continue = True
@@ -1587,6 +1589,7 @@ class NaverCafeCrawler:
 
                 page_found_count = 0
                 page_dates = [] # (추가) 페이지 내 유효한(공지 제외) 게시글 날짜 수집
+                restart_from_page = False
                 
                 # (추가) 무한 루프(페이지 고착) 감지
                 # 첫 번째 게시글(공지 제외)의 ID를 확인하여 이전 페이지와 동일하면 중단
@@ -1649,6 +1652,27 @@ class NaverCafeCrawler:
 
                         if date_val > end_date: continue
                         if date_val < start_date:
+                            # 수동 시작 페이지가 너무 과거면(예: 619p) 기간을 건너뛰고 바로 종료되는 문제가 생길 수 있다.
+                            # 최초 시작 페이지에서 곧바로 과거가 나오면 1페이지 기준으로 재탐색을 1회 수행한다.
+                            if (
+                                not manual_start_relocated
+                                and int(start_page) > 1
+                                and int(page) == int(initial_effective_page)
+                            ):
+                                self._update_status(
+                                    "⚠️ 수동 시작 페이지가 기간보다 과거로 판단됩니다. 1페이지 기준으로 자동 재탐색합니다."
+                                )
+                                page = _auto_locate_start_page(end_date, 1)
+                                self.last_effective_start_page = int(page)
+                                self.last_scanned_page = max(0, int(page) - 1)
+                                end_page = page + max_pages - 1
+                                last_first_post_id = None
+                                manual_start_relocated = True
+                                restart_from_page = True
+                                should_continue = True
+                                is_finished = False
+                                break
+
                             # (수정) 여기가 실행되어야 멈추는데, 만약 날짜 파싱 오류로 date_val이 이상하면 안 멈출 수 있음
                             # 디버깅용 로그 추가
                             # self._update_status(f"[디버그] 날짜 도달: {date_val} < {start_date}")
@@ -1733,6 +1757,9 @@ class NaverCafeCrawler:
                         
                     except: continue
                 
+                if restart_from_page:
+                    continue
+
                 # (추가) 무한 루프 체크
                 if current_first_post_id and current_first_post_id == last_first_post_id:
                     self._update_status(f"⚠️ 페이지 고착 감지: {page}페이지 내용이 이전 페이지와 동일합니다. (더 이상 글이 없거나 오류)")
