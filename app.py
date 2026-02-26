@@ -58,6 +58,10 @@ st.markdown("""
         border-radius: 12px;
         padding: 12px 14px;
         box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
+        min-height: 110px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
     }
     /* 항목(라벨)과 데이터(값) 시각 분리 */
     div[data-testid="stMetricLabel"] p {
@@ -775,7 +779,7 @@ def _render_crawl_summary(ctx: dict, title: str = "진행 요약"):
         c2.metric("현재 수집 개수", f"{int(m['completed']):,}개")
 
         if m["elapsed_sec"] is not None:
-            c3.metric("총 소요시간", _format_seconds_to_hhmmss(m["elapsed_sec"]))
+            c3.metric("총 소요시간", _format_seconds_to_hhmm(m["elapsed_sec"]))
         else:
             c3.metric("총 소요시간", "계산 중...")
 
@@ -788,7 +792,8 @@ def _render_crawl_summary(ctx: dict, title: str = "진행 요약"):
             f"""
             <div style="background: linear-gradient(180deg, #f8fbff 0%, #f3f7fc 100%);
                         border: 1px solid #dbe5f2; border-radius: 12px; padding: 12px 14px;
-                        box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04); min-height: 110px;">
+                        box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04); min-height: 110px;
+                        display:flex; flex-direction:column; justify-content:center;">
               <div style="font-size:0.86rem;color:#64748b;font-weight:700;letter-spacing:-0.01em;">예상 남은 시간</div>
               <div style="font-size:1.30rem;line-height:1.35;color:#0f172a;font-weight:800;word-break:keep-all;white-space:normal;">{eta_value}</div>
             </div>
