@@ -850,8 +850,17 @@ with st.sidebar:
     speed_profile = "fast"
     delay_min_sec = 1
     delay_max_sec = 2
-    start_page_manual = 1
-    st.caption("속도/대기/탐색 시작 페이지는 내부 안전 기본값(고속 우선 + 1~2초 + 1페이지)으로 고정됩니다.")
+    start_page_manual = int(
+        st.number_input(
+            "탐색 시작 페이지 (선택)",
+            min_value=1,
+            max_value=10000,
+            value=max(1, int(config.get("start_page_manual", 1) or 1)),
+            step=1,
+            help="기본값 1. 이전 실행의 마지막 탐색 페이지 근처로 지정하면 범위 탐색이 빨라집니다.",
+        )
+    )
+    st.caption("속도/대기는 내부 안전 기본값(고속 우선 + 1~2초)으로 고정됩니다.")
     st.caption("※ 안전 장치: 연속 40회 실패 시 작업이 자동 중단됩니다.")
 
     # 내부 고정 설정 (사용자에게 노출하지 않음)
@@ -873,6 +882,7 @@ with st.sidebar:
             "end_date": end_date.strftime("%Y-%m-%d"),
             "cafe_url": cafe_url,
             "board_url": board_url,
+            "start_page_manual": int(start_page_manual),
             "db_path": str(config.get("db_path", "") or "").strip(),
         }
         save_config(new_config)
