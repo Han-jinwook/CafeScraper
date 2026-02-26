@@ -642,6 +642,19 @@ def _format_seconds_to_hhmmss(total_seconds: float) -> str:
     return f"{m}분 {sec}초"
 
 
+def _format_seconds_to_hhmm(total_seconds: float) -> str:
+    """카드 표시용 축약 시간 포맷(초 단위 생략)."""
+    try:
+        s = max(0, int(total_seconds))
+    except:
+        s = 0
+    h = s // 3600
+    m = (s % 3600) // 60
+    if h > 0:
+        return f"{h}시간 {m}분"
+    return f"{m}분"
+
+
 def _estimate_overall_progress(ctx: dict) -> tuple[float | None, int | None, float | None]:
     """
     전체 진행률/총 예상 건수/전체 ETA(초)를 추정한다.
@@ -752,7 +765,7 @@ def _render_crawl_summary(ctx: dict, title: str = "진행 요약"):
     
     if total_collected is not None and not is_quick_mode:
         m = _build_completion_metrics(ctx)
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2, c3, c4 = st.columns([0.9, 0.9, 1.0, 1.4])
 
         if m["est_total"]:
             c1.metric("예상 게시글 수(추정)", f"{int(m['est_total']):,}개")
@@ -767,13 +780,21 @@ def _render_crawl_summary(ctx: dict, title: str = "진행 요약"):
             c3.metric("총 소요시간", "계산 중...")
 
         if m["eta_total_sec"] is not None:
-            remain_txt = _format_seconds_to_hhmmss(m["eta_total_sec"])
-            if m["total_sec"] is not None:
-                c4.metric("예상 남은 시간", f"{remain_txt}/{_format_seconds_to_hhmmss(m['total_sec'])}")
-            else:
-                c4.metric("예상 남은 시간", remain_txt)
+            remain_txt = _format_seconds_to_hhmm(m["eta_total_sec"])
+            eta_value = f"{remain_txt} / 총 {_format_seconds_to_hhmm(m['total_sec'])}" if m["total_sec"] is not None else remain_txt
         else:
-            c4.metric("예상 남은 시간", "계산 중...")
+            eta_value = "계산 중..."
+        c4.markdown(
+            f"""
+            <div style="background: linear-gradient(180deg, #f8fbff 0%, #f3f7fc 100%);
+                        border: 1px solid #dbe5f2; border-radius: 12px; padding: 12px 14px;
+                        box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04); min-height: 110px;">
+              <div style="font-size:0.86rem;color:#64748b;font-weight:700;letter-spacing:-0.01em;">예상 남은 시간</div>
+              <div style="font-size:1.30rem;line-height:1.35;color:#0f172a;font-weight:800;word-break:keep-all;white-space:normal;">{eta_value}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
         if m["avg_sec"] is not None:
             st.markdown(
@@ -812,7 +833,7 @@ def _render_crawl_summary(ctx: dict, title: str = "진행 요약"):
                 elapsed_txt = _format_seconds_to_hhmmss(elapsed_sec)
             except:
                 pass
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2, c3, c4 = st.columns([0.9, 0.9, 1.0, 1.4])
         c1.metric("예상 게시글 수(추정)", f"{total:,}개")
         c2.metric("현재 수집 개수", f"{idx:,}개")
         c3.metric("총 소요시간", elapsed_txt)
