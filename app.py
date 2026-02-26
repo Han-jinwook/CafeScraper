@@ -365,7 +365,7 @@ with _col_logo:
         st.image(str(_logo_path), width=240)
 with _col_title:
     st.markdown(f"## [{DISPLAY_CAFE_NAME}] 카페 추출기 Pro V1.0")
-    st.caption("안정형 수집 워크플로우 · 설정 저장 → 브라우저 열기 → 크롤링 시작")
+    st.caption("안전 우선 수집 워크플로우 · 설정 저장 → 브라우저 열기 → 크롤링 시작")
 
     with st.expander("📖 사용 가이드 (필독)", expanded=False):
         st.markdown(
@@ -375,10 +375,12 @@ with _col_title:
             - 새로운 글은 추가하고, 이미 수집된 글 중 **등급이 비어있는 경우 자동으로 채웁니다.**
             - 별도 복구 모드를 고르지 않아도 스마트 보강이 함께 동작합니다.
             
-            **2. 속도 향상 팁 (자동 적용)**
+            **2. 수집 체감 속도 안내 (자동 적용)**
             - **50개씩 보기**: 크롤러가 자동으로 게시판 목록을 '50개씩 보기'로 전환하여 탐색 속도를 높입니다.
             - **자동 시작 페이지 탐색**: 지정한 기간에 맞는 페이지를 자동으로 찾아 점프합니다.
             - **수동 시작 페이지(선택)**: 이전 실행 로그의 마지막 페이지를 기준으로, 다음 실행 시작 위치를 직접 지정할 수 있습니다.
+            - **체감 소요시간**: 일반적으로 1건당 약 15~20초 내외가 걸릴 수 있습니다.
+            - **소요시간 변동 요인**: 네트워크 품질, 네이버 페이지 로딩 속도, 게시글 본문 길이, 댓글 수, 이미지/동적요소 렌더링 상태, 차단 회피용 휴식 타이밍에 따라 더 길어질 수 있습니다.
             
             **3. 안전 장치 (자동 적용)**
             - **연속 실패 자동 중단**: 40회 이상 연속으로 수집에 실패하면 작업이 자동 중단되고 체크포인트가 저장됩니다.
@@ -880,7 +882,7 @@ with st.sidebar:
             help="기본값 1. 이전 실행의 마지막 탐색 페이지 근처로 지정하면 범위 탐색이 빨라집니다.",
         )
     )
-    st.caption("속도/대기는 내부 안전 기본값(고속 우선 + 1~2초)으로 고정됩니다.")
+    st.caption("속도/대기는 내부 안전 기본값으로 고정됩니다. (체감: 약 15~20초/건)")
     st.caption("※ 안전 장치: 연속 40회 실패 시 작업이 자동 중단됩니다.")
 
     # 내부 고정 설정 (사용자에게 노출하지 않음)
@@ -1243,7 +1245,7 @@ if (not st.session_state.crawl_running) and st.session_state.crawl_checkpoint_av
             display_ctx["crawl_delay_max"] = max(max(1.0, float(delay_min_sec)), float(delay_max_sec))
         _render_crawl_summary(display_ctx, title="체크포인트 요약")
         if mismatches:
-            st.caption(f"※ 재개 버튼을 누르면 위 대기 범위({int(delay_min_sec)}~{int(delay_max_sec)}초)로 적용됩니다.")
+            st.caption("※ 재개 버튼을 누르면 현재 화면 설정으로 이어서 수집합니다.")
 
     st.caption("▶ 체크포인트 재개 — 중단된 지점부터 이어서 수집합니다. 새로 시작하려면 위의 2단계 크롤링 시작을 누르세요.")
     if st.button("▶ 체크포인트 재개", width="stretch", key="resume_from_checkpoint"):
