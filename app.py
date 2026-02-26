@@ -1563,6 +1563,10 @@ if st.session_state.crawl_running:
                 """,
                 unsafe_allow_html=True,
             )
+            st.markdown(
+                f"<div style='text-align:right;color:#334155;font-size:1.0rem;font-weight:700;margin-top:6px;'>전체 완료율(추정): {completed:,}/{int(est_total):,} ({completion_ratio*100:.1f}%)</div>",
+                unsafe_allow_html=True,
+            )
         else:
             st.markdown(
                 """
@@ -1572,7 +1576,10 @@ if st.session_state.crawl_running:
                 """,
                 unsafe_allow_html=True,
             )
-            st.caption(f"전체 완료율(추정): 계산 중... · 현재 수집 {completed:,}개")
+            st.markdown(
+                f"<div style='text-align:right;color:#334155;font-size:1.0rem;font-weight:700;margin-top:6px;'>전체 완료율(추정): 계산 중... · 현재 수집 {completed:,}개</div>",
+                unsafe_allow_html=True,
+            )
 
         st.markdown("<div style='height:18px;'></div>", unsafe_allow_html=True)
 
