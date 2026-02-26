@@ -259,6 +259,8 @@ def save_config(config):
         json.dump(config, f, ensure_ascii=False, indent=4)
 
 config = load_config()
+# 상단 표시에 사용할 카페명 (없으면 기본값)
+DISPLAY_CAFE_NAME = str(config.get("cafe_name", "카페 몬스터") or "").strip() or "카페 몬스터"
 # DB 경로는 설정/환경변수로 변경 가능
 DB_PATH = str(resolve_db_path(config.get("db_path")))
 CRAWL_CHECKPOINT_PATH = os.path.join(str(get_logs_dir()), "crawl_checkpoint.json")
@@ -362,7 +364,7 @@ with _col_logo:
     if _logo_path.exists():
         st.image(str(_logo_path), width=240)
 with _col_title:
-    st.markdown("## [카페 몬스터] 카페 추출기 Pro V1.0")
+    st.markdown(f"## [{DISPLAY_CAFE_NAME}] 카페 추출기 Pro V1.0")
     st.caption("안정형 수집 워크플로우 · 설정 저장 → 브라우저 열기 → 크롤링 시작")
 
     with st.expander("📖 사용 가이드 (필독)", expanded=False):
@@ -794,6 +796,7 @@ if not st.session_state.crawl_checkpoint_bootstrapped:
 
 with st.sidebar:
     st.header("⚙️ 수집 설정")
+    cafe_name = st.text_input("카페명(상단 표시)", value=DISPLAY_CAFE_NAME, key="cafe_name_input")
 
     cafe_url = st.text_input("카페 URL", value=config.get("cafe_url", "https://cafe.naver.com/sundreamd"))
     board_url = st.text_input("게시판 URL (전체글보기 권장)", value=config.get("board_url", "https://cafe.naver.com/f-e/cafes/27870803/menus/0"))
@@ -863,6 +866,7 @@ with st.sidebar:
     st.markdown("---")
     if st.button("💾 설정 저장", width="stretch"):
         new_config = {
+            "cafe_name": (cafe_name or "").strip(),
             "admin_nicks": admin_nicks,
             "exclude_boards": exclude_boards_text,
             "start_date": start_date.strftime("%Y-%m-%d"),
