@@ -58,6 +58,14 @@ st.markdown("""
         border-radius: 10px;
         padding: 10px 12px;
     }
+    /* 요약 카드 글자 크기 축소 (숫자 잘림 완화) */
+    div[data-testid="stMetricLabel"] p {
+        font-size: 0.82rem !important;
+    }
+    div[data-testid="stMetricValue"] {
+        font-size: 2.0rem !important;
+        line-height: 1.1 !important;
+    }
 
     /* 버튼 통일 */
     div.stButton > button {
@@ -664,6 +672,57 @@ def _estimate_overall_progress(ctx: dict) -> tuple[float | None, int | None, flo
     return progress_ratio, est_total, eta_total_sec
 
 
+def _estimate_avg_process_seconds(ctx: dict) -> float | None:
+    run_started_raw = str(ctx.get("run_started_at", "") or "").strip()
+    processed = int(ctx.get("global_processed_count", 0) or 0)
+    if not run_started_raw or processed <= 0:
+        return None
+    try:
+        started_dt = datetime.fromisoformat(run_started_raw)
+        elapsed_sec = max(1.0, (datetime.now() - started_dt).total_seconds())
+        return elapsed_sec / float(processed)
+    except:
+        return None
+
+
+def _build_completion_metrics(ctx: dict) -> dict:
+    _, est_total, eta_total_sec = _estimate_overall_progress(ctx)
+    processed = int(ctx.get("global_processed_count", 0) or 0)
+    skip_count = int(ctx.get("skip_count", 0) or 0)
+    error_count = int(ctx.get("error_count", 0) or 0)
+    # 완료율/현재 수집 개수는 "실제 저장 성공건" 기준(스킵 제외)
+    completed = max(0, processed - skip_count - error_count)
+
+    completion_ratio = None
+    if est_total and est_total > 0:
+        completion_ratio = min(1.0, completed / float(est_total))
+
+    run_started_raw = str(ctx.get("run_started_at", "") or "").strip()
+    elapsed_sec = None
+    total_sec = None
+    if run_started_raw:
+        try:
+            started_dt = datetime.fromisoformat(run_started_raw)
+            elapsed_sec = max(1.0, (datetime.now() - started_dt).total_seconds())
+            if eta_total_sec is not None:
+                total_sec = elapsed_sec + eta_total_sec
+        except:
+            elapsed_sec = None
+            total_sec = None
+
+    return {
+        "est_total": est_total,
+        "completed": completed,
+        "completion_ratio": completion_ratio,
+        "eta_total_sec": eta_total_sec,
+        "elapsed_sec": elapsed_sec,
+        "total_sec": total_sec,
+        "avg_sec": _estimate_avg_process_seconds(ctx),
+        "last_scanned_page": int(ctx.get("last_scanned_page", 0) or 0),
+        "scan_date_txt": str(ctx.get("last_scan_oldest_date", "") or "").strip(),
+    }
+
+
 def _render_crawl_summary(ctx: dict, title: str = "진행 요약"):
     # 빠른 복구 모드인지 확인 (한 번에 로드하는 방식)
     is_quick_mode = bool(ctx.get("quick_recovery_mode", False))
@@ -671,70 +730,55 @@ def _render_crawl_summary(ctx: dict, title: str = "진행 요약"):
     # 배치 모드인지 확인 (total_collected 키가 존재하면 배치 모드)
     total_collected = ctx.get("total_collected")
     
-    delay_min = float(ctx.get("crawl_delay_min", 0) or 0)
-    delay_max = float(ctx.get("crawl_delay_max", 0) or 0)
-    
     st.markdown(f"#### {title}")
     
     if total_collected is not None and not is_quick_mode:
-        # [배치/스트리밍 모드]
-        # 전체 진행률 기반으로 누적/총량 추정/전체 ETA 표시
-        page_cursor = ctx.get("page_cursor", 1)
-        last_scanned_page = int(ctx.get("last_scanned_page", 0) or 0)
-        progress_ratio, est_total, eta_total_sec = _estimate_overall_progress(ctx)
-        total_collected_int = int(total_collected)
-        idx = int(ctx.get("index", 0) or 0)
-        batch_total = int(ctx.get("batch_total", 0) or 0)
-        remain_in_batch = max(0, batch_total - idx)
-        is_finished_scan = bool(ctx.get("is_finished", False))
-        avg_delay = (delay_min + delay_max) / 2.0
-        eta_finish_sec = remain_in_batch * (8.0 + avg_delay)
-
+        m = _build_completion_metrics(ctx)
         c1, c2, c3, c4 = st.columns(4)
-        if is_finished_scan and batch_total > 0:
-            # 사용자가 가장 궁금해하는 '지금 남은 상세 처리'를 최우선으로 표시
-            c1.metric("상세 처리 진행", f"{idx:,}/{batch_total:,}건")
-            if last_scanned_page > 0:
-                c2.metric("목록 탐색", f"완료 (최근 {last_scanned_page}p)")
-            else:
-                c2.metric("목록 탐색", "완료")
-            c3.metric("대기 범위", f"{delay_min:.0f}~{delay_max:.0f}초")
-            c4.metric("마무리 남은 시간", _format_seconds_to_hhmmss(eta_finish_sec))
-            st.caption(f"목록은 끝났고, 상세 저장만 남았습니다. ({idx:,}/{batch_total:,}건 처리)")
+
+        if m["est_total"]:
+            c1.metric("예상 게시글 수(추정)", f"{int(m['est_total']):,}개")
         else:
-            # 목록 탐색 중에는 목록 관점 수치 표시
-            if est_total:
-                c1.metric("목록 확보", f"{total_collected_int:,}/{est_total:,}개")
+            c1.metric("예상 게시글 수(추정)", "계산 중...")
+
+        c2.metric("현재 수집 개수", f"{int(m['completed']):,}개")
+
+        if m["completion_ratio"] is not None:
+            c3.metric("전체 완료율(추정)", f"{m['completion_ratio']*100:.1f}%")
+        else:
+            c3.metric("전체 완료율(추정)", "계산 중...")
+
+        if m["eta_total_sec"] is not None:
+            remain_txt = _format_seconds_to_hhmmss(m["eta_total_sec"])
+            if m["total_sec"] is not None:
+                c4.metric("예상 남은 시간", f"{remain_txt}/{_format_seconds_to_hhmmss(m['total_sec'])}")
             else:
-                c1.metric("목록 확보", f"{total_collected_int:,}개")
-            if last_scanned_page > 0:
-                c2.metric("탐색 페이지", f"최근 {last_scanned_page}p (다음 {page_cursor}p)")
+                c4.metric("예상 남은 시간", remain_txt)
+        else:
+            c4.metric("예상 남은 시간", "계산 중...")
+
+        if m["avg_sec"] is not None:
+            st.caption(f"개당 평균 소요시간: {m['avg_sec']:.1f}초/건")
+        else:
+            st.caption("개당 평균 소요시간: 계산 중...")
+
+        if m["last_scanned_page"] > 0:
+            if m["scan_date_txt"]:
+                st.caption(f"탐색 페이지: 최근 {m['last_scanned_page']}p · 현재 탐색 기준 날짜: {m['scan_date_txt']}")
             else:
-                c2.metric("탐색 페이지", f"{page_cursor}p부터")
-            c3.metric("대기 범위", f"{delay_min:.0f}~{delay_max:.0f}초")
-            if eta_total_sec is not None:
-                c4.metric("예상 남은 시간(전체)", _format_seconds_to_hhmmss(eta_total_sec))
-                scan_date_txt = str(ctx.get("last_scan_oldest_date", "") or "").strip()
-                if scan_date_txt:
-                    st.caption(f"현재 탐색 기준 날짜: {scan_date_txt}")
-            else:
-                c4.metric("예상 남은 시간(전체)", "계산 중...")
+                st.caption(f"탐색 페이지: 최근 {m['last_scanned_page']}p")
         
     else:
         # [전체 로드 모드] (구버전 호환 또는 빠른 복구 모드)
         total = int(len(ctx.get("articles", []))) if isinstance(ctx.get("articles", []), list) else 0
         idx = int(ctx.get("index", 0) or 0)
         remain = max(0, total - idx)
-        
-        avg_delay = (delay_min + delay_max) / 2.0
-        base_sec = 0.5 if ctx.get("level_backfill_mode") else 8.0
-        eta_sec = remain * (base_sec + avg_delay)
-
+        ratio = (idx / total) if total > 0 else 0.0
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("진행", f"{idx:,}/{total:,}")
-        c2.metric("남은 건수", f"{remain:,}건")
-        c3.metric("대기 범위", f"{delay_min:.0f}~{delay_max:.0f}초")
-        c4.metric("예상 남은 시간", _format_seconds_to_hhmmss(eta_sec))
+        c1.metric("예상 게시글 수(추정)", f"{total:,}개")
+        c2.metric("현재 수집 개수", f"{idx:,}개")
+        c3.metric("전체 완료율(추정)", f"{ratio*100:.1f}%")
+        c4.metric("예상 남은 시간", "계산 중...")
 
 
 if not st.session_state.crawl_checkpoint_bootstrapped:
@@ -800,42 +844,12 @@ with st.sidebar:
 
     st.subheader("🔧 작업 모드")
     st.caption("기간별 스마트 수집 (기본) 단일 모드로 동작합니다.")
-
-    with st.expander("속도 설정 (고급)", expanded=False):
-        speed_profile_label = st.selectbox(
-            "속도 프로파일",
-            ["안정형 (기본)", "고속형 (약 2배)"],
-            index=0 if str(config.get("speed_profile", "stable")) != "fast" else 1,
-            help="내부 고정 휴식만 조정합니다. 아래 최소/최대 대기(초) 설정은 그대로 유지됩니다.",
-        )
-        speed_profile = "fast" if speed_profile_label.startswith("고속형") else "stable"
-        st.caption("크롤링 대기 시간 범위 (하한선: 1초)")
-        col_delay1, col_delay2 = st.columns(2)
-        delay_min_sec = col_delay1.number_input(
-            "최소 대기(초)",
-            min_value=1,
-            max_value=300,
-            value=max(1, int(config.get("delay_min_sec", 2))),
-            step=1,
-        )
-        delay_max_sec = col_delay2.number_input(
-            "최대 대기(초)",
-            min_value=max(1, int(delay_min_sec)),
-            max_value=300,
-            value=max(max(1, int(delay_min_sec)), int(config.get("delay_max_sec", 4))),
-            step=1,
-        )
-        st.caption("※ 안전 장치: 연속 40회 실패 시 작업이 자동 중단됩니다.")
-        start_page_manual = int(
-            st.number_input(
-                "탐색 시작 페이지 (선택)",
-                min_value=1,
-                max_value=10000,
-                value=max(1, int(config.get("start_page_manual", 1) or 1)),
-                step=1,
-                help="기본값 1(자동). 예: 이전 실행의 마지막 탐색이 406p면 400~420 부근으로 시작해 빠르게 범위를 찾을 수 있습니다.",
-            )
-        )
+    speed_profile = "fast"
+    delay_min_sec = 1
+    delay_max_sec = 2
+    start_page_manual = 1
+    st.caption("속도/대기/탐색 시작 페이지는 내부 안전 기본값(고속 우선 + 1~2초 + 1페이지)으로 고정됩니다.")
+    st.caption("※ 안전 장치: 연속 40회 실패 시 작업이 자동 중단됩니다.")
 
     # 내부 고정 설정 (사용자에게 노출하지 않음)
     st.session_state.debug_mode = False
@@ -855,10 +869,6 @@ with st.sidebar:
             "end_date": end_date.strftime("%Y-%m-%d"),
             "cafe_url": cafe_url,
             "board_url": board_url,
-            "delay_min_sec": int(delay_min_sec),
-            "delay_max_sec": int(delay_max_sec),
-            "speed_profile": speed_profile,
-            "start_page_manual": int(start_page_manual),
             "db_path": str(config.get("db_path", "") or "").strip(),
         }
         save_config(new_config)
@@ -1497,20 +1507,25 @@ if st.session_state.crawl_running:
         art = articles_buffer[idx]
         total_collected_so_far = int(ctx.get("total_collected", total_in_buffer))
         
-        # 진행률 표시 (전체 개수를 모르므로, 현재 배치 내 진행률 or 그냥 스피너)
-        # (수정) 중복 표시 제거: live_status가 이미 상단에 있으므로 여기서는 _render_crawl_summary만 호출
+        # 진행률 표시
         _render_crawl_summary(ctx, title="실시간 진행 요약")
-        # 진행 막대는 전체 진행률(기간 기준) 우선 사용
-        overall_ratio, _, _ = _estimate_overall_progress(ctx)
-        if overall_ratio is not None:
-            progress = st.progress(float(min(max(overall_ratio, 0.0), 1.0)))
+
+        # 도표는 최종 완료율 1개만 표시 (개수 기반)
+        metrics = _build_completion_metrics(ctx)
+        completion_ratio = metrics.get("completion_ratio")
+        est_total = metrics.get("est_total")
+        completed = int(metrics.get("completed", 0) or 0)
+        if completion_ratio is not None and est_total:
+            progress = st.progress(float(min(max(completion_ratio, 0.0), 1.0)))
             st.markdown(
-                f"<div style='text-align:right;color:#6b7280;font-size:0.85rem;'>{overall_ratio*100:.1f}%</div>",
+                f"<div style='text-align:right;color:#6b7280;font-size:0.85rem;'>"
+                f"전체 완료율(추정): {completed:,}/{int(est_total):,} ({completion_ratio*100:.1f}%)"
+                f"</div>",
                 unsafe_allow_html=True,
             )
         else:
-            progress = st.progress((idx / total_in_buffer) if total_in_buffer > 0 else 0.0)
-            st.caption("전체 진행률 계산 중...")
+            progress = st.progress(0.0)
+            st.caption(f"전체 완료율(추정): 계산 중... · 현재 수집 {completed:,}개")
 
         if st.session_state.crawl_stop_requested:
             st.session_state.crawl_running = False
@@ -1749,7 +1764,6 @@ if st.session_state.crawl_running:
             ctx["index"] = idx + 1
             st.session_state.crawl_state = ctx
             _save_crawl_checkpoint()
-            progress.progress((ctx["index"] / total_in_buffer) if total_in_buffer > 0 else 1.0)
             st.rerun()
 
 # 초기 로그 표시
