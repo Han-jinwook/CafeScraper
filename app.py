@@ -745,10 +745,10 @@ def _render_crawl_summary(ctx: dict, title: str = "진행 요약"):
 
         c2.metric("현재 수집 개수", f"{int(m['completed']):,}개")
 
-        if m["completion_ratio"] is not None:
-            c3.metric("전체 완료율(추정)", f"{m['completion_ratio']*100:.1f}%")
+        if m["elapsed_sec"] is not None:
+            c3.metric("총 소요시간", _format_seconds_to_hhmmss(m["elapsed_sec"]))
         else:
-            c3.metric("전체 완료율(추정)", "계산 중...")
+            c3.metric("총 소요시간", "계산 중...")
 
         if m["eta_total_sec"] is not None:
             remain_txt = _format_seconds_to_hhmmss(m["eta_total_sec"])
@@ -760,26 +760,46 @@ def _render_crawl_summary(ctx: dict, title: str = "진행 요약"):
             c4.metric("예상 남은 시간", "계산 중...")
 
         if m["avg_sec"] is not None:
-            st.caption(f"개당 평균 소요시간: {m['avg_sec']:.1f}초/건")
+            st.markdown(
+                f"<div style='font-size:1.0rem;color:#334155;font-weight:600;'>개당 평균 소요시간: {m['avg_sec']:.1f}초/건</div>",
+                unsafe_allow_html=True,
+            )
         else:
-            st.caption("개당 평균 소요시간: 계산 중...")
+            st.markdown(
+                "<div style='font-size:1.0rem;color:#334155;font-weight:600;'>개당 평균 소요시간: 계산 중...</div>",
+                unsafe_allow_html=True,
+            )
 
         if m["last_scanned_page"] > 0:
             if m["scan_date_txt"]:
-                st.caption(f"탐색 페이지: 최근 {m['last_scanned_page']}p · 현재 탐색 기준 날짜: {m['scan_date_txt']}")
+                st.markdown(
+                    f"<div style='font-size:1.0rem;color:#334155;font-weight:600;'>탐색 페이지: 최근 {m['last_scanned_page']}p · 현재 탐색 기준 날짜: {m['scan_date_txt']}</div>",
+                    unsafe_allow_html=True,
+                )
             else:
-                st.caption(f"탐색 페이지: 최근 {m['last_scanned_page']}p")
+                st.markdown(
+                    f"<div style='font-size:1.0rem;color:#334155;font-weight:600;'>탐색 페이지: 최근 {m['last_scanned_page']}p</div>",
+                    unsafe_allow_html=True,
+                )
         
     else:
         # [전체 로드 모드] (구버전 호환 또는 빠른 복구 모드)
         total = int(len(ctx.get("articles", []))) if isinstance(ctx.get("articles", []), list) else 0
         idx = int(ctx.get("index", 0) or 0)
-        remain = max(0, total - idx)
         ratio = (idx / total) if total > 0 else 0.0
+        run_started_raw = str(ctx.get("run_started_at", "") or "").strip()
+        elapsed_txt = "계산 중..."
+        if run_started_raw:
+            try:
+                started_dt = datetime.fromisoformat(run_started_raw)
+                elapsed_sec = max(1.0, (datetime.now() - started_dt).total_seconds())
+                elapsed_txt = _format_seconds_to_hhmmss(elapsed_sec)
+            except:
+                pass
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("예상 게시글 수(추정)", f"{total:,}개")
         c2.metric("현재 수집 개수", f"{idx:,}개")
-        c3.metric("전체 완료율(추정)", f"{ratio*100:.1f}%")
+        c3.metric("총 소요시간", elapsed_txt)
         c4.metric("예상 남은 시간", "계산 중...")
 
 
@@ -1532,16 +1552,33 @@ if st.session_state.crawl_running:
         est_total = metrics.get("est_total")
         completed = int(metrics.get("completed", 0) or 0)
         if completion_ratio is not None and est_total:
-            progress = st.progress(float(min(max(completion_ratio, 0.0), 1.0)))
+            safe_ratio = float(min(max(completion_ratio, 0.0), 1.0))
+            # 0.x%에서도 시각적으로 보이도록 최소 표시폭을 보장
+            visual_ratio = safe_ratio if safe_ratio <= 0.0 else max(safe_ratio, 0.012)
             st.markdown(
-                f"<div style='text-align:right;color:#6b7280;font-size:0.85rem;'>"
-                f"전체 완료율(추정): {completed:,}/{int(est_total):,} ({completion_ratio*100:.1f}%)"
-                f"</div>",
+                f"""
+                <div style="width:100%;height:12px;background:#e5e7eb;border-radius:999px;overflow:hidden;margin-top:4px;">
+                  <div style="height:100%;width:{visual_ratio*100:.3f}%;background:#2f80ed;border-radius:999px;"></div>
+                </div>
+                <div style='text-align:right;color:#334155;font-size:1.0rem;font-weight:700;margin-top:6px;'>
+                  전체 완료율(추정): {completed:,}/{int(est_total):,} ({completion_ratio*100:.1f}%)
+                </div>
+                """,
                 unsafe_allow_html=True,
             )
         else:
-            progress = st.progress(0.0)
-            st.caption(f"전체 완료율(추정): 계산 중... · 현재 수집 {completed:,}개")
+            st.markdown(
+                """
+                <div style="width:100%;height:12px;background:#e5e7eb;border-radius:999px;overflow:hidden;margin-top:4px;">
+                  <div style="height:100%;width:0%;background:#2f80ed;border-radius:999px;"></div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                f"<div style='text-align:right;color:#334155;font-size:1.0rem;font-weight:700;margin-top:6px;'>전체 완료율(추정): 계산 중... · 현재 수집 {completed:,}개</div>",
+                unsafe_allow_html=True,
+            )
 
         if st.session_state.crawl_stop_requested:
             st.session_state.crawl_running = False
