@@ -28,7 +28,7 @@ st.markdown("""
     /* 기본 레이아웃 */
     .block-container {
         padding-top: 1.5rem !important;
-        padding-bottom: 2rem !important;
+        padding-bottom: 4.5rem !important;
         max-width: 1450px;
     }
 
@@ -1560,9 +1560,6 @@ if st.session_state.crawl_running:
                 <div style="width:100%;height:12px;background:#e5e7eb;border-radius:999px;overflow:hidden;margin-top:4px;">
                   <div style="height:100%;width:{visual_ratio*100:.3f}%;background:#2f80ed;border-radius:999px;"></div>
                 </div>
-                <div style='text-align:right;color:#334155;font-size:1.0rem;font-weight:700;margin-top:6px;'>
-                  전체 완료율(추정): {completed:,}/{int(est_total):,} ({completion_ratio*100:.1f}%)
-                </div>
                 """,
                 unsafe_allow_html=True,
             )
@@ -1575,10 +1572,9 @@ if st.session_state.crawl_running:
                 """,
                 unsafe_allow_html=True,
             )
-            st.markdown(
-                f"<div style='text-align:right;color:#334155;font-size:1.0rem;font-weight:700;margin-top:6px;'>전체 완료율(추정): 계산 중... · 현재 수집 {completed:,}개</div>",
-                unsafe_allow_html=True,
-            )
+            st.caption(f"전체 완료율(추정): 계산 중... · 현재 수집 {completed:,}개")
+
+        st.markdown("<div style='height:18px;'></div>", unsafe_allow_html=True)
 
         if st.session_state.crawl_stop_requested:
             st.session_state.crawl_running = False
