@@ -53,18 +53,32 @@ st.markdown("""
 
     /* metric 카드 안정감 */
     div[data-testid="stMetric"] {
-        background: #f7f9fc;
-        border: 1px solid #e4e8f0;
-        border-radius: 10px;
-        padding: 10px 12px;
+        background: linear-gradient(180deg, #f8fbff 0%, #f3f7fc 100%);
+        border: 1px solid #dbe5f2;
+        border-radius: 12px;
+        padding: 12px 14px;
+        box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
     }
-    /* 요약 카드 글자 크기 축소 (숫자 잘림 완화) */
+    /* 항목(라벨)과 데이터(값) 시각 분리 */
     div[data-testid="stMetricLabel"] p {
-        font-size: 0.82rem !important;
+        font-size: 0.86rem !important;
+        color: #64748b !important;
+        font-weight: 700 !important;
+        letter-spacing: -0.01em;
     }
     div[data-testid="stMetricValue"] {
-        font-size: 2.0rem !important;
-        line-height: 1.1 !important;
+        font-size: 1.75rem !important;
+        line-height: 1.2 !important;
+        color: #0f172a !important;
+        font-weight: 800 !important;
+    }
+    /* 긴 시간 텍스트도 말줄임(...) 없이 보이게 */
+    div[data-testid="stMetricValue"],
+    div[data-testid="stMetricValue"] * {
+        white-space: normal !important;
+        overflow: visible !important;
+        text-overflow: clip !important;
+        word-break: keep-all !important;
     }
 
     /* 버튼 통일 */
