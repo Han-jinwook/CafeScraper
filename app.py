@@ -1557,17 +1557,14 @@ if st.session_state.crawl_running:
                     # 여기는 is_finished=False인데 수집은 0개인 경우 (즉, 해당 페이지 글들이 모두 end_date보다 미래인 최신글이라 스킵됨)
                     # 따라서 계속 과거로 가야 함 (정상)
                     
-                    # 단, 너무 많이 허탕을 치면(예: 1000페이지 넘게) 뭔가 이상하므로 안전장치
+                    # 페이지 수 기준 하드 스탑은 두지 않는다.
+                    # 오래된 글이 많은 카페(수천/수만 페이지)도 정상 탐색할 수 있어야 한다.
                     empty_streak = int(ctx.get("empty_batch_streak", 0)) + 1
                     ctx["empty_batch_streak"] = empty_streak
-                    
-                    if empty_streak > 200: # 5페이지 * 200번 = 1000페이지 동안 수집 0개면 중단
-                        st.session_state.crawl_running = False
-                        _clear_crawl_checkpoint()
-                        update_logs("⛔ 1000페이지 이상 탐색했으나 해당 기간의 글을 찾지 못했습니다. 날짜 설정을 확인해주세요.")
-                        st.session_state.crawl_last_status_type = "error"
-                        st.session_state.crawl_last_status_message = "⛔ 1000페이지 이상 탐색했으나 해당 기간의 글을 찾지 못했습니다."
-                        st.rerun()
+                    if empty_streak % 20 == 0:
+                        update_logs(
+                            f"ℹ️ 해당 기간 글 탐색 중... (연속 공배치 {empty_streak}회, 계속 진행)"
+                        )
                 else:
                     ctx["empty_batch_streak"] = 0 # 수집 성공하면 스트릭 초기화
 

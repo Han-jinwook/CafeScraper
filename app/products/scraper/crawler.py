@@ -1787,11 +1787,10 @@ class NaverCafeCrawler:
                     consecutive_no_date_pages += 1
                     if consecutive_no_date_pages >= 15:
                         self._update_status(
-                            "⚠️ 연속으로 날짜를 인식하지 못해 탐색을 중단합니다. "
-                            "(페이지 구조 변화 가능성)"
+                            "⚠️ 연속으로 날짜 인식이 어려운 페이지가 감지됩니다. "
+                            "중단하지 않고 계속 탐색합니다."
                         )
-                        should_continue = False
-                        is_finished = True
+                        consecutive_no_date_pages = 0
 
                 # (추가) 무한 루프 체크
                 if current_first_post_id and current_first_post_id == last_first_post_id:
