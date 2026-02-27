@@ -1407,8 +1407,14 @@ class NaverCafeCrawler:
                                     break
                             except:
                                 continue
-                        # row 전체 텍스트 정규식 폴백은 제목/본문의 숫자를 날짜로 오인할 수 있어 비활성화
-                        # (예: "2013..." 같은 문자열을 작성일로 잘못 해석)
+                        # 날짜 컬럼 선택자가 실패하는 경우를 대비해, YYYY.MM.DD 형태만 제한적으로 폴백한다.
+                        # 단, 비정상 과거 연도 오인을 막기 위해 합리적 연도 범위로 필터링한다.
+                        if not dval_inner:
+                            m_inner = re.search(r'(\d{4}\.\d{1,2}\.\d{1,2})', row_inner.text)
+                            if m_inner:
+                                cand = self._parse_date(m_inner.group(1))
+                                if cand and 2015 <= cand.year <= (datetime.now().year + 1):
+                                    dval_inner = cand
                         if dval_inner:
                             dates.append(dval_inner)
                     except:
@@ -1515,6 +1521,7 @@ class NaverCafeCrawler:
         should_continue = True
         is_finished = False
         consecutive_before_start_pages = 0
+        consecutive_no_date_pages = 0
         
         last_first_post_id = None # (추가) 무한 루프 방지용
 
@@ -1620,7 +1627,13 @@ class NaverCafeCrawler:
                                 if date_val: break
                             except: continue
                         
-                        # row 전체 텍스트 정규식 폴백은 날짜 오인 가능성이 높아 사용하지 않음
+                        # 날짜 컬럼 선택자가 실패하는 경우 제한적 폴백(YYYY.MM.DD만, 연도 범위 검증)
+                        if not date_val:
+                            date_match = re.search(r'(\d{4}\.\d{1,2}\.\d{1,2})', row.text)
+                            if date_match:
+                                cand = self._parse_date(date_match.group(1))
+                                if cand and 2015 <= cand.year <= (datetime.now().year + 1):
+                                    date_val = cand
                         if not date_val: continue
                         
                         # (추가) 무한 루프 감지용 ID 수집 (첫 번째 유효 게시글)
@@ -1751,6 +1764,7 @@ class NaverCafeCrawler:
                     continue
 
                 if page_dates:
+                    consecutive_no_date_pages = 0
                     page_min_date = min(page_dates)
                     page_max_date = max(page_dates)
                     if page_max_date < start_date:
@@ -1769,6 +1783,15 @@ class NaverCafeCrawler:
                             is_finished = True
                     else:
                         consecutive_before_start_pages = 0
+                else:
+                    consecutive_no_date_pages += 1
+                    if consecutive_no_date_pages >= 15:
+                        self._update_status(
+                            "⚠️ 연속으로 날짜를 인식하지 못해 탐색을 중단합니다. "
+                            "(페이지 구조 변화 가능성)"
+                        )
+                        should_continue = False
+                        is_finished = True
 
                 # (추가) 무한 루프 체크
                 if current_first_post_id and current_first_post_id == last_first_post_id:
