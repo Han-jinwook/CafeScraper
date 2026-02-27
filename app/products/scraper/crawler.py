@@ -1311,6 +1311,148 @@ class NaverCafeCrawler:
             sep = "&" if "?" in str(board_url) else "?"
             return f"{board_url}{sep}page={int(page_no)}&userDisplay={int(user_display)}"
 
+    def recommend_start_page(
+        self,
+        board_url: str,
+        end_date: datetime,
+    ) -> tuple[int, Optional[str], Optional[str]]:
+        """
+        종료일 기준으로 적합한 시작 페이지를 추천한다.
+        브라우저가 열려 있어야 한다.
+        Returns: (recommended_page, date_min_str, date_max_str)
+        - date_min_str, date_max_str: 해당 페이지의 날짜 범위(표시용), 실패 시 None
+        """
+        if not board_url or not self.driver:
+            return 1, None, None
+        board_url = self._convert_to_legacy_board_url(board_url)
+        target_end = end_date
+
+        def _read_page_date_range(page_no: int) -> tuple[Optional[datetime], Optional[datetime], int, str]:
+            page_url = self._build_board_page_url(board_url, page_no, user_display=50)
+            try:
+                if self.driver.current_url != page_url:
+                    self.driver.get(page_url)
+                    self._sleep_scaled(1.8)
+                self._switch_to_cafe_iframe()
+                self.driver.execute_script("window.scrollTo(0, 900);")
+                self._sleep_scaled(0.7)
+
+                rows_inner = self.driver.find_elements(
+                    By.CSS_SELECTOR,
+                    "div[class*='ArticleItem'], li[class*='article'], div.article-board table tbody tr"
+                )
+                if not rows_inner:
+                    return None, None, 0, ""
+
+                dates: List[datetime] = []
+                first_post_id = ""
+                for row_inner in rows_inner:
+                    try:
+                        row_class_inner = (row_inner.get_attribute("class") or "").lower()
+                        is_notice_inner = "notice" in row_class_inner or "top" in row_class_inner
+                        if not is_notice_inner:
+                            try:
+                                if row_inner.find_elements(By.CSS_SELECTOR, ".ico_notice, .icon_notice, .td_notice"):
+                                    is_notice_inner = True
+                                elif "공지" in (row_inner.text or "")[:12]:
+                                    is_notice_inner = True
+                            except:
+                                pass
+                        if is_notice_inner:
+                            continue
+
+                        if not first_post_id:
+                            try:
+                                for ls_inner in ["a[class*='ArticleLink']", "a.article", "a[href*='articleid']"]:
+                                    try:
+                                        link_el = row_inner.find_element(By.CSS_SELECTOR, ls_inner)
+                                        if link_el:
+                                            href = link_el.get_attribute("href") or ""
+                                            m_id = re.search(r'articleid=(\d+)', href) or re.search(r'/articles/(\d+)', href)
+                                            if m_id:
+                                                first_post_id = m_id.group(1)
+                                            break
+                                    except:
+                                        continue
+                            except:
+                                pass
+
+                        dval = None
+                        for ds in ["span[class*='Date']", "span.date", "td.td_date", ".date"]:
+                            try:
+                                el = row_inner.find_element(By.CSS_SELECTOR, ds)
+                                dval = self._parse_date((el.text or "").strip())
+                                if dval:
+                                    break
+                            except:
+                                continue
+                        if not dval:
+                            m = re.search(r'(\d{4}\.\d{1,2}\.\d{1,2})', row_inner.text or "")
+                            if m:
+                                cand = self._parse_date(m.group(1))
+                                if cand and 2015 <= cand.year <= (datetime.now().year + 1):
+                                    dval = cand
+                        if dval:
+                            dates.append(dval)
+                    except:
+                        continue
+
+                if not dates:
+                    return None, None, 0, first_post_id
+                return min(dates), max(dates), len(dates), first_post_id
+            except Exception:
+                return None, None, 0, ""
+
+        try:
+            p1_min, p1_max, p1_cnt, p1_first_id = _read_page_date_range(1)
+            if p1_cnt == 0:
+                return 1, None, None
+
+            if p1_min <= target_end <= p1_max:
+                return 1, (p1_min.strftime("%Y-%m-%d") if p1_min else None), (p1_max.strftime("%Y-%m-%d") if p1_max else None)
+
+            if target_end < p1_min:
+                lo, hi = 1, 1
+                hi_min, hi_first_id = p1_min, p1_first_id
+                max_probe_page = 5000
+
+                while hi < max_probe_page and hi_min and target_end < hi_min:
+                    if self._should_stop():
+                        return lo, None, None
+                    nxt = min(max_probe_page, hi * 2)
+                    n_min, n_max, n_cnt, n_first_id = _read_page_date_range(nxt)
+                    if n_cnt == 0:
+                        break
+                    if hi_first_id and n_first_id and hi_first_id == n_first_id:
+                        return 1, None, None
+                    lo, hi = hi, nxt
+                    hi_min, hi_first_id = n_min, n_first_id
+
+                left, right = lo, hi
+                found = hi
+                found_min, found_max = None, None
+                while left <= right:
+                    if self._should_stop():
+                        break
+                    mid = (left + right) // 2
+                    m_min, m_max, m_cnt, _ = _read_page_date_range(mid)
+                    if m_cnt == 0 or not m_min:
+                        right = mid - 1
+                        continue
+                    if target_end < m_min:
+                        left = mid + 1
+                    else:
+                        found = mid
+                        found_min, found_max = m_min, m_max
+                        right = mid - 1
+
+                jump_page = max(1, int(found) - 1)
+                return jump_page, (found_min.strftime("%Y-%m-%d") if found_min else None), (found_max.strftime("%Y-%m-%d") if found_max else None)
+
+            return 1, (p1_min.strftime("%Y-%m-%d") if p1_min else None), (p1_max.strftime("%Y-%m-%d") if p1_max else None)
+        except Exception:
+            return 1, None, None
+
     def scrape_board_list(
         self,
         board_url: str,

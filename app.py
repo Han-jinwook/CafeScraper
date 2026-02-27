@@ -395,8 +395,8 @@ with _col_title:
             
             **2. 수집 체감 속도 안내 (자동 적용)**
             - **50개씩 보기**: 크롤러가 자동으로 게시판 목록을 '50개씩 보기'로 전환하여 탐색 속도를 높입니다.
-            - **자동 시작 페이지 탐색**: 지정한 기간에 맞는 페이지를 자동으로 찾아 점프합니다.
-            - **수동 시작 페이지(선택)**: 이전 실행 로그의 마지막 페이지를 기준으로, 다음 실행 시작 위치를 직접 지정할 수 있습니다.
+            - **종료일 기준 자동 시작페이지(권장)**: 종료일에 맞는 페이지를 자동으로 찾아 점프합니다. 수동 지정보다 안정적입니다.
+            - **수동 시작 페이지(선택)**: 체크 해제 시 이전 실행 로그의 마지막 페이지를 기준으로 직접 지정할 수 있습니다.
             - **체감 소요시간**: 일반적으로 1건당 약 15~20초 내외가 걸릴 수 있습니다.
             - **소요시간 변동 요인**: 네트워크 품질, 네이버 페이지 로딩 속도, 게시글 본문 길이, 댓글 수, 이미지/동적요소 렌더링 상태, 차단 회피용 휴식 타이밍에 따라 더 길어질 수 있습니다.
             
@@ -588,6 +588,7 @@ def _build_run_signature(
     delay_max_sec: int,
     speed_profile: str,
     start_page_manual: int,
+    auto_start_page: bool = True,
 ) -> dict:
     excludes = sorted(
         set(
@@ -607,6 +608,7 @@ def _build_run_signature(
         "delay_max_sec": int(delay_max_sec),
         "speed_profile": str(speed_profile or "stable"),
         "start_page_manual": int(start_page_manual),
+        "auto_start_page": bool(auto_start_page),
     }
 
 
@@ -625,6 +627,7 @@ def _diff_run_signature(saved_sig: dict, current_sig: dict) -> list:
         "delay_max_sec": "최대 대기(초)",
         "speed_profile": "속도 프로파일",
         "start_page_manual": "탐색 시작 페이지",
+        "auto_start_page": "자동 시작페이지",
     }
     mismatches = []
     for k, label in labels.items():
@@ -912,18 +915,56 @@ with st.sidebar:
     speed_profile = "fast"
     delay_min_sec = 1
     delay_max_sec = 2
-    start_page_manual = int(
-        st.number_input(
-            "탐색 시작 페이지 (선택)",
-            min_value=1,
-            max_value=10000,
-            value=max(1, int(config.get("start_page_manual", 1) or 1)),
-            step=1,
-            help="기본값 1. 이전 실행의 마지막 탐색 페이지 근처로 지정하면 범위 탐색이 빨라집니다.",
-        )
+
+    auto_start_page = st.checkbox(
+        "종료일 기준 자동 시작페이지 사용",
+        value=bool(config.get("auto_start_page", True)),
+        help="체크 시 종료일에 맞는 페이지를 자동으로 찾아 점프합니다. 수동 지정보다 안정적입니다.",
+        key="auto_start_page_check",
     )
-    if start_page_manual > 1:
-        st.caption("팁: 최근 탐색 페이지를 아는 경우에만 수동 시작 페이지를 사용하면 더 빠르게 수집할 수 있습니다.")
+
+    if auto_start_page:
+        st.caption("✅ 자동 모드: 크롤링 시작 시 종료일이 포함된 페이지를 자동 탐색합니다.")
+        if _is_browser_opened() and st.session_state.get("crawler"):
+            if st.button("🔍 추천 시작페이지 미리보기", key="preview_start_page_btn"):
+                with st.spinner("해당 기간의 페이지를 찾는 중..."):
+                    try:
+                        end_dt = datetime.combine(end_date, datetime.max.time())
+                        page_no, dmin, dmax = st.session_state.crawler.recommend_start_page(board_url, end_dt)
+                        if dmin and dmax:
+                            st.session_state.preview_start_page = {"page": page_no, "dmin": dmin, "dmax": dmax}
+                        else:
+                            st.session_state.preview_start_page = {"page": page_no, "dmin": None, "dmax": None}
+                        st.rerun()
+                    except Exception as e:
+                        st.session_state.preview_start_page = None
+                        st.error(f"미리보기 실패: {e}")
+            if "preview_start_page" in st.session_state and st.session_state.preview_start_page:
+                pv = st.session_state.preview_start_page
+                if pv.get("dmin") and pv.get("dmax"):
+                    st.success(f"추천: **{pv['page']}페이지** (날짜 범위: {pv['dmin']} ~ {pv['dmax']})")
+                else:
+                    st.info(f"추천: **{pv['page']}페이지** (날짜 범위 확인 실패)")
+        else:
+            st.caption("미리보기는 1단계 브라우저 열기 후 사용할 수 있습니다.")
+    else:
+        start_page_manual = int(
+            st.number_input(
+                "탐색 시작 페이지 (선택)",
+                min_value=1,
+                max_value=10000,
+                value=max(1, int(config.get("start_page_manual", 1) or 1)),
+                step=1,
+                help="기본값 1. 이전 실행의 마지막 탐색 페이지 근처로 지정하면 범위 탐색이 빨라집니다.",
+                key="start_page_manual_input",
+            )
+        )
+        if start_page_manual > 1:
+            st.caption("팁: 최근 탐색 페이지를 아는 경우에만 수동 시작 페이지를 사용하면 더 빠르게 수집할 수 있습니다.")
+
+    # 자동 모드: start_page=1 전달 → 크롤러가 종료일 기준 자동 탐색
+    effective_start_page = 1 if auto_start_page else start_page_manual
+
     st.caption("속도/대기는 내부 안전 기본값으로 고정됩니다. (체감: 약 15~20초/건)")
     st.caption("※ 안전 장치: 연속 40회 실패 시 작업이 자동 중단됩니다.")
 
@@ -948,7 +989,8 @@ with st.sidebar:
             "end_date": end_date.strftime("%Y-%m-%d"),
             "cafe_url": cafe_url,
             "board_url": board_url,
-            "start_page_manual": int(start_page_manual),
+            "start_page_manual": int(effective_start_page if not auto_start_page else (config.get("start_page_manual", 1) or 1)),
+            "auto_start_page": bool(auto_start_page),
             "db_path": str(config.get("db_path", "") or "").strip(),
         })
         save_config(new_config)
@@ -1153,7 +1195,8 @@ with step_col2:
                     delay_min_sec=int(delay_min_sec),
                     delay_max_sec=int(delay_max_sec),
                     speed_profile=speed_profile,
-                    start_page_manual=int(start_page_manual),
+                    start_page_manual=int(effective_start_page),
+                    auto_start_page=bool(auto_start_page),
                 )
 
                 # 먼저 실행 상태로 전환해서 버튼이 즉시 '중단'으로 바뀌게 함
@@ -1168,7 +1211,7 @@ with step_col2:
                     "level_backfill_mode": False, # 스마트 로직 사용을 위해 False 고정
                     "quick_recovery_mode": quick_mode_on,
                     "retry_withdrawal": retry_withdrawal, # (추가) 탈퇴 재검사 옵션 전달
-                    "start_page_manual": int(start_page_manual),
+                    "start_page_manual": int(effective_start_page),
                     "crawl_delay_min": max(1.0, float(delay_min_sec)),
                     "crawl_delay_max": max(max(1.0, float(delay_min_sec)), float(delay_max_sec)),
                     "speed_profile": speed_profile,
@@ -1262,7 +1305,8 @@ if (not st.session_state.crawl_running) and st.session_state.crawl_checkpoint_av
         delay_min_sec=int(delay_min_sec),
         delay_max_sec=int(delay_max_sec),
         speed_profile=speed_profile,
-        start_page_manual=int(start_page_manual),
+        start_page_manual=int(effective_start_page),
+        auto_start_page=bool(auto_start_page),
     )
     saved_signature = st.session_state.crawl_state.get("run_signature", {})
     mismatches = _diff_run_signature(saved_signature, current_signature)
