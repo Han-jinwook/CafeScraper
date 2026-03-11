@@ -1125,12 +1125,11 @@ class NaverCafeCrawler:
             
             # undetected_chromedriver 옵션 설정
             options = uc.ChromeOptions()
-            # options.add_argument("--start-maximized")
             options.add_argument("--window-size=960,1080")  # 화면 절반 크기로 시작
             options.add_argument("--disable-gpu")
             options.add_argument("--no-sandbox")
             options.add_argument("--disable-dev-shm-usage")
-            
+
             # undetected_chromedriver 인스턴스 생성 (자동화 탐지 우회)
             # version_main=144로 현재 Chrome 버전 명시
             # use_subprocess=True: 멀티프로세싱 에러 방지
@@ -1907,23 +1906,31 @@ class NaverCafeCrawler:
 
                 if page_dates:
                     consecutive_no_date_pages = 0
-                    page_min_date = min(page_dates)
-                    page_max_date = max(page_dates)
-                    if page_max_date < start_date:
-                        consecutive_before_start_pages += 1
-                        self._update_status(
-                            f"⏱️ 시작일 이전 페이지 감지 "
-                            f"({page_min_date.strftime('%Y년 %m월 %d일')} ~ {page_max_date.strftime('%Y년 %m월 %d일')}, "
-                            f"{consecutive_before_start_pages}/2)"
-                        )
-                        if consecutive_before_start_pages >= 2:
+                    # end_date 초과 날짜 제외: "방금 전"/"N일 전" 등이 datetime.now()로 파싱되어
+                    # 오래된 페이지에도 최근 날짜가 섞이는 문제를 방지한다.
+                    dates_for_boundary = [d for d in page_dates if d <= end_date]
+                    if dates_for_boundary:
+                        page_min_date = min(dates_for_boundary)
+                        page_max_date = max(dates_for_boundary)
+                        if page_max_date < start_date:
+                            consecutive_before_start_pages += 1
                             self._update_status(
-                                f"⏱️ 시작일 이전 구간이 연속 확인되어 종료합니다. "
-                                f"(마지막 기준: {page_min_date.strftime('%Y년 %m월 %d일')})"
+                                f"⏱️ 시작일 이전 페이지 감지 "
+                                f"({page_min_date.strftime('%Y년 %m월 %d일')} ~ {page_max_date.strftime('%Y년 %m월 %d일')}, "
+                                f"{consecutive_before_start_pages}/2)"
                             )
-                            should_continue = False
-                            is_finished = True
+                            if consecutive_before_start_pages >= 2:
+                                self._update_status(
+                                    f"⏱️ 시작일 이전 구간이 연속 확인되어 종료합니다. "
+                                    f"(마지막 기준: {page_min_date.strftime('%Y년 %m월 %d일')})"
+                                )
+                                should_continue = False
+                                is_finished = True
+                        else:
+                            consecutive_before_start_pages = 0
                     else:
+                        # 페이지 내 날짜가 전부 end_date 초과(최신 댓글 범프)인 경우
+                        # 종료 카운터를 올리지 않고 계속 탐색
                         consecutive_before_start_pages = 0
                 else:
                     consecutive_no_date_pages += 1
@@ -1941,12 +1948,11 @@ class NaverCafeCrawler:
                     break
                 last_first_post_id = current_first_post_id
 
-                # self._update_status(f"✅ {page}페이지 완료: {page_found_count}개 수집 (배치 누적 {len(all_articles)}개)")
-                
-                # (수정) 사용자 안심용 로그: 수집된 게 없어도 현재 탐색 위치(날짜)를 알려줌
+                # (수정) 사용자 안심용 로그: end_date 이하 날짜 기준으로 탐색 위치 표시
                 if page_dates:
                     try:
-                        self.last_scan_oldest_date = min(page_dates).strftime("%Y-%m-%d")
+                        display_dates = [d for d in page_dates if d <= end_date] or page_dates
+                        self.last_scan_oldest_date = min(display_dates).strftime("%Y-%m-%d")
                     except:
                         pass
 
@@ -2282,6 +2288,8 @@ class VitaminDWikiCrawler:
         self.debug_mode = debug_mode
         self.max_retries = max(1, int(max_retries))
         self.status_callback = None
+        # 요청 통계 (UI에서 직접 읽기 가능)
+        self.fetch_stats = {"ok": 0, "fail_404": 0, "fail_403": 0, "fail_429": 0, "fail_other": 0, "fail_timeout": 0}
         self.session = requests.Session()
         self.session.headers.update(
             {
@@ -2331,24 +2339,46 @@ class VitaminDWikiCrawler:
 
     def _fetch_html(self, url: str) -> Optional[str]:
         last_err = None
+        last_status = None
         for attempt in range(self.max_retries):
             try:
                 r = self.session.get(url, timeout=15)
                 if r.status_code == 200 and r.text:
+                    self.fetch_stats["ok"] += 1
                     return r.text
+                last_status = r.status_code
                 if r.status_code in (429, 500, 502, 503, 504):
                     last_err = f"HTTP {r.status_code}"
                     self._sleep(mult=(attempt + 1) * 2.0)
                     continue
                 last_err = f"HTTP {r.status_code}"
-                return None
+                break
             except Exception as e:
                 last_err = str(e)
+                last_status = None
+                if "timeout" in str(e).lower() or "timed out" in str(e).lower():
+                    last_status = "timeout"
                 self._sleep(mult=(attempt + 1) * 2.0)
                 continue
 
-        if self.debug_mode and last_err:
-            self._update_status(f"[디버그] 요청 실패: {url} ({last_err})")
+        # 통계 카운트 (항상)
+        if last_status == 404:
+            self.fetch_stats["fail_404"] += 1
+        elif last_status == 403:
+            self.fetch_stats["fail_403"] += 1
+        elif last_status == 429:
+            self.fetch_stats["fail_429"] += 1
+        elif last_status == "timeout":
+            self.fetch_stats["fail_timeout"] += 1
+        elif last_err:
+            self.fetch_stats["fail_other"] += 1
+
+        # 로그: 차단(403)/속도제한(429)은 항상 알림, 그 외는 debug 모드만
+        if last_status in (403, 429):
+            label = "🚫 접근 차단" if last_status == 403 else "⏱️ 속도 제한(429)"
+            self._update_status(f"{label}: {url}")
+        elif self.debug_mode and last_err:
+            self._update_status(f"[디버그] 요청 실패 ({last_err}): {url}")
         return None
 
     def _soup(self, html: str) -> BeautifulSoup:
@@ -2489,18 +2519,24 @@ class VitaminDWikiCrawler:
         secondary = self._normalize_url(self.DEFAULT_SECONDARY_INDEX_URL)
         q = deque([(seed, None), (secondary, None)])  # (url, context_category)
         visited: set[str] = set()
-        # DB 기반 resume: 이미 수집한 /pages URL은 재방문하지 않음
+
+        # skip_yield: 이미 DB에 저장된 URL → yield 방지용 (fetch/탐색은 허용)
+        # visited에 넣으면 시드 URL도 스킵되어 링크 발견 자체가 안 됨 → 별도 관리
+        skip_yield: set[str] = set()
         if initial_visited_urls:
             try:
                 for u in initial_visited_urls:
                     nu = self._normalize_url(u)
                     if nu:
-                        visited.add(nu)
+                        skip_yield.add(nu)
             except:
                 pass
+        if skip_yield:
+            self._update_status(f"♻️ 기존 저장 논문 {len(skip_yield):,}개 — 재저장 스킵 (탐색은 계속)")
+
         fetched = 0
 
-        self._update_status(f"🔎 시작 URL: {seed}")
+        self._update_status(f"🔎 탐색 시작 — {seed}")
 
         while q:
             url, ctx_cat = q.popleft()
@@ -2516,44 +2552,63 @@ class VitaminDWikiCrawler:
             html = self._fetch_html(url)
             fetched += 1
             if not html:
-                if fetched < 5 or self.debug_mode:
-                    self._update_status(f"⚠️ 페이지 로드 실패: {url}")
+                # 403/429 알림은 _fetch_html에서 이미 처리됨
+                # debug 모드일 때만 일반 실패도 로그 (스팸 방지)
+                if self.debug_mode:
+                    total_fail = sum(v for k, v in self.fetch_stats.items() if k.startswith("fail_"))
+                    self._update_status(f"⚠️ 로드 실패 누계 {total_fail}건 | {url}")
                 continue
 
             soup = self._soup(html)
             title = self._extract_title(soup)
 
             if fetched % 30 == 0:
-                self._update_status(f"⏳ 진행: {fetched}페이지 탐색 중... (큐 {len(q)}개)")
+                self._update_status(f"⏳ 탐색 {fetched}페이지 완료 · 대기 {len(q):,}건 남음")
 
             # 1) 태그 페이지(/tags/*): 글 링크 + ?page= 페이지네이션
             if self._is_tag_page(url):
                 tag = self._get_tag_name_from_url(url)
                 members, pages = self._extract_tag_members_and_pagination(soup, url)
                 if fetched < 5:
-                    self._update_status(f"🏷️ 태그 '{tag}'에서 글 {len(members)}개 링크 발견")
+                    self._update_status(f"🏷️ 주제 분류 '{tag}' — 논문 링크 {len(members)}개 발견")
                 for pu in pages:
-                    q.append((pu, tag))
+                    nu = self._normalize_url(pu)
+                    if nu and nu not in visited:
+                        visited.add(nu)
+                        q.append((nu, tag))
                 for mu in members:
-                    q.append((mu, tag))
+                    nu = self._normalize_url(mu)
+                    if nu and nu not in visited:
+                        visited.add(nu)
+                        q.append((nu, tag))
                 self._sleep()
                 continue
 
             # 2) 모든 페이지에서 /pages 및 /tags 링크를 큐에 추가 (전수 스크롤 역할)
+            # visited 체크 후 추가 → 중복 방지로 큐 폭발 없음
             discovered_pages = 0
             discovered_tags = 0
             for a in soup.select("a[href]"):
                 href = a.get("href") or ""
+                nu = self._normalize_url(href)
+                if not nu or nu in visited:
+                    continue
                 if href.startswith("/pages/"):
-                    q.append((self._normalize_url(href), ctx_cat))
+                    visited.add(nu)
+                    q.append((nu, ctx_cat))
                     discovered_pages += 1
                 elif href.startswith("/tags/"):
-                    q.append((self._normalize_url(href), None))
+                    visited.add(nu)
+                    q.append((nu, None))
                     discovered_tags += 1
             if fetched <= 2:
-                self._update_status(f"🔗 링크 발견: /pages {discovered_pages}개, /tags {discovered_tags}개")
+                self._update_status(f"🔗 시작 페이지에서 발견 — 논문 {discovered_pages}개, 주제 분류 {discovered_tags}개")
 
-            # 3) 일반 아티클 페이지: paper로 수집
+            # 3) 일반 아티클 페이지: paper로 수집 (기존 저장 URL은 yield 스킵)
+            if url in skip_yield:
+                self._sleep()
+                continue
+
             cats = self._extract_categories(soup)
             if ctx_cat and ctx_cat != "unknown":
                 ctx_readable = ctx_cat.replace("-", " ").strip()

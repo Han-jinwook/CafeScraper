@@ -7,6 +7,7 @@ import sys
 import time
 import random
 import json
+import re
 from pathlib import Path
 from app.products.scraper.crawler import NaverCafeCrawler
 from app.utils.sqlite_db import init_db
@@ -859,13 +860,489 @@ if not st.session_state.crawl_checkpoint_bootstrapped:
             st.session_state.crawl_checkpoint_last_index = -1
     st.session_state.crawl_checkpoint_bootstrapped = True
 
+
+def _is_browser_opened() -> bool:
+    crawler = st.session_state.get("crawler")
+    if not crawler or not getattr(crawler, "driver", None):
+        return False
+    try:
+        handles = crawler.driver.window_handles or []
+        return len(handles) > 0
+    except:
+        return False
+
+
+def _is_overall_board_url(url: str) -> bool:
+    """전체글보기 URL 여부 확인 (menuid 없는 ArticleList or /menus/0 형태)."""
+    u = str(url or "").strip()
+    if not u:
+        return False
+    if "ArticleList.nhn" in u and "search.menuid" not in u:
+        return True
+    if "/menus/0" in u or "/menus/all" in u:
+        return True
+    return False
+
+
+def _has_naver_login_cookie(crawler_obj) -> bool:
+    try:
+        if not crawler_obj or not getattr(crawler_obj, "driver", None):
+            return False
+        cookie_names = {str(c.get("name", "")).upper() for c in (crawler_obj.driver.get_cookies() or [])}
+        return ("NID_SES" in cookie_names) or ("NID_AUT" in cookie_names)
+    except Exception:
+        return False
+
+
+def _is_captcha_like_page(driver) -> bool:
+    try:
+        cur_url = str(getattr(driver, "current_url", "") or "").lower()
+        title = str(getattr(driver, "title", "") or "").lower()
+        keys = ["captcha", "캡차", "자동입력", "robot", "recaptcha"]
+        if any(k in cur_url for k in keys):
+            return True
+        if any(k in title for k in keys):
+            return True
+        # page_source 전체 스캔은 무거울 수 있어 짧은 본문 텍스트만 검사
+        try:
+            body_text = str(
+                driver.execute_script(
+                    "return (document.body && (document.body.innerText || '').slice(0, 2000)) || '';"
+                )
+                or ""
+            ).lower()
+            return any(k in body_text for k in keys)
+        except Exception:
+            return False
+    except Exception:
+        return False
+
+
+def _type_like_human(driver, css_selector: str, value: str) -> bool:
+    try:
+        driver.execute_script(
+            """
+            const el = document.querySelector(arguments[0]);
+            if (el) {
+              el.focus();
+              el.click();
+              return true;
+            }
+            return false;
+            """,
+            css_selector,
+        )
+        active = driver.switch_to.active_element
+        try:
+            active.clear()
+        except Exception:
+            pass
+        for ch in str(value or ""):
+            active.send_keys(ch)
+            time.sleep(random.uniform(0.02, 0.07))
+        time.sleep(random.uniform(0.08, 0.25))
+        return True
+    except Exception:
+        return False
+
+
+def _auto_login_naver_with_js(crawler_obj, user_id: str, user_pw: str) -> tuple[bool, str]:
+    """네이버 자동 로그인 - 원본 방식: id_el/pw_el 직접 참조 JS 입력 (active_element 의존 없음)."""
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    try:
+        if not crawler_obj or not getattr(crawler_obj, "driver", None):
+            return False, "드라이버 없음"
+        driver = crawler_obj.driver
+        uid = str(user_id or "").strip()
+        upw = str(user_pw or "")
+        if (not uid) or (not upw):
+            return False, "아이디/비밀번호 미입력"
+
+        # 0) 이미 로그인 세션이 살아있으면 생략
+        if _has_naver_login_cookie(crawler_obj):
+            return True, "기존 세션 유지"
+
+        # 1) 로그인 페이지 진입 (url= 파라미터로 로그인 후 카페로 자동 복귀)
+        driver.get("https://nid.naver.com/nidlogin.login?mode=form&url=https://cafe.naver.com/")
+        time.sleep(random.uniform(1.0, 1.8))
+
+        if _is_captcha_like_page(driver):
+            return False, "캡챠 감지"
+
+        # 2) id/pw 요소를 직접 잡아서 JS로 값 세팅 (active_element 미사용 → 캡챠 포커스 이동 무관)
+        wait = WebDriverWait(driver, 10)
+        id_el = wait.until(EC.presence_of_element_located((By.ID, "id")))
+        pw_el = wait.until(EC.presence_of_element_located((By.ID, "pw")))
+
+        driver.execute_script(
+            """
+            const idEl = arguments[0], pwEl = arguments[1],
+                  uid  = arguments[2], upw  = arguments[3];
+            idEl.focus(); idEl.value = uid;
+            idEl.dispatchEvent(new Event('input',  {bubbles: true}));
+            idEl.dispatchEvent(new Event('change', {bubbles: true}));
+            pwEl.focus(); pwEl.value = upw;
+            pwEl.dispatchEvent(new Event('input',  {bubbles: true}));
+            pwEl.dispatchEvent(new Event('change', {bubbles: true}));
+            """,
+            id_el, pw_el, uid, upw,
+        )
+        time.sleep(random.uniform(0.3, 0.6))
+
+        if _is_captcha_like_page(driver):
+            return False, "캡챠 감지(입력 후)"
+
+        # 3) 로그인 버튼 클릭
+        try:
+            login_btn = driver.find_element(By.CSS_SELECTOR, "#log\\.login, button[type='submit']")
+            login_btn.click()
+        except Exception:
+            return False, "로그인 버튼 클릭 실패"
+
+        time.sleep(random.uniform(1.8, 2.5))
+
+        # 4) 성공 판정: 쿠키 또는 URL로 확인
+        if _has_naver_login_cookie(crawler_obj):
+            return True, "로그인 성공"
+        cur_url = str(getattr(driver, "current_url", "") or "")
+        if "nid.naver.com" not in cur_url:
+            return True, "로그인 성공(페이지 이동 확인)"
+
+        if _is_captcha_like_page(driver):
+            return False, "캡챠 감지(로그인 후)"
+
+        return False, "세션 쿠키 확인 실패 - 수동 로그인 필요"
+    except Exception as e:
+        return False, f"예외: {e}"
+
+
 with st.sidebar:
     st.header("⚙️ 수집 설정")
     cafe_name = st.text_input("카페명(상단 표시)", value=DISPLAY_CAFE_NAME, key="cafe_name_input")
 
     cafe_url = st.text_input("카페 URL", value=config.get("cafe_url", "https://cafe.naver.com/sundreamd"))
-    board_url = st.text_input("게시판 URL (전체글보기 권장)", value=config.get("board_url", "https://cafe.naver.com/f-e/cafes/27870803/menus/0"))
+    with st.expander("🔐 자동로그인 설정", expanded=False):
+        auto_login_enabled = st.checkbox(
+            "브라우저 열 때 자동로그인 실행",
+            value=bool(config.get("auto_login_enabled", False)),
+            key="auto_login_enabled_input",
+            help="1단계 브라우저 열기 직후 저장된 계정으로 로그인을 시도합니다.",
+        )
+        naver_id = st.text_input(
+            "네이버 아이디",
+            value=str(config.get("naver_id", "") or ""),
+            key="naver_id_input",
+            placeholder="아이디 입력",
+        )
+        naver_pw = st.text_input(
+            "네이버 비밀번호",
+            value=str(config.get("naver_pw", "") or ""),
+            key="naver_pw_input",
+            type="password",
+            placeholder="비밀번호 입력",
+        )
+        if auto_login_enabled and (not naver_id or not naver_pw):
+            st.warning("자동로그인을 켜려면 아이디/비밀번호를 모두 입력해주세요.")
 
+    default_exclude = "\n".join(
+        [
+            "공지&이벤트",
+            "자유 게시판",
+            "먹거리 / 맛집",
+            "멘토단 전용 (중상급자)",
+            "음악 웃음 힐링",
+            "제품사은품후기",
+            "진급축하 / 진급문의",
+            "회원상품 홍보",
+            "(조사기)중고 직거래",
+            "썬드림 앱's",
+        ]
+    )
+
+    def _normalize_board_name_ui(name: str) -> str:
+        return str(name or "").strip().replace(" ", "").lower()
+
+    # 게시판 목록/선택 상태
+    if "extracted_boards" not in st.session_state:
+        saved_boards = config.get("extracted_boards", [])
+        st.session_state.extracted_boards = saved_boards if isinstance(saved_boards, list) else []
+    if "selected_board_urls" not in st.session_state:
+        # 요청사항: 기본은 항상 비선택 상태
+        st.session_state.selected_board_urls = []
+    if "select_all_mode" not in st.session_state:
+        st.session_state.select_all_mode = False
+    if "select_all_mode_prev" not in st.session_state:
+        st.session_state.select_all_mode_prev = False
+    if "board_picker_version" not in st.session_state:
+        st.session_state.board_picker_version = 0
+    if "board_picker_options_sig" not in st.session_state:
+        st.session_state.board_picker_options_sig = ""
+
+    exclude_for_ui_src = st.session_state.get(
+        "exclude_boards_text_input",
+        config.get("exclude_boards", default_exclude),
+    )
+    exclude_norm_for_ui = {
+        _normalize_board_name_ui(x)
+        for x in str(exclude_for_ui_src or "").splitlines()
+        if str(x).strip()
+    }
+
+    if st.button("🔍 게시판 목록 가져오기", help="현재 열린 카페 화면에서 모든 게시판 목록을 스캔합니다.", width="stretch"):
+        if not st.session_state.get("crawler") or not getattr(st.session_state.crawler, "driver", None):
+            st.error("먼저 1단계 브라우저를 열어주세요.")
+        else:
+            try:
+                with st.spinner("게시판 목록 스캔 중..."):
+                    crawler_obj = st.session_state.crawler
+                    boards = []
+                    if hasattr(crawler_obj, "get_all_board_urls"):
+                        boards = crawler_obj.get_all_board_urls(cafe_url=cafe_url) or []
+
+                    if not boards:
+                        driver = crawler_obj.driver
+                        seen = set()
+
+                        def _is_board_href(href: str) -> bool:
+                            u = str(href or "").strip()
+                            if not u:
+                                return False
+                            return (
+                                ("ArticleList.nhn" in u and "search.menuid" in u)
+                                or ("/menus/" in u and "/articles/" not in u)
+                            )
+
+                        def _append_boards_from_current_dom():
+                            # 1) href 링크
+                            for a in driver.find_elements(By.CSS_SELECTOR, "a[href]"):
+                                try:
+                                    href = (a.get_attribute("href") or "").strip()
+                                    name = (a.text or "").strip()
+                                    if not href or not name:
+                                        continue
+                                    if "javascript:" in href.lower():
+                                        continue
+                                    if not _is_board_href(href):
+                                        continue
+                                    if href in seen:
+                                        continue
+                                    seen.add(href)
+                                    boards.append({"name": name, "url": href})
+                                except Exception:
+                                    continue
+                            # 2) onclick=goMenu(...) 패턴
+                            for a in driver.find_elements(By.CSS_SELECTOR, "a[onclick]"):
+                                try:
+                                    onclick = str(a.get_attribute("onclick") or "")
+                                    if "goMenu" not in onclick:
+                                        continue
+                                    m = re.search(r"goMenu\('(\d+)'\)", onclick) or re.search(r"goMenu\((\d+)\)", onclick)
+                                    if not m:
+                                        continue
+                                    menuid = m.group(1)
+                                    cur_url = str(getattr(driver, "current_url", "") or "")
+                                    m_club = re.search(r"clubid=(\d+)", cur_url) or re.search(r"/cafes/(\d+)", cur_url)
+                                    if not m_club:
+                                        continue
+                                    clubid = m_club.group(1)
+                                    href = f"https://cafe.naver.com/ArticleList.nhn?search.clubid={clubid}&search.menuid={menuid}&search.boardtype=L"
+                                    name = (a.text or "").strip() or f"게시판_{menuid}"
+                                    if href in seen:
+                                        continue
+                                    seen.add(href)
+                                    boards.append({"name": name, "url": href})
+                                except Exception:
+                                    continue
+
+                        # 현재 창 + 모든 iframe 스캔
+                        try:
+                            driver.switch_to.default_content()
+                        except Exception:
+                            pass
+                        _append_boards_from_current_dom()
+                        try:
+                            iframes = driver.find_elements(By.TAG_NAME, "iframe")
+                            for fr in iframes:
+                                try:
+                                    driver.switch_to.default_content()
+                                    driver.switch_to.frame(fr)
+                                    _append_boards_from_current_dom()
+                                except Exception:
+                                    continue
+                            driver.switch_to.default_content()
+                        except Exception:
+                            pass
+
+                    if boards:
+                        filtered = [
+                            b for b in boards
+                            if _normalize_board_name_ui(b.get("name", "")) not in exclude_norm_for_ui
+                        ]
+                        st.session_state.extracted_boards = filtered
+                        # 목록이 바뀌면 선택 초기화(기본 비선택 유지)
+                        st.session_state.selected_board_urls = []
+                        st.session_state.board_picker_version = int(st.session_state.get("board_picker_version", 0)) + 1
+                        cfg_now = dict(load_config() or {})
+                        cfg_now["extracted_boards"] = filtered
+                        save_config(cfg_now)
+                        total_cnt = len(boards)
+                        excluded_cnt = max(0, total_cnt - len(filtered))
+                        st.success(
+                            f"✅ 게시판 스캔 완료: 원본 {total_cnt}개 · 제외 {excluded_cnt}개 · 수집 대상 {len(filtered)}개"
+                        )
+                    else:
+                        st.warning("게시판을 찾지 못했습니다. 카페 메인/메뉴가 보이는 화면에서 다시 시도해주세요.")
+            except Exception as e:
+                st.error(f"오류: {e}")
+
+    selected_urls_str = config.get("board_url", "https://cafe.naver.com/sundreamd")
+    if st.session_state.extracted_boards:
+        st.markdown(f"##### 📋 게시판 선택 (총 {len(st.session_state.extracted_boards)}개)")
+        all_boards = st.session_state.extracted_boards
+        board_options = {f"{i+1:02d}. {b['name']}": b["url"] for i, b in enumerate(all_boards)}
+
+        overall_url = ""
+        for b in all_boards:
+            u = str(b.get("url", "") or "")
+            if "ArticleList.nhn" in u and "search.clubid=" in u:
+                m_club = re.search(r"search\.clubid=(\d+)", u)
+                if m_club:
+                    overall_url = f"https://cafe.naver.com/ArticleList.nhn?search.clubid={m_club.group(1)}&search.boardtype=L"
+                    break
+            if "/f-e/cafes/" in u:
+                m_fe = re.search(r"/cafes/(\d+)/menus/(\d+)", u)
+                if m_fe:
+                    overall_url = f"https://cafe.naver.com/f-e/cafes/{m_fe.group(1)}/menus/0?viewType=L"
+                    break
+
+        options_list = []
+        if overall_url:
+            options_list.append("00. 전체글보기")
+        options_list.extend(list(board_options.keys()))
+        options_sig = "||".join(options_list)
+        if options_sig != str(st.session_state.get("board_picker_options_sig", "")):
+            st.session_state.board_picker_options_sig = options_sig
+            st.session_state.board_picker_version = int(st.session_state.get("board_picker_version", 0)) + 1
+            st.session_state.selected_board_urls = []
+
+        mode_col, count_col = st.columns([1.6, 1.4])
+        with mode_col:
+            select_all_mode = st.checkbox(
+                "전체 선택 모드",
+                key="select_all_mode",
+                help="켜면 모든 게시판이 자동 선택되고, 개별 선택은 비활성화됩니다.",
+            )
+        with count_col:
+            selected_count_placeholder = st.empty()
+        prev_select_all_mode = bool(st.session_state.get("select_all_mode_prev", False))
+
+        # 전체 선택 ON/OFF 전환 시 상태를 명확히 초기화
+        if select_all_mode and (not prev_select_all_mode):
+            _all_urls = []
+            for label in options_list:
+                if label == "00. 전체글보기":
+                    _all_urls.append(overall_url)
+                else:
+                    _all_urls.append(board_options.get(label, ""))
+            st.session_state.selected_board_urls = list(dict.fromkeys([u for u in _all_urls if u]))
+        elif (not select_all_mode) and prev_select_all_mode:
+            # 요청사항: 전체선택 해제 시 기본은 전부 비선택
+            st.session_state.selected_board_urls = []
+            st.session_state.board_picker_version = int(st.session_state.get("board_picker_version", 0)) + 1
+        st.session_state.select_all_mode_prev = bool(select_all_mode)
+
+        label_to_url = {}
+        for label in options_list:
+            if label == "00. 전체글보기":
+                label_to_url[label] = overall_url
+            else:
+                label_to_url[label] = board_options.get(label, "")
+
+        # 접기/펼치기는 전체선택과 독립
+        with st.expander("게시판 목록 열기/접기", expanded=False):
+            if select_all_mode:
+                st.caption("전체 선택 모드에서는 목록 확인만 가능합니다.")
+                try:
+                    with st.container(height=360):
+                        for label in options_list:
+                            st.checkbox(label, value=True, disabled=True, key=f"board_chk_view_{label}")
+                except TypeError:
+                    for label in options_list:
+                        st.checkbox(label, value=True, disabled=True, key=f"board_chk_view_{label}")
+            else:
+                v = int(st.session_state.get("board_picker_version", 0))
+                wanted_urls = set(st.session_state.get("selected_board_urls", []) or [])
+                label_to_idx = {label: i for i, label in enumerate(options_list)}
+                try:
+                    with st.container(height=360):
+                        for label in options_list:
+                            i = int(label_to_idx.get(label, -1))
+                            if i < 0:
+                                continue
+                            u = str(label_to_url.get(label, "") or "")
+                            default_checked = bool(u and u in wanted_urls)
+                            st.checkbox(
+                                label,
+                                value=default_checked,
+                                key=f"board_chk_{v}_{i}",
+                            )
+                except TypeError:
+                    for label in options_list:
+                        i = int(label_to_idx.get(label, -1))
+                        if i < 0:
+                            continue
+                        u = str(label_to_url.get(label, "") or "")
+                        default_checked = bool(u and u in wanted_urls)
+                        st.checkbox(
+                            label,
+                            value=default_checked,
+                            key=f"board_chk_{v}_{i}",
+                        )
+
+                # 개별 선택은 클릭 즉시 반영 (선택 반영 버튼 제거)
+                selected_urls = []
+                for label in options_list:
+                    i = int(label_to_idx.get(label, -1))
+                    if i < 0:
+                        continue
+                    if bool(st.session_state.get(f"board_chk_{v}_{i}", False)):
+                        u = str(label_to_url.get(label, "") or "")
+                        if u:
+                            selected_urls.append(u)
+                st.session_state.selected_board_urls = list(dict.fromkeys(selected_urls))
+
+        selected_urls = list(dict.fromkeys([u for u in (st.session_state.get("selected_board_urls", []) or []) if u]))
+        selected_urls_str = "\n".join(selected_urls)
+        selected_count = len(selected_urls)
+        selected_count_placeholder.markdown(
+            f"<div style='font-size:0.92rem;color:#475569;text-align:right;padding-top:6px;'>[{selected_count}개 게시판 선택]</div>",
+            unsafe_allow_html=True,
+        )
+        if select_all_mode:
+            st.caption(f"전체 선택 모드 활성화: {len(selected_urls)}개 선택됨")
+    else:
+        # 추출 목록이 없을 때만 수동 입력 폴백
+        selected_urls_str = st.text_input(
+            "게시판 URL (전체글보기 권장)",
+            value=config.get("board_url", "https://cafe.naver.com/f-e/cafes/27870803/menus/0"),
+        )
+    board_url = selected_urls_str
+
+    with st.expander("🚫 수집대상 제외 게시판", expanded=False):
+        exclude_boards_text = st.text_area(
+            "줄바꿈으로 구분 (해당 게시판은 수집 대상에서 제외)",
+            value=config.get("exclude_boards", default_exclude),
+            height=160,
+            key="exclude_boards_text_input",
+        )
+
+    with st.expander("👤 운영자 닉네임", expanded=False):
+        admin_nicks = st.text_area(
+            "운영자 닉네임 (쉼표로 구분)",
+            value=config.get("admin_nicks", "마법사멀린, 멀린스타크, 멀린"),
+        )
     st.subheader("📅 수집 기간")
     default_start = datetime.now() - timedelta(days=365)
     if "start_date" in config:
@@ -885,30 +1362,6 @@ with st.sidebar:
     start_date = col1.date_input("시작일", default_start)
     end_date = col2.date_input("종료일", default_end)
 
-    with st.expander("🚫 제외 게시판 / 운영자 닉네임", expanded=False):
-        admin_nicks = st.text_area(
-            "운영자 닉네임 (쉼표로 구분)",
-            value=config.get("admin_nicks", "마법사멀린, 멀린스타크, 멀린"),
-        )
-        default_exclude = "\n".join(
-            [
-                "공지&이벤트",
-                "자유 게시판",
-                "먹거리 / 맛집",
-                "멘토단 전용 (중상급자)",
-                "음악 웃음 힐링",
-                "제품사은품후기",
-                "진급축하 / 진급문의",
-                "회원상품 홍보",
-                "(조사기)중고 직거래",
-                "썬드림 앱's",
-            ]
-        )
-        exclude_boards_text = st.text_area(
-            "줄바꿈으로 구분 (해당 게시판은 수집 대상에서 제외)",
-            value=config.get("exclude_boards", default_exclude),
-            height=160,
-        )
 
     st.subheader("🔧 작업 모드")
     st.caption("기간별 스마트 수집 (기본) 단일 모드로 동작합니다.")
@@ -983,12 +1436,17 @@ with st.sidebar:
         new_config = dict(config or {})
         new_config.update({
             "cafe_name": (cafe_name or "").strip(),
+            "auto_login_enabled": bool(auto_login_enabled),
+            "naver_id": str(naver_id or "").strip(),
+            "naver_pw": str(naver_pw or ""),
             "admin_nicks": admin_nicks,
             "exclude_boards": exclude_boards_text,
             "start_date": start_date.strftime("%Y-%m-%d"),
             "end_date": end_date.strftime("%Y-%m-%d"),
             "cafe_url": cafe_url,
             "board_url": board_url,
+            "extracted_boards": st.session_state.get("extracted_boards", []),
+            "selected_board_urls": st.session_state.get("selected_board_urls", []),
             "start_page_manual": int(effective_start_page if not auto_start_page else (config.get("start_page_manual", 1) or 1)),
             "auto_start_page": bool(auto_start_page),
             "db_path": str(config.get("db_path", "") or "").strip(),
@@ -1080,17 +1538,6 @@ st.markdown("### 🚀 실행 제어")
 st.caption("1단계에서 로그인 브라우저를 준비하고, 2단계에서 수집을 실행/중단합니다.")
 
 # 2단계 활성화 조건: 브라우저가 열려 있고(드라이버 존재), 로그인 세션 쿠키가 있어야 함
-def _is_browser_opened() -> bool:
-    crawler = st.session_state.get("crawler")
-    if not crawler or not getattr(crawler, "driver", None):
-        return False
-    try:
-        handles = crawler.driver.window_handles or []
-        return len(handles) > 0
-    except:
-        return False
-
-
 def _is_step2_ready() -> bool:
     if bool(st.session_state.get("login_confirmed", False)):
         return True
@@ -1134,16 +1581,39 @@ with step_col1:
                 st.session_state.crawler = None
 
         if not st.session_state.crawler:
-            # 수동 로그인 모드
             st.session_state.crawler = NaverCafeCrawler("", debug_mode=st.session_state.debug_mode)
             st.session_state.crawler.set_status_callback(update_logs)
             # (추가) 중단 요청 실시간 확인을 위한 콜백 연결
             st.session_state.crawler.set_stop_check_callback(lambda: st.session_state.get("crawl_stop_requested", False))
+            st.session_state.auto_login_attempted_this_session = False
         if hasattr(st.session_state.crawler, "set_speed_profile"):
             st.session_state.crawler.set_speed_profile(speed_profile)
         st.session_state.crawler.start_browser()
+        auto_login_on = bool(st.session_state.get("auto_login_enabled_input", config.get("auto_login_enabled", False)))
+        auto_login_id = str(st.session_state.get("naver_id_input", config.get("naver_id", "")) or "")
+        auto_login_pw = str(st.session_state.get("naver_pw_input", config.get("naver_pw", "")) or "")
+        if auto_login_on:
+            # 과도한 반복 로그인 시도는 캡챠 확률을 높여서, 세션당 1회만 자동 시도
+            if st.session_state.get("auto_login_attempted_this_session", False):
+                update_logs("ℹ️ 자동로그인은 이번 실행에서 이미 1회 시도되었습니다. 캡챠 방지를 위해 추가 자동시도는 생략합니다.")
+            else:
+                st.session_state.auto_login_attempted_this_session = True
+                login_ok, reason = _auto_login_naver_with_js(
+                    st.session_state.crawler,
+                    auto_login_id,
+                    auto_login_pw,
+                )
+                if login_ok:
+                    st.session_state.login_confirmed = True
+                    update_logs(f"✅ 자동로그인 성공 ({reason})")
+                else:
+                    if "캡챠" in str(reason):
+                        update_logs("🛡️ 캡챠 감지: 자동로그인을 즉시 중단했습니다. 브라우저에서 수동 로그인 후 '로그인 완료'를 눌러주세요.")
+                    else:
+                        update_logs(f"⚠️ 자동로그인 실패({reason}) 또는 추가 인증 필요. 수동 로그인 후 '로그인 완료'를 눌러주세요.")
         # 브라우저를 새로 열면 로그인 확인 상태를 초기화
-        st.session_state.login_confirmed = False
+        if not bool(st.session_state.get("login_confirmed", False)):
+            st.session_state.login_confirmed = False
         update_logs()
         st.rerun()
 
@@ -1185,8 +1655,26 @@ with step_col2:
                     or bool(config.get("meta_backfill", False))
                     or legacy_backfill
                 )
+                board_urls = [url.strip() for url in (board_url or "").splitlines() if url.strip()]
+                if not board_urls:
+                    st.error("게시판 URL을 입력해주세요.")
+                    st.stop()
+                current_board_url = board_urls[0]
+                board_name_map = {}
+                for b in st.session_state.get("extracted_boards", []) or []:
+                    bu = str((b or {}).get("url", "") or "").strip()
+                    bn = str((b or {}).get("name", "") or "").strip()
+                    if bu and bn:
+                        board_name_map[bu] = bn
+                board_names_queue = []
+                for u in board_urls:
+                    uu = str(u or "").strip()
+                    if _is_overall_board_url(uu):
+                        board_names_queue.append("전체글보기")
+                    else:
+                        board_names_queue.append(board_name_map.get(uu, ""))
                 run_signature = _build_run_signature(
-                    board_url=board_url,
+                    board_url=current_board_url,
                     start_date_value=start_date,
                     end_date_value=end_date,
                     exclude_boards_raw=exclude_boards_text,
@@ -1203,7 +1691,10 @@ with step_col2:
                 quick_mode_on = bool(quick_recovery_mode) # level_backfill_mode 조건 제거 (스마트 로직 사용)
                 st.session_state.crawl_state = {
                     "phase": "prepare",
-                    "board_url": board_url,
+                    "board_url": current_board_url,
+                    "board_urls_queue": board_urls,
+                    "board_names_queue": board_names_queue,
+                    "current_board_idx": 0,
                     "start_dt": start_dt,
                     "end_dt": end_dt,
                     "exclude_boards": [x.strip() for x in (exclude_boards_text or "").splitlines() if x.strip()],
@@ -1229,7 +1720,11 @@ with step_col2:
                 st.session_state.crawl_running = True
                 st.session_state.crawl_stop_requested = False
                 _save_crawl_checkpoint(force=True)
-                update_logs("🔍 1단계: 대상 게시글 목록 확보 시작...")
+                first_board_name = str((board_names_queue[0] if board_names_queue else "") or "").strip()
+                if first_board_name:
+                    update_logs(f"🔍 1단계: 첫 번째 게시판({first_board_name}) 목록 확보 시작...")
+                else:
+                    update_logs(f"🔍 1단계: 첫 번째 게시판({current_board_url}) 목록 확보 시작...")
                 st.rerun()
 
 # 완료/오류 후 재시작이 꼬일 때를 대비한 실행 상태 초기화 버튼
@@ -1279,6 +1774,21 @@ else:
         run_idx = int(run_ctx.get("index", 0) or 0)
         run_batch_total = int(run_ctx.get("batch_total", 0) or 0)
         run_is_finished_scan = bool(run_ctx.get("is_finished", False))
+        run_board_url = str(run_ctx.get("board_url", "") or "").strip()
+        run_board_i = int(run_ctx.get("current_board_idx", 0) or 0) + 1
+        run_board_n = len(run_ctx.get("board_urls_queue", []) or [])
+        run_board_names = run_ctx.get("board_names_queue", []) or []
+        run_board_name = ""
+        if run_board_i - 1 < len(run_board_names):
+            run_board_name = str(run_board_names[run_board_i - 1] or "").strip()
+        if run_board_url:
+            if run_board_n > 0:
+                if run_board_name:
+                    st.caption(f"📌 현재 게시판: {run_board_i}/{run_board_n} · {run_board_name}")
+                else:
+                    st.caption(f"📌 현재 게시판: {run_board_i}/{run_board_n} · {run_board_url}")
+            else:
+                st.caption(f"📌 현재 게시판: {run_board_url}")
         if run_is_finished_scan and run_batch_total > 0 and run_idx < run_batch_total:
             st.info(f"목록 탐색 완료 · 상세 저장 진행 중 ({run_idx:,}/{run_batch_total:,}건)")
         else:
@@ -1520,28 +2030,71 @@ if st.session_state.crawl_running:
                 if success_count > 0:
                     st.balloons()
                     update_logs(f"✨ {success_count}개 게시글 수집 완료!")
-
-                st.session_state.crawl_running = False
-                _clear_crawl_checkpoint()
-                last_scanned_page = int(ctx.get("last_scanned_page", 0) or 0)
-                last_page_suffix = f" 마지막 탐색 페이지: {last_scanned_page}p" if last_scanned_page > 0 else ""
-                if success_count == 0:
-                    done_msg = (
-                        f"⚠️ 수집된 게시글이 없습니다. (성공: {success_count}, 스킵: {skip_count}, 실패: {error_count}, "
-                        f"등급변경: {changed_level_count}, 등급동일: {unchanged_level_count}) "
-                        f"- 기간/게시판/페이지 로딩 상태를 확인해주세요.{last_page_suffix}"
-                    )
-                    live_status.warning(done_msg)
-                    st.session_state.crawl_last_status_type = "warning"
+                board_urls_queue = ctx.get("board_urls_queue", []) or []
+                current_board_idx = int(ctx.get("current_board_idx", 0) or 0)
+                board_names_queue = ctx.get("board_names_queue", []) or []
+                current_board_name = ""
+                if current_board_idx < len(board_names_queue):
+                    current_board_name = str(board_names_queue[current_board_idx] or "").strip()
+                current_board_url = str(ctx.get("board_url", "") or "").strip()
+                if current_board_name:
+                    update_logs(f"✅ 게시판 완료: {current_board_name} (성공 {success_count}건)")
                 else:
-                    done_msg = (
-                        f"✅ 작업 완료 (성공: {success_count}, 스킵: {skip_count}, 실패: {error_count}, "
-                        f"등급변경: {changed_level_count}, 등급동일: {unchanged_level_count}){last_page_suffix}"
-                    )
-                    live_status.success(done_msg)
-                    st.session_state.crawl_last_status_type = "success"
-                st.session_state.crawl_last_status_message = done_msg
-                st.rerun()
+                    update_logs(f"✅ 게시판 완료: {current_board_url} (성공 {success_count}건)")
+
+                # 다음 게시판이 있으면 순차 진행
+                if board_urls_queue and current_board_idx + 1 < len(board_urls_queue):
+                    next_idx = current_board_idx + 1
+                    next_url = str(board_urls_queue[next_idx] or "").strip()
+                    next_name = ""
+                    if next_idx < len(board_names_queue):
+                        next_name = str(board_names_queue[next_idx] or "").strip()
+
+                    ctx["current_board_idx"] = next_idx
+                    ctx["board_url"] = next_url
+                    ctx["phase"] = "prepare"
+                    ctx["articles"] = []
+                    ctx["index"] = 0
+                    ctx["batch_total"] = 0
+                    ctx["total_collected"] = 0
+                    ctx["is_finished"] = False
+                    ctx["skip_reason_existing_level"] = 0
+                    ctx["skip_reason_existing_withdrawal"] = 0
+                    ctx["skip_count"] = 0
+                    ctx["error_count"] = 0
+                    ctx["updated_level_count"] = 0
+                    ctx["changed_level_count"] = 0
+                    ctx["unchanged_level_count"] = 0
+                    ctx["last_scan_oldest_date"] = ""
+                    ctx["last_scanned_page"] = 0
+                    _save_crawl_checkpoint(force=True)
+                    if next_name:
+                        update_logs(f"🔄 다음 게시판({next_idx+1}/{len(board_urls_queue)})으로 이동합니다: {next_name}")
+                    else:
+                        update_logs(f"🔄 다음 게시판({next_idx+1}/{len(board_urls_queue)})으로 이동합니다: {next_url}")
+                    st.rerun()
+                else:
+                    st.session_state.crawl_running = False
+                    _clear_crawl_checkpoint()
+                    last_scanned_page = int(ctx.get("last_scanned_page", 0) or 0)
+                    last_page_suffix = f" 마지막 탐색 페이지: {last_scanned_page}p" if last_scanned_page > 0 else ""
+                    if success_count == 0:
+                        done_msg = (
+                            f"⚠️ 수집된 게시글이 없습니다. (성공: {success_count}, 스킵: {skip_count}, 실패: {error_count}, "
+                            f"등급변경: {changed_level_count}, 등급동일: {unchanged_level_count}) "
+                            f"- 기간/게시판/페이지 로딩 상태를 확인해주세요.{last_page_suffix}"
+                        )
+                        live_status.warning(done_msg)
+                        st.session_state.crawl_last_status_type = "warning"
+                    else:
+                        done_msg = (
+                            f"✅ 작업 완료 (성공: {success_count}, 스킵: {skip_count}, 실패: {error_count}, "
+                            f"등급변경: {changed_level_count}, 등급동일: {unchanged_level_count}){last_page_suffix}"
+                        )
+                        live_status.success(done_msg)
+                        st.session_state.crawl_last_status_type = "success"
+                    st.session_state.crawl_last_status_message = done_msg
+                    st.rerun()
             else:
                 # 다음 배치 가져오기
                 page_cursor = int(ctx.get("page_cursor", 1))
@@ -1561,7 +2114,20 @@ if st.session_state.crawl_running:
                 st.session_state.crawler.set_status_callback(_dynamic_status_callback)
                 
                 # 초기 상태 메시지
-                live_status.info(f"🔍 게시글 목록 수집 시작 (페이지 {page_cursor} ~)...")
+                cur_board_i = int(ctx.get("current_board_idx", 0) or 0) + 1
+                cur_board_n = len(ctx.get("board_urls_queue", []) or [])
+                cur_board_url = str(ctx.get("board_url", "") or "").strip()
+                cur_board_name = ""
+                bq = ctx.get("board_names_queue", []) or []
+                if cur_board_i - 1 < len(bq):
+                    cur_board_name = str(bq[cur_board_i - 1] or "").strip()
+                if cur_board_n > 0 and cur_board_url:
+                    if cur_board_name:
+                        live_status.info(f"🔍 게시글 목록 수집 시작 ({cur_board_i}/{cur_board_n}) · {cur_board_name} · 페이지 {page_cursor} ~")
+                    else:
+                        live_status.info(f"🔍 게시글 목록 수집 시작 ({cur_board_i}/{cur_board_n}) · 페이지 {page_cursor} ~")
+                else:
+                    live_status.info(f"🔍 게시글 목록 수집 시작 (페이지 {page_cursor} ~)...")
                 
                 new_batch, is_finished = st.session_state.crawler.scrape_board_list(
                     ctx["board_url"],
@@ -1912,6 +2478,16 @@ update_logs()
 
 # DB 관리 UI (데이터 조회 및 삭제)
 st.markdown("---")
+open_data_manager = st.checkbox(
+    "📊 데이터 관리 열기 (기본 닫힘)",
+    value=False,
+    key="open_data_manager_toggle",
+    help="크롤링 설정/게시판 선택과 무관한 DB 관리 화면입니다. 열 때만 데이터를 로드합니다.",
+)
+if not open_data_manager:
+    st.caption("게시판 선택/크롤링만 사용할 때는 데이터 관리 로딩을 건너뜁니다.")
+    st.stop()
+
 st.header("📊 데이터 관리")
 st.caption("수집된 게시글/댓글 데이터를 검토하고 선택 삭제 및 상세 확인을 진행합니다.")
 
@@ -2106,7 +2682,11 @@ with tab1:
                 st.text_area("게시글 본문", post_detail['content'], height=300, disabled=True, label_visibility="collapsed")
                 
                 # 해당 게시글의 댓글 조회
-                df_post_comments = pd.read_sql_query(f"SELECT * FROM comments WHERE post_id = '{selected_post_id}'", conn)
+                df_post_comments = pd.read_sql_query(
+                    "SELECT * FROM comments WHERE post_id = ? ORDER BY comment_id DESC",
+                    conn,
+                    params=(selected_post_id,),
+                )
                 if not df_post_comments.empty:
                     st.markdown(f"**💬 댓글 ({len(df_post_comments)}개)**")
                     st.dataframe(df_post_comments, width="stretch", hide_index=True)
