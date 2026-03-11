@@ -2518,10 +2518,13 @@ class VitaminDWikiCrawler:
         seed = self._normalize_url(start_url or self.DEFAULT_INDEX_URL)
         secondary = self._normalize_url(self.DEFAULT_SECONDARY_INDEX_URL)
         q = deque([(seed, None), (secondary, None)])  # (url, context_category)
-        visited: set[str] = set()
 
-        # skip_yield: 이미 DB에 저장된 URL → yield 방지용 (fetch/탐색은 허용)
-        # visited에 넣으면 시드 URL도 스킵되어 링크 발견 자체가 안 됨 → 별도 관리
+        # visited  : 실제로 처리(fetch)한 URL 집합
+        # queued   : 큐에 추가된 URL 집합 (중복 push 방지 — visited와 분리)
+        # skip_yield: 이미 DB에 저장된 URL → yield만 스킵, fetch/탐색은 허용
+        visited: set[str] = set()
+        queued: set[str] = {seed, secondary}  # 시드 2개는 이미 큐에 있음
+
         skip_yield: set[str] = set()
         if initial_visited_urls:
             try:
@@ -2573,32 +2576,32 @@ class VitaminDWikiCrawler:
                     self._update_status(f"🏷️ 주제 분류 '{tag}' — 논문 링크 {len(members)}개 발견")
                 for pu in pages:
                     nu = self._normalize_url(pu)
-                    if nu and nu not in visited:
-                        visited.add(nu)
+                    if nu and nu not in queued:
+                        queued.add(nu)
                         q.append((nu, tag))
                 for mu in members:
                     nu = self._normalize_url(mu)
-                    if nu and nu not in visited:
-                        visited.add(nu)
+                    if nu and nu not in queued:
+                        queued.add(nu)
                         q.append((nu, tag))
                 self._sleep()
                 continue
 
             # 2) 모든 페이지에서 /pages 및 /tags 링크를 큐에 추가 (전수 스크롤 역할)
-            # visited 체크 후 추가 → 중복 방지로 큐 폭발 없음
+            # queued 체크 후 추가 → 중복 방지 (visited와 분리하여 fetch는 정상 수행)
             discovered_pages = 0
             discovered_tags = 0
             for a in soup.select("a[href]"):
                 href = a.get("href") or ""
                 nu = self._normalize_url(href)
-                if not nu or nu in visited:
+                if not nu or nu in queued:
                     continue
                 if href.startswith("/pages/"):
-                    visited.add(nu)
+                    queued.add(nu)
                     q.append((nu, ctx_cat))
                     discovered_pages += 1
                 elif href.startswith("/tags/"):
-                    visited.add(nu)
+                    queued.add(nu)
                     q.append((nu, None))
                     discovered_tags += 1
             if fetched <= 2:
