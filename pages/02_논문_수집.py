@@ -417,6 +417,13 @@ if st.session_state.wiki_running:
             break
         try:
             paper = next(gen)
+
+            if paper is None:
+                # heartbeat: 30페이지 처리마다 발행 → UI 갱신 트리거용
+                count += 1
+                live_msg.info(f"📡 {st.session_state.wiki_last_msg}")
+                continue
+
             try:
                 save_paper_to_sqlite(paper)
             except Exception as e:

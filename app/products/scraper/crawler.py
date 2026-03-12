@@ -2567,6 +2567,7 @@ class VitaminDWikiCrawler:
 
             if fetched % 30 == 0:
                 self._update_status(f"⏳ 탐색 {fetched}페이지 완료 · 대기 {len(q):,}건 남음")
+                yield None  # UI 갱신용 heartbeat — 논문이 없어도 화면 업데이트
 
             # 1) 태그 페이지(/tags/*): 글 링크 + ?page= 페이지네이션
             if self._is_tag_page(url):
