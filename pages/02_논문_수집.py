@@ -135,10 +135,11 @@ def load_existing_paper_urls() -> set[str]:
         return set()
 
 
-def _format_elapsed(started_iso: str) -> str:
+def _format_elapsed(started_ts) -> str:
     try:
-        dt = datetime.fromisoformat(started_iso)
-        sec = int((datetime.now() - dt).total_seconds())
+        sec = int(time.time() - float(started_ts))
+        if sec < 0:
+            return "-"
         h, rem = divmod(sec, 3600)
         m, s = divmod(rem, 60)
         if h:
@@ -157,7 +158,8 @@ for _k, _v in [
     ("wiki_generator", None),
     ("wiki_crawler_obj", None),
     ("wiki_stats", {}),
-    ("wiki_started_at", None),
+    ("wiki_started_ts", None),   # Unix timestamp(float) — ISO 파싱 이슈 방지
+    ("wiki_fetch_stats", {}),    # 배치 완료 후 crawler.fetch_stats 스냅샷
     ("wiki_last_msg", ""),
     ("wiki_status_messages", []),
     ("wiki_debug_mode", False),
@@ -318,7 +320,8 @@ with col_btn1:
                 "processed": 0,
                 "skipped": len(existing_urls),
             }
-            st.session_state.wiki_started_at = datetime.now().isoformat()
+            st.session_state.wiki_started_ts = time.time()
+            st.session_state.wiki_fetch_stats = {}
             st.session_state.wiki_running = True
             st.session_state.wiki_stop_requested = False
             st.session_state.wiki_status_messages = []
@@ -337,17 +340,23 @@ live_stats = st.empty()
 live_msg = st.empty()
 
 def _render_live_stats():
-    crawler = st.session_state.get("wiki_crawler_obj")
     stats = st.session_state.get("wiki_stats", {})
-    started = st.session_state.get("wiki_started_at")
     processed = int(stats.get("processed", 0))
     skipped = int(stats.get("skipped", 0))
+    started_ts = st.session_state.get("wiki_started_ts")
 
-    if not crawler and not processed:
+    # fetch_stats: 배치 후 스냅샷 우선, 없으면 crawler 직접 읽기(폴백)
+    s = st.session_state.get("wiki_fetch_stats") or {}
+    if not s:
+        crawler = st.session_state.get("wiki_crawler_obj")
+        if crawler:
+            s = dict(getattr(crawler, "fetch_stats", {}) or {})
+
+    if not s and not processed and not started_ts:
         return
 
-    s = getattr(crawler, "fetch_stats", {}) if crawler else {}
     total_fail = sum(s.get(k, 0) for k in ("fail_404", "fail_403", "fail_429", "fail_other", "fail_timeout"))
+    ok_cnt = s.get("ok", 0)
 
     if s.get("fail_403"):
         detail = f"🚫 차단 {s['fail_403']}건"
@@ -360,13 +369,13 @@ def _render_live_stats():
     else:
         detail = "없음"
 
-    elapsed = _format_elapsed(started) if started else "-"
+    elapsed = _format_elapsed(started_ts) if started_ts else "-"
 
     with live_stats.container():
         st.markdown("#### 🔄 진행 현황" if st.session_state.wiki_running else "#### ✅ 완료 현황")
         c1, c2, c3, c4, c5, c6 = st.columns(6)
         c1.metric("신규 수집 논문", f"{processed:,}개")
-        c2.metric("방문한 페이지", f"{s.get('ok', 0):,}개")
+        c2.metric("방문한 페이지", f"{ok_cnt:,}개")
         c3.metric("이미 수집(스킵)", f"{skipped:,}개")
         c4.metric("읽기 실패", f"{total_fail:,}개")
         c5.metric("실패 원인", detail)
@@ -403,6 +412,10 @@ if st.session_state.wiki_running:
         except StopIteration:
             done = True
             break
+
+    # 배치 완료 후 fetch_stats 스냅샷 저장 (다음 rerun에서 정확히 표시)
+    if crawler_obj:
+        st.session_state.wiki_fetch_stats = dict(getattr(crawler_obj, "fetch_stats", {}) or {})
 
     if done:
         st.session_state.wiki_running = False
