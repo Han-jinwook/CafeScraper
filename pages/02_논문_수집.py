@@ -6,6 +6,7 @@ import os
 import subprocess
 import time
 import json
+import re
 
 from app.products.scraper.crawler import VitaminDWikiCrawler
 from app.utils.sqlite_db import init_db
@@ -355,8 +356,16 @@ def _render_live_stats():
     if not s and not processed and not started_ts:
         return
 
+    # 상태 메시지에서 탐색 페이지 수 파싱 → 배치 블로킹 중에도 방문 페이지 표시
+    last_msg = st.session_state.get("wiki_last_msg", "")
+    msg_pages = 0
+    m_pages = re.search(r"탐색\s*([\d,]+)페이지", last_msg)
+    if m_pages:
+        msg_pages = int(m_pages.group(1).replace(",", ""))
+
     total_fail = sum(s.get(k, 0) for k in ("fail_404", "fail_403", "fail_429", "fail_other", "fail_timeout"))
-    ok_cnt = s.get("ok", 0)
+    # fetch_stats 스냅샷과 메시지 파싱 중 더 큰 값 사용
+    ok_cnt = max(s.get("ok", 0), msg_pages)
 
     if s.get("fail_403"):
         detail = f"🚫 차단 {s['fail_403']}건"
@@ -369,10 +378,19 @@ def _render_live_stats():
     else:
         detail = "없음"
 
+    # 상태 메시지에서 대기 건수 파싱
+    queue_remaining = ""
+    m_queue = re.search(r"대기\s*([\d,]+)건", last_msg)
+    if m_queue and st.session_state.wiki_running:
+        queue_remaining = f"· 대기 {m_queue.group(1)}건"
+
     elapsed = _format_elapsed(started_ts) if started_ts else "-"
 
     with live_stats.container():
-        st.markdown("#### 🔄 진행 현황" if st.session_state.wiki_running else "#### ✅ 완료 현황")
+        st.markdown(
+            f"#### 🔄 진행 현황 {queue_remaining}" if st.session_state.wiki_running
+            else "#### ✅ 완료 현황"
+        )
         c1, c2, c3, c4, c5, c6 = st.columns(6)
         c1.metric("신규 수집 논문", f"{processed:,}개")
         c2.metric("방문한 페이지", f"{ok_cnt:,}개")
