@@ -2588,8 +2588,12 @@ class VitaminDWikiCrawler:
                 self._sleep()
                 continue
 
-            # 2) 모든 페이지에서 /pages 및 /tags 링크를 큐에 추가 (전수 스크롤 역할)
-            # queued 체크 후 추가 → 중복 방지 (visited와 분리하여 fetch는 정상 수행)
+            # 2) 링크 추가 규칙:
+            #   - 시드/인덱스 페이지: /pages/ + /tags/ 모두 추가
+            #   - 아티클 페이지(/pages/): /tags/ 링크만 추가
+            #     → 아티클↔아티클 교차링크를 큐에 넣으면 큐가 기하급수적으로 폭발하므로 차단
+            #     → 아티클 발견은 태그 페이지(섹션 1)가 전담하므로 누락 없음
+            is_article_page = "/pages/" in url
             discovered_pages = 0
             discovered_tags = 0
             for a in soup.select("a[href]"):
@@ -2597,7 +2601,7 @@ class VitaminDWikiCrawler:
                 nu = self._normalize_url(href)
                 if not nu or nu in queued:
                     continue
-                if href.startswith("/pages/"):
+                if href.startswith("/pages/") and not is_article_page:
                     queued.add(nu)
                     q.append((nu, ctx_cat))
                     discovered_pages += 1
