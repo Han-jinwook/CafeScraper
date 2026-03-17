@@ -2487,10 +2487,12 @@ class VitaminDWikiCrawler:
                 continue
             if href.startswith("/pages/"):
                 members.append(self._normalize_url(href))
+            # 페이지네이션: 현재 태그 URL의 ?page= 상대 링크만 허용
+            # (타 사이트의 ?page= 링크가 큐에 들어가 section 2로 폭발하는 것 방지)
             if "?page=" in href:
                 if href.startswith("?"):
                     pages.append(self._normalize_url(base_url + href))
-                else:
+                elif href.startswith("/tags/"):
                     pages.append(self._normalize_url(href))
 
         def dedupe(xs: List[str]) -> List[str]:
@@ -2619,13 +2621,12 @@ class VitaminDWikiCrawler:
                 continue
 
             # 2) 링크 추가 규칙:
-            #   - 시드 URL: 아티클이라도 항상 /pages/ + /tags/ 추가 (탐색 진입점)
-            #   - 일반 아티클 페이지(/pages/): 링크 추가 일절 없음
-            #     → 아티클이 수만 개 × 태그/아티클 수십 개 교차링크 = 큐 폭발 원인
+            #   - 시드 URL만: /pages/ + /tags/ 링크 추가 (탐색 진입점)
+            #   - 그 외 모든 페이지: 링크 추가 없음
+            #     → 아티클/태그-외 페이지의 교차링크가 큐 폭발의 원인
             #     → 아티클 발견은 태그 페이지(섹션 1)가 전담하므로 누락 없음
-            is_article_page = "/pages/" in url
-            is_seed_url = url in seed_urls
-            if not is_article_page or is_seed_url:
+            #     → 이 규칙으로 큐 크기가 시드→태그→아티클 3단계로 수렴 보장
+            if url in seed_urls:
                 discovered_pages = 0
                 discovered_tags = 0
                 for a in soup.select("a[href]"):
@@ -2641,8 +2642,7 @@ class VitaminDWikiCrawler:
                         queued.add(nu)
                         q.append((nu, None))
                         discovered_tags += 1
-                if fetched <= 2:
-                    self._update_status(f"🔗 시작 페이지에서 발견 — 논문 {discovered_pages}개, 주제 분류 {discovered_tags}개")
+                self._update_status(f"🔗 시작 페이지에서 발견 — 논문 {discovered_pages}개, 주제 분류 {discovered_tags}개")
 
             # 3) 일반 아티클 페이지: paper로 수집 (기존 저장 URL은 yield 스킵)
             if url in skip_yield:
