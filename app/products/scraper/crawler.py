@@ -2538,6 +2538,11 @@ class VitaminDWikiCrawler:
             self._update_status(f"♻️ 기존 저장 논문 {len(skip_yield):,}개 — 재저장 스킵 (탐색은 계속)")
 
         fetched = 0
+        # 큐 폭발 감지: 초기 100페이지 탐색 후 큐 증가율 검사
+        QUEUE_EXPLOSION_CHECK_AT = 100   # 이 시점에 검사
+        QUEUE_EXPLOSION_RATIO    = 5.0   # visited 대비 queued 비율 한계
+        QUEUE_HARD_CAP           = 80_000  # 절대 상한 (이 이상이면 강제 중단)
+        queue_explosion_warned   = False
 
         self._update_status(f"🔎 탐색 시작 — {seed}")
 
@@ -2551,6 +2556,29 @@ class VitaminDWikiCrawler:
             if max_pages is not None and fetched >= max_pages:
                 self._update_status(f"⛔ 최대 페이지 제한 도달: {max_pages} (중단)")
                 break
+
+            # ── 큐 폭발 조기 감지 ──────────────────────────────────────
+            q_size = len(q)
+            if fetched == QUEUE_EXPLOSION_CHECK_AT and not queue_explosion_warned:
+                ratio = q_size / max(fetched, 1)
+                if ratio > QUEUE_EXPLOSION_RATIO:
+                    self._update_status(
+                        f"🚨 [경보] 큐 폭발 감지! 탐색 {fetched}페이지에 대기 {q_size:,}건 "
+                        f"(비율 {ratio:.1f}x). 설계 오류 가능성 — 중단을 권장합니다."
+                    )
+                    queue_explosion_warned = True
+                else:
+                    self._update_status(
+                        f"✅ [정상] 탐색 {fetched}페이지 · 대기 {q_size:,}건 "
+                        f"(비율 {ratio:.1f}x) — 큐 수렴 예상"
+                    )
+            if q_size >= QUEUE_HARD_CAP:
+                self._update_status(
+                    f"🛑 [강제 중단] 큐가 {QUEUE_HARD_CAP:,}건 초과 ({q_size:,}건). "
+                    f"무한 증가 방지를 위해 자동 중단합니다."
+                )
+                break
+            # ───────────────────────────────────────────────────────────
 
             html = self._fetch_html(url)
             fetched += 1
