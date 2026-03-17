@@ -437,6 +437,13 @@ if st.session_state.wiki_running:
         except StopIteration:
             done = True
             break
+        except ValueError as e:
+            # "generator already executing": Streamlit rerun 충돌로 동시 호출 발생
+            # → 이번 배치를 조용히 종료하고 다음 rerun에서 재시도
+            if "already executing" in str(e):
+                add_log("⚠️ 배치 충돌 감지 — 자동 재시도 중...")
+                break
+            raise
 
     # 배치 완료 후 fetch_stats 스냅샷 저장 (다음 rerun에서 정확히 표시)
     if crawler_obj:
