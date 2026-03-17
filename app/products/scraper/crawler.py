@@ -2589,28 +2589,29 @@ class VitaminDWikiCrawler:
                 continue
 
             # 2) 링크 추가 규칙:
-            #   - 시드/인덱스 페이지: /pages/ + /tags/ 모두 추가
-            #   - 아티클 페이지(/pages/): /tags/ 링크만 추가
-            #     → 아티클↔아티클 교차링크를 큐에 넣으면 큐가 기하급수적으로 폭발하므로 차단
+            #   - 시드/인덱스 페이지(/pages/ 없는 URL): /pages/ + /tags/ 모두 추가
+            #   - 아티클 페이지(/pages/): 링크 추가 일절 없음
+            #     → 아티클이 수만 개 × 태그/아티클 수십 개 교차링크 = 큐 폭발 원인
             #     → 아티클 발견은 태그 페이지(섹션 1)가 전담하므로 누락 없음
             is_article_page = "/pages/" in url
-            discovered_pages = 0
-            discovered_tags = 0
-            for a in soup.select("a[href]"):
-                href = a.get("href") or ""
-                nu = self._normalize_url(href)
-                if not nu or nu in queued:
-                    continue
-                if href.startswith("/pages/") and not is_article_page:
-                    queued.add(nu)
-                    q.append((nu, ctx_cat))
-                    discovered_pages += 1
-                elif href.startswith("/tags/"):
-                    queued.add(nu)
-                    q.append((nu, None))
-                    discovered_tags += 1
-            if fetched <= 2:
-                self._update_status(f"🔗 시작 페이지에서 발견 — 논문 {discovered_pages}개, 주제 분류 {discovered_tags}개")
+            if not is_article_page:
+                discovered_pages = 0
+                discovered_tags = 0
+                for a in soup.select("a[href]"):
+                    href = a.get("href") or ""
+                    nu = self._normalize_url(href)
+                    if not nu or nu in queued:
+                        continue
+                    if href.startswith("/pages/"):
+                        queued.add(nu)
+                        q.append((nu, ctx_cat))
+                        discovered_pages += 1
+                    elif href.startswith("/tags/"):
+                        queued.add(nu)
+                        q.append((nu, None))
+                        discovered_tags += 1
+                if fetched <= 2:
+                    self._update_status(f"🔗 시작 페이지에서 발견 — 논문 {discovered_pages}개, 주제 분류 {discovered_tags}개")
 
             # 3) 일반 아티클 페이지: paper로 수집 (기존 저장 URL은 yield 스킵)
             if url in skip_yield:
