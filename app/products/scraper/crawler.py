@@ -2522,8 +2522,10 @@ class VitaminDWikiCrawler:
         # visited  : 실제로 처리(fetch)한 URL 집합
         # queued   : 큐에 추가된 URL 집합 (중복 push 방지 — visited와 분리)
         # skip_yield: 이미 DB에 저장된 URL → yield만 스킵, fetch/탐색은 허용
+        # seed_urls: 시드 URL은 아티클이어도 링크 추가 허용
         visited: set[str] = set()
         queued: set[str] = {seed, secondary}  # 시드 2개는 이미 큐에 있음
+        seed_urls: set[str] = {seed, secondary}
 
         skip_yield: set[str] = set()
         if initial_visited_urls:
@@ -2617,12 +2619,13 @@ class VitaminDWikiCrawler:
                 continue
 
             # 2) 링크 추가 규칙:
-            #   - 시드/인덱스 페이지(/pages/ 없는 URL): /pages/ + /tags/ 모두 추가
-            #   - 아티클 페이지(/pages/): 링크 추가 일절 없음
+            #   - 시드 URL: 아티클이라도 항상 /pages/ + /tags/ 추가 (탐색 진입점)
+            #   - 일반 아티클 페이지(/pages/): 링크 추가 일절 없음
             #     → 아티클이 수만 개 × 태그/아티클 수십 개 교차링크 = 큐 폭발 원인
             #     → 아티클 발견은 태그 페이지(섹션 1)가 전담하므로 누락 없음
             is_article_page = "/pages/" in url
-            if not is_article_page:
+            is_seed_url = url in seed_urls
+            if not is_article_page or is_seed_url:
                 discovered_pages = 0
                 discovered_tags = 0
                 for a in soup.select("a[href]"):
