@@ -309,8 +309,9 @@ with col_btn1:
             )
             wiki_crawler.set_status_callback(add_log)
             existing_urls = load_existing_paper_urls() if skip_existing else set()
-            # sitemap 기반 크롤 (BFS 대체 — 큐 폭발 없음)
-            gen = wiki_crawler.crawl_sitemap(
+            # sitemap → RSS 자동 감지 크롤 (BFS 완전 제거)
+            gen = wiki_crawler.crawl_auto(
+                start_url=wiki_start_url,
                 initial_visited_urls=existing_urls,
             )
             st.session_state.wiki_crawler_obj = wiki_crawler

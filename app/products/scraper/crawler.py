@@ -2508,83 +2508,220 @@ class VitaminDWikiCrawler:
 
         return dedupe(members), dedupe(pages)
 
-    SITEMAP_URL = "https://vitamindwiki.com/sitemap.xml"
+    # ── 공통 헬퍼 ────────────────────────────────────────────────
 
-    def crawl_sitemap(
-        self,
-        initial_visited_urls: Optional[set] = None,
-    ):
-        """
-        sitemap.xml 기반 전수 조사 generator.
-        - BFS 없음, 큐 폭발 없음
-        - sitemap에서 전체 URL 목록 한 번에 수집 → 신규만 fetch & yield
-        """
-        self._update_status(f"📥 sitemap.xml 다운로드 중...")
-        try:
-            r = self.session.get(self.SITEMAP_URL, timeout=20)
-            r.raise_for_status()
-        except Exception as e:
-            self._update_status(f"❌ sitemap 다운로드 실패: {e}")
-            return
-
-        try:
-            root = ET.fromstring(r.text)
-        except Exception as e:
-            self._update_status(f"❌ sitemap 파싱 실패: {e}")
-            return
-
-        ns = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
-        all_urls = [el.text.strip() for el in root.findall("sm:url/sm:loc", ns) if el.text]
-
-        # /pages/ 아티클만 필터
-        article_urls = [u for u in all_urls if "/pages/" in u]
-        self._update_status(f"✅ sitemap 파싱 완료 — 전체 {len(all_urls):,}개 중 아티클 {len(article_urls):,}개")
-
+    def _make_skip_set(self, initial_visited_urls: Optional[set]) -> set:
         skip: set = set()
         if initial_visited_urls:
             for u in initial_visited_urls:
                 nu = self._normalize_url(u)
                 if nu:
                     skip.add(nu)
+        return skip
 
-        new_urls = [u for u in article_urls if self._normalize_url(u) not in skip]
-        self._update_status(f"🔍 신규 아티클 {len(new_urls):,}개 수집 시작 (기존 {len(skip):,}개 스킵)")
-
+    def _fetch_and_yield_urls(self, new_urls: list, total_label: str = ""):
+        """URL 리스트를 순차 fetch해서 paper dict yield (heartbeat None 포함)."""
+        total = len(new_urls)
         for i, url in enumerate(new_urls, 1):
             nu = self._normalize_url(url)
             if not nu:
                 continue
-
             html = self._fetch_html(nu)
             if not html:
                 self._sleep()
                 continue
-
             soup = self._soup(html)
             title = self._extract_title(soup)
             cats = self._extract_categories(soup)
-            category_str = " | ".join(cats[:12])
-            full_content = self._extract_full_content(soup)
-            summary = self._extract_summary(soup)
-            collected_date = datetime.now().strftime("%Y-%m-%d")
-
             paper = {
                 "title": title or nu,
-                "summary": summary,
-                "content": full_content,
+                "summary": self._extract_summary(soup),
+                "content": self._extract_full_content(soup),
                 "url": nu,
-                "category": category_str,
-                "collected_date": collected_date,
+                "category": " | ".join(cats[:12]),
+                "collected_date": datetime.now().strftime("%Y-%m-%d"),
             }
-
             if i % 30 == 0:
-                self._update_status(f"⏳ {i}/{len(new_urls):,}개 처리 중...")
-                yield None  # heartbeat
-
+                self._update_status(f"⏳ {i:,}/{total:,}개 처리 중{total_label}...")
+                yield None  # heartbeat (UI 갱신)
             yield paper
             self._sleep()
 
-        self._update_status(f"✅ sitemap 전수 조사 완료 — {len(new_urls):,}개 처리")
+    # ── Sitemap 크롤 ─────────────────────────────────────────────
+
+    @staticmethod
+    def _sitemap_url_from(start_url: str) -> str:
+        p = urlparse(start_url)
+        return f"{p.scheme}://{p.netloc}/sitemap.xml"
+
+    def crawl_sitemap(
+        self,
+        start_url: Optional[str] = None,
+        initial_visited_urls: Optional[set] = None,
+    ):
+        """
+        sitemap.xml 기반 전수 조사 generator.
+        start_url 의 도메인에서 /sitemap.xml 을 자동으로 탐색.
+        """
+        sitemap_url = (
+            self._sitemap_url_from(start_url)
+            if start_url
+            else f"{urlparse(self.DEFAULT_INDEX_URL).scheme}://{urlparse(self.DEFAULT_INDEX_URL).netloc}/sitemap.xml"
+        )
+        self._update_status(f"📥 sitemap 다운로드 중: {sitemap_url}")
+        try:
+            r = self.session.get(sitemap_url, timeout=20)
+            if r.status_code != 200:
+                raise ValueError(f"HTTP {r.status_code}")
+            root = ET.fromstring(r.text)
+        except Exception as e:
+            self._update_status(f"❌ sitemap 실패: {e}")
+            return
+
+        ns = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+        # sitemap index(다중 sitemap) 처리
+        sub_sitemaps = root.findall("sm:sitemap/sm:loc", ns)
+        if sub_sitemaps:
+            all_urls = []
+            for loc in sub_sitemaps:
+                try:
+                    sr = self.session.get(loc.text.strip(), timeout=20)
+                    sroot = ET.fromstring(sr.text)
+                    all_urls += [el.text.strip() for el in sroot.findall("sm:url/sm:loc", ns) if el.text]
+                except Exception:
+                    pass
+        else:
+            all_urls = [el.text.strip() for el in root.findall("sm:url/sm:loc", ns) if el.text]
+
+        # 아티클만 필터 (/pages/ 포함 URL)
+        article_urls = [u for u in all_urls if "/pages/" in u]
+        self._update_status(f"✅ sitemap — 전체 {len(all_urls):,}개 중 아티클 {len(article_urls):,}개")
+
+        skip = self._make_skip_set(initial_visited_urls)
+        new_urls = [u for u in article_urls if self._normalize_url(u) not in skip]
+        self._update_status(f"🔍 신규 {len(new_urls):,}개 수집 시작 (기존 {len(skip):,}개 스킵)")
+
+        yield from self._fetch_and_yield_urls(new_urls, " (sitemap)")
+        self._update_status(f"✅ sitemap 완료 — {len(new_urls):,}개 처리")
+
+    # ── RSS / Atom 크롤 ──────────────────────────────────────────
+
+    # 사이트마다 다른 RSS URL 패턴을 순서대로 시도
+    _RSS_CANDIDATES = [
+        "/feed", "/rss", "/rss.xml", "/feed.xml", "/atom.xml",
+        "/index.xml", "/rss/", "/feeds/posts/default",
+    ]
+
+    def _find_rss_url(self, base_url: str) -> Optional[str]:
+        """RSS/Atom 피드 URL을 자동 탐색. 찾으면 URL 반환, 없으면 None."""
+        p = urlparse(base_url)
+        origin = f"{p.scheme}://{p.netloc}"
+        for path in self._RSS_CANDIDATES:
+            url = origin + path
+            try:
+                r = self.session.get(url, timeout=8)
+                ct = r.headers.get("Content-Type", "")
+                if r.status_code == 200 and any(k in ct for k in ("rss", "xml", "atom", "feed")):
+                    return url
+                if r.status_code == 200 and ("<rss" in r.text[:200] or "<feed" in r.text[:200]):
+                    return url
+            except Exception:
+                continue
+        return None
+
+    def _parse_feed_urls(self, feed_text: str) -> List[str]:
+        """RSS 2.0 / Atom 피드에서 링크 URL 목록 추출."""
+        urls = []
+        try:
+            root = ET.fromstring(feed_text)
+            # RSS 2.0
+            for item in root.findall(".//item"):
+                link = item.findtext("link") or ""
+                if link.strip():
+                    urls.append(link.strip())
+            # Atom
+            for entry in root.findall(".//{http://www.w3.org/2005/Atom}entry"):
+                link_el = entry.find("{http://www.w3.org/2005/Atom}link")
+                if link_el is not None:
+                    href = link_el.get("href", "")
+                    if href:
+                        urls.append(href.strip())
+        except Exception:
+            pass
+        return urls
+
+    def crawl_rss(
+        self,
+        start_url: Optional[str] = None,
+        initial_visited_urls: Optional[set] = None,
+    ):
+        """
+        RSS/Atom 피드 기반 크롤 generator.
+        도메인의 공통 RSS 경로를 자동 탐색 후 신규 URL만 fetch & yield.
+        """
+        base = start_url or self.DEFAULT_INDEX_URL
+        self._update_status(f"🔎 RSS/Atom 피드 탐색 중: {urlparse(base).netloc}")
+        rss_url = self._find_rss_url(base)
+        if not rss_url:
+            self._update_status("❌ RSS/Atom 피드를 찾을 수 없습니다.")
+            return
+
+        self._update_status(f"📥 RSS 다운로드: {rss_url}")
+        try:
+            r = self.session.get(rss_url, timeout=20)
+            r.raise_for_status()
+        except Exception as e:
+            self._update_status(f"❌ RSS 다운로드 실패: {e}")
+            return
+
+        feed_urls = self._parse_feed_urls(r.text)
+        self._update_status(f"✅ RSS — {len(feed_urls):,}개 항목 발견")
+
+        skip = self._make_skip_set(initial_visited_urls)
+        new_urls = [u for u in feed_urls if self._normalize_url(u) not in skip]
+        self._update_status(f"🔍 신규 {len(new_urls):,}개 수집 시작 (기존 {len(skip):,}개 스킵)")
+
+        yield from self._fetch_and_yield_urls(new_urls, " (RSS)")
+        self._update_status(f"✅ RSS 완료 — {len(new_urls):,}개 처리")
+
+    # ── 자동 감지 크롤 (sitemap → RSS → 지원 불가) ───────────────
+
+    def crawl_auto(
+        self,
+        start_url: Optional[str] = None,
+        initial_visited_urls: Optional[set] = None,
+    ):
+        """
+        sitemap.xml → RSS/Atom 순서로 자동 감지해서 크롤.
+        둘 다 없으면 지원 불가 메시지.
+        """
+        base = start_url or self.DEFAULT_INDEX_URL
+        sitemap_url = self._sitemap_url_from(base)
+
+        # 1) sitemap 시도
+        self._update_status(f"🔎 sitemap.xml 확인 중: {sitemap_url}")
+        try:
+            r = self.session.get(sitemap_url, timeout=10)
+            if r.status_code == 200 and ("<urlset" in r.text or "<sitemapindex" in r.text):
+                self._update_status("✅ sitemap.xml 발견 → sitemap 방식으로 수집")
+                yield from self.crawl_sitemap(base, initial_visited_urls)
+                return
+        except Exception:
+            pass
+
+        # 2) RSS/Atom 시도
+        self._update_status("⚠️ sitemap 없음 → RSS/Atom 탐색 중...")
+        rss_url = self._find_rss_url(base)
+        if rss_url:
+            self._update_status(f"✅ RSS 발견: {rss_url} → RSS 방식으로 수집")
+            yield from self.crawl_rss(base, initial_visited_urls)
+            return
+
+        # 3) 둘 다 없음
+        self._update_status(
+            "❌ 이 사이트는 sitemap.xml과 RSS/Atom을 모두 지원하지 않습니다.\n"
+            "시작 URL을 확인하거나 관리자에게 문의하세요."
+        )
 
     def crawl_full(
         self,
