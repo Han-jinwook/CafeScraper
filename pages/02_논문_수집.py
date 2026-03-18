@@ -309,10 +309,8 @@ with col_btn1:
             )
             wiki_crawler.set_status_callback(add_log)
             existing_urls = load_existing_paper_urls() if skip_existing else set()
-            max_pages_val = None if int(wiki_max_pages) == 0 else int(wiki_max_pages)
-            gen = wiki_crawler.crawl_full(
-                start_url=wiki_start_url,
-                max_pages=max_pages_val,
+            # sitemap 기반 크롤 (BFS 대체 — 큐 폭발 없음)
+            gen = wiki_crawler.crawl_sitemap(
                 initial_visited_urls=existing_urls,
             )
             st.session_state.wiki_crawler_obj = wiki_crawler
@@ -326,7 +324,7 @@ with col_btn1:
             st.session_state.wiki_running = True
             st.session_state.wiki_stop_requested = False
             st.session_state.wiki_status_messages = []
-            add_log(f"📚 전수 조사 시작 (기존 {len(existing_urls):,}개 스킵 예정)")
+            add_log(f"📚 sitemap 전수 조사 시작 (기존 {len(existing_urls):,}개 스킵 예정)")
             st.rerun()
 
 with col_btn2:

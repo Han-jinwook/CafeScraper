@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 from collections import deque
 from urllib.parse import urlparse, parse_qs, parse_qsl, urlencode, urlunparse
+from xml.etree import ElementTree as ET
 import json
 import requests
 from bs4 import BeautifulSoup, FeatureNotFound
@@ -2506,6 +2507,84 @@ class VitaminDWikiCrawler:
             return o
 
         return dedupe(members), dedupe(pages)
+
+    SITEMAP_URL = "https://vitamindwiki.com/sitemap.xml"
+
+    def crawl_sitemap(
+        self,
+        initial_visited_urls: Optional[set] = None,
+    ):
+        """
+        sitemap.xml 기반 전수 조사 generator.
+        - BFS 없음, 큐 폭발 없음
+        - sitemap에서 전체 URL 목록 한 번에 수집 → 신규만 fetch & yield
+        """
+        self._update_status(f"📥 sitemap.xml 다운로드 중...")
+        try:
+            r = self.session.get(self.SITEMAP_URL, timeout=20)
+            r.raise_for_status()
+        except Exception as e:
+            self._update_status(f"❌ sitemap 다운로드 실패: {e}")
+            return
+
+        try:
+            root = ET.fromstring(r.text)
+        except Exception as e:
+            self._update_status(f"❌ sitemap 파싱 실패: {e}")
+            return
+
+        ns = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+        all_urls = [el.text.strip() for el in root.findall("sm:url/sm:loc", ns) if el.text]
+
+        # /pages/ 아티클만 필터
+        article_urls = [u for u in all_urls if "/pages/" in u]
+        self._update_status(f"✅ sitemap 파싱 완료 — 전체 {len(all_urls):,}개 중 아티클 {len(article_urls):,}개")
+
+        skip: set = set()
+        if initial_visited_urls:
+            for u in initial_visited_urls:
+                nu = self._normalize_url(u)
+                if nu:
+                    skip.add(nu)
+
+        new_urls = [u for u in article_urls if self._normalize_url(u) not in skip]
+        self._update_status(f"🔍 신규 아티클 {len(new_urls):,}개 수집 시작 (기존 {len(skip):,}개 스킵)")
+
+        for i, url in enumerate(new_urls, 1):
+            nu = self._normalize_url(url)
+            if not nu:
+                continue
+
+            html = self._fetch_html(nu)
+            if not html:
+                self._sleep()
+                continue
+
+            soup = self._soup(html)
+            title = self._extract_title(soup)
+            cats = self._extract_categories(soup)
+            category_str = " | ".join(cats[:12])
+            full_content = self._extract_full_content(soup)
+            summary = self._extract_summary(soup)
+            collected_date = datetime.now().strftime("%Y-%m-%d")
+
+            paper = {
+                "title": title or nu,
+                "summary": summary,
+                "content": full_content,
+                "url": nu,
+                "category": category_str,
+                "collected_date": collected_date,
+            }
+
+            if i % 30 == 0:
+                self._update_status(f"⏳ {i}/{len(new_urls):,}개 처리 중...")
+                yield None  # heartbeat
+
+            yield paper
+            self._sleep()
+
+        self._update_status(f"✅ sitemap 전수 조사 완료 — {len(new_urls):,}개 처리")
 
     def crawl_full(
         self,
