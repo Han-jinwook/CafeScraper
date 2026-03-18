@@ -11,7 +11,8 @@ if sys.platform == 'win32':
     sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, 'strict')
 
 def migrate_db():
-    db_path = "cafe_data.db"
+    from app.utils.paths import resolve_db_path
+    db_path = str(resolve_db_path())
     
     if not os.path.exists(db_path):
         print(f"[ERROR] DB 파일이 없습니다: {db_path}")

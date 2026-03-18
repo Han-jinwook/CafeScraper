@@ -17,10 +17,11 @@ if st.session_state.get("crawl_running", False):
     st.warning("메인 크롤링이 진행 중입니다. 메인 페이지에서 중단 후 다시 시도해주세요.")
     st.stop()
 
-# DB 경로 설정
+# DB 경로 설정 — 메인 DB는 설정 파일(crawler_config.json)의 db_path 사용
 PROJECT_ROOT = get_project_root()
-MAIN_DB_PATH = "cafe_data.db"
-EVENT_DB_PATH = "cafe_data_event.db"  # 이벤트용 별도 DB
+MAIN_DB_PATH = str(resolve_db_path())                          # D:\CafeBreaker\cafe_data.db
+_event_dir = str(resolve_db_path().parent)
+EVENT_DB_PATH = str(resolve_db_path().parent / "cafe_data_event.db")
 TEMPLATES_FILE = "comment_templates.json"  # 템플릿 저장용 파일
 
 if "commenter" not in st.session_state:
