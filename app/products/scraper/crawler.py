@@ -2709,14 +2709,17 @@ class VitaminDWikiCrawler:
         self,
         start_url: Optional[str] = None,
         initial_visited_urls: Optional[set] = None,
+        rss_url: Optional[str] = None,
     ):
         """
         RSS/Atom 피드 기반 크롤 generator.
         도메인의 공통 RSS 경로를 자동 탐색 후 신규 URL만 fetch & yield.
+        rss_url 이 주어지면 재탐색 없이 사용(crawl_auto 이중 호출 버그 방지).
         """
         base = start_url or self.DEFAULT_INDEX_URL
-        self._update_status(f"🔎 RSS/Atom 피드 탐색 중: {urlparse(base).netloc}")
-        rss_url = self._find_rss_url(base)
+        if not rss_url:
+            self._update_status(f"🔎 RSS/Atom 피드 탐색 중: {urlparse(base).netloc}")
+            rss_url = self._find_rss_url(base)
         if not rss_url:
             self._update_status("❌ RSS/Atom 피드를 찾을 수 없습니다.")
             return
@@ -2757,19 +2760,23 @@ class VitaminDWikiCrawler:
         self._update_status(f"🔎 sitemap.xml 확인 중: {sitemap_url}")
         try:
             r = self.session.get(sitemap_url, timeout=10)
-            if r.status_code == 200 and ("<urlset" in r.text or "<sitemapindex" in r.text):
+            raw = (r.text or "").strip()
+            if "\ufeff" in raw[:3]:
+                raw = raw.lstrip("\ufeff")
+            low = raw.lower()
+            if r.status_code == 200 and ("<urlset" in low or "<sitemapindex" in low):
                 self._update_status("✅ sitemap.xml 발견 → sitemap 방식으로 수집")
                 yield from self.crawl_sitemap(base, initial_visited_urls)
                 return
         except Exception:
             pass
 
-        # 2) RSS/Atom 시도
+        # 2) RSS/Atom 시도 (피드 URL은 한 번만 탐색 후 전달 — 연속 요청 실패 방지)
         self._update_status("⚠️ sitemap 없음 → RSS/Atom 탐색 중...")
         rss_url = self._find_rss_url(base)
         if rss_url:
             self._update_status(f"✅ RSS 발견: {rss_url} → RSS 방식으로 수집")
-            yield from self.crawl_rss(base, initial_visited_urls)
+            yield from self.crawl_rss(base, initial_visited_urls, rss_url=rss_url)
             return
 
         # 3) 둘 다 없음
