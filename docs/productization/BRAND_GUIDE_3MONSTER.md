@@ -24,7 +24,7 @@
 - 기존 식별자(`CafeMonster_*` 등)는 **카페 몬스터 제품군**에 한정해 유지.  
   마케팅 몬스터 제품은 별도 접두어 도입 예: `MarketingMonster_*` 또는 제품별 코드명 (profiles.json에서 정의).
 
-## 3) 관련 문서
+## 3) 관련 문서 (같은 폴더 `docs/productization/`)
 
 - 카페 몬스터 상세: `BRAND_GUIDE_CafeMonster.md`
 - 패키징·워크스페이스: `README.md`

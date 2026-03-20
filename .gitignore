@@ -20,6 +20,7 @@ build_products/
 *.sqlite3
 
 ## Browser/session artifacts (Chrome profile, cookies, caches)
+.chrome_profile_uc/
 sessions/
 *.pkl
 *cookies*.json

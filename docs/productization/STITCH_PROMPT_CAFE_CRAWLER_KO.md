@@ -11,7 +11,7 @@
 
 ### 우산 브랜드
 **3Monster** — 하위: **카페 몬스터**(이번 시안) / **마케팅 몬스터**(사이트·sitemap·RSS) / **앱 몬스터**(예정).  
-(`productization/BRAND_GUIDE_3MONSTER.md` 참고)
+(`docs/productization/BRAND_GUIDE_3MONSTER.md` 참고)
 
 ### 제품 한 줄
 **「카페 몬스터」카페 크롤러** — 네이버 카페에서 지정 게시판·기간 기준으로 게시글·댓글을 수집해 로컬 DB에 저장하는 **윈도우 사용자용** 도구.
@@ -69,6 +69,6 @@
 
 ## 내부 참고 (Stitch에 안 넣어도 됨)
 
-- 브랜드: `productization/BRAND_GUIDE_CafeMonster.md`
-- 제품화 파이프: `productization/README.md`
-- 개발 계획 로그: `plan.md`
+- 브랜드: `docs/productization/BRAND_GUIDE_CafeMonster.md`
+- 제품화 파이프: `docs/productization/README.md`
+- 개발 계획 로그: `docs/plan.md`

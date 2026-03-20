@@ -462,8 +462,8 @@ CafeScraper/
 ├── snapshots/               # 스크린샷
 ├── server.log               # 서버 로그
 ├── requirements.txt
-├── plan.md
-└── CURRENT_STATUS.md
+├── docs/                    # 문서 전부 (help, plan, architecture, productization)
+└── README.md
 ```
 
 ## 🔄 **2026-01-27 업데이트: 조회수/좋아요 "0" 문제 해결 및 안정화**
