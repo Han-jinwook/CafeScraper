@@ -420,7 +420,7 @@ if st.session_state.wiki_running:
             if paper is None:
                 # heartbeat: 30페이지 처리마다 발행 → UI 갱신 트리거용
                 count += 1
-                live_msg.info(f"📡 {st.session_state.wiki_last_msg}")
+                # 배치 루프 안에서는 live_msg 갱신 금지 → Streamlit removeChild DOM 오류 방지
                 continue
 
             try:
@@ -429,9 +429,6 @@ if st.session_state.wiki_running:
                 add_log(f"⚠️ 저장 실패: {paper.get('url', '')} ({e})")
             st.session_state.wiki_stats["processed"] += 1
             count += 1
-
-            # 배치 중간 상태 메시지 업데이트
-            live_msg.info(f"📡 {st.session_state.wiki_last_msg}")
 
         except StopIteration:
             done = True
@@ -482,10 +479,12 @@ else:
 
 # ── 실행 로그 ─────────────────────────────────────────────────
 if st.session_state.wiki_status_messages:
+    # 수집 중에는 expander를 접어두면 text_area DOM과 현황판 충돌(removeChild) 완화
+    _log_expanded = bool(st.session_state.wiki_debug_mode) and not st.session_state.wiki_running
     with st.expander(
         f"📋 실행 로그 ({len(st.session_state.wiki_status_messages)}줄)"
         + (" — 디버그 모드 ON" if st.session_state.wiki_debug_mode else ""),
-        expanded=bool(st.session_state.wiki_debug_mode),
+        expanded=_log_expanded,
     ):
         log_text = "\n".join(reversed(st.session_state.wiki_status_messages[-300:]))
         st.text_area(
