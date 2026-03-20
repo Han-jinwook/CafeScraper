@@ -14,6 +14,9 @@ logs/
 build_products/
 
 ## Local databases / backups
+# *.db 는 “처음부터 안 올린” 파일만 무시합니다. 예전에 커밋된 DB는 `git rm --cached` 로 추적 해제 필요.
+*_backup.db
+backup_*.db
 *.db
 *.db-journal
 *.sqlite
