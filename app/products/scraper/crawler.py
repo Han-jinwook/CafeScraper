@@ -2554,6 +2554,62 @@ class VitaminDWikiCrawler:
         p = urlparse(start_url)
         return f"{p.scheme}://{p.netloc}/sitemap.xml"
 
+    def _is_vitamindwiki_url(self, url: Optional[str]) -> bool:
+        if not url:
+            return False
+        return "vitamindwiki.com" in (urlparse(url).netloc or "").lower()
+
+    _SITEMAP_SKIP_EXT = (
+        ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico", ".css", ".js",
+        ".woff", ".woff2", ".zip", ".mp4", ".mp3", ".pdf",
+    )
+    _SITEMAP_SKIP_PATH_SNIPPETS = (
+        "/wp-login", "/wp-admin", "/wp-json/", "/xmlrpc.php",
+        "/wp-includes/", "/feed/", "/comment-page-", "/cdn-cgi/",
+    )
+
+    def _filter_sitemap_content_urls(self, all_urls: List[str], start_url: Optional[str]) -> List[str]:
+        """
+        VitaminDWiki: /pages/ 아티클만 (기존 동작 유지).
+        그 외 사이트: 동일 호스트 + 정적·관리자 URL 제외 (WordPress 등 일반 사이트).
+        """
+        if not all_urls:
+            return []
+        base = urlparse(start_url or self.DEFAULT_INDEX_URL)
+        base_host = (base.netloc or "").lower()
+
+        # VitaminDWiki 전용
+        if self._is_vitamindwiki_url(start_url or all_urls[0]):
+            return [u for u in all_urls if "/pages/" in u]
+
+        def same_host(u: str) -> bool:
+            h = (urlparse(u).netloc or "").lower()
+            if h == base_host:
+                return True
+            if base_host.startswith("www.") and h == base_host[4:]:
+                return True
+            if h.startswith("www.") and h[4:] == base_host:
+                return True
+            return False
+
+        out: List[str] = []
+        seen: set[str] = set()
+        for u in all_urls:
+            nu = self._normalize_url(u)
+            if not nu or nu in seen:
+                continue
+            if not same_host(nu):
+                continue
+            path = (urlparse(nu).path or "").lower()
+            if any(sn in path for sn in self._SITEMAP_SKIP_PATH_SNIPPETS):
+                continue
+            low = nu.lower()
+            if low.endswith(self._SITEMAP_SKIP_EXT):
+                continue
+            seen.add(nu)
+            out.append(nu)
+        return out
+
     def crawl_sitemap(
         self,
         start_url: Optional[str] = None,
@@ -2593,9 +2649,8 @@ class VitaminDWikiCrawler:
         else:
             all_urls = [el.text.strip() for el in root.findall("sm:url/sm:loc", ns) if el.text]
 
-        # 아티클만 필터 (/pages/ 포함 URL)
-        article_urls = [u for u in all_urls if "/pages/" in u]
-        self._update_status(f"✅ sitemap — 전체 {len(all_urls):,}개 중 아티클 {len(article_urls):,}개")
+        article_urls = self._filter_sitemap_content_urls(all_urls, start_url)
+        self._update_status(f"✅ sitemap — 전체 {len(all_urls):,}개 중 수집 대상 {len(article_urls):,}개")
 
         skip = self._make_skip_set(initial_visited_urls)
         new_urls = [u for u in article_urls if self._normalize_url(u) not in skip]
