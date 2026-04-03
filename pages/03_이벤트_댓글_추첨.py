@@ -29,25 +29,6 @@ from app.utils.streamlit_top_nav import (
 
 st.set_page_config(page_title="이벤트 댓글 수집", layout="wide")
 
-st.markdown(
-    """
-    <style>
-    /* 진행 중 '중단' 버튼을 빨간 톤으로 강조 */
-    div[data-testid="stButton"] > button[kind="secondary"] {
-        background-color: #d92d20 !important;
-        border-color: #b42318 !important;
-        color: #ffffff !important;
-    }
-    div[data-testid="stButton"] > button[kind="secondary"]:hover {
-        background-color: #b42318 !important;
-        border-color: #912018 !important;
-        color: #ffffff !important;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
 render_main_top_nav(active="event")
 
 # 메인 크롤링 구동 중에는 다른 메뉴 작업을 잠시 차단
@@ -1114,17 +1095,30 @@ with step_col_login:
 
 with step_col2:
     if st.session_state.event_running:
-        _run_btn_col, _stop_btn_col = st.columns([4.5, 1.5], gap="small")
-        with _run_btn_col:
-            st.button(
-                "2단계: 댓글 수집·분석 진행 중...",
-                type="primary",
+        st.markdown(
+            """
+            <style>
+            .st-key-event_step2_running div[data-testid="stButton"] > button {
+                background-color: #d92d20 !important;
+                border-color: #b42318 !important;
+                color: #ffffff !important;
+            }
+            .st-key-event_step2_running div[data-testid="stButton"] > button:hover {
+                background-color: #b42318 !important;
+                border-color: #912018 !important;
+                color: #ffffff !important;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+        with st.container(key="event_step2_running"):
+            if st.button(
+                "2단계: 댓글 수집·분석 진행 중 (중단)",
+                type="secondary",
                 width="stretch",
-                disabled=False,
                 key="event_running_btn",
-            )
-        with _stop_btn_col:
-            if st.button("중단", type="secondary", width="stretch", key="event_stop_btn"):
+            ):
                 st.session_state.event_stop_requested = True
                 update_logs("🛑 중단 요청을 받았습니다. 현재 처리 단위 완료 후 중단합니다.")
     else:
