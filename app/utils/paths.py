@@ -31,12 +31,18 @@ def resolve_db_path(config_db_path: str | None = None) -> Path:
     """
     env_path = (os.getenv("CAFESCRAPER_DB_PATH") or "").strip()
     if env_path:
-        return Path(env_path).expanduser().resolve()
+        p = Path(env_path).expanduser().resolve()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        return p
 
     if config_db_path and str(config_db_path).strip():
-        return Path(str(config_db_path)).expanduser().resolve()
+        p = Path(str(config_db_path)).expanduser().resolve()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        return p
 
-    return (get_project_root() / "cafe_data.db").resolve()
+    p = (get_project_root() / "data" / "cafe_data.db").resolve()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
 
 
 def resolve_event_db_path(config_event_db_path: str | None = None) -> Path:
@@ -48,10 +54,16 @@ def resolve_event_db_path(config_event_db_path: str | None = None) -> Path:
     """
     env_path = (os.getenv("CAFESCRAPER_EVENT_DB_PATH") or "").strip()
     if env_path:
-        return Path(env_path).expanduser().resolve()
+        p = Path(env_path).expanduser().resolve()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        return p
 
     if config_event_db_path and str(config_event_db_path).strip():
-        return Path(str(config_event_db_path)).expanduser().resolve()
+        p = Path(str(config_event_db_path)).expanduser().resolve()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        return p
 
-    return (get_project_root() / "event_comments.db").resolve()
+    p = (get_project_root() / "data" / "event_comments.db").resolve()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
 

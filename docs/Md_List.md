@@ -1,10 +1,15 @@
 # Markdown 문서 목록
 
-- 최종 업데이트: 2026-03-20
+- 최종 업데이트: 2026-03-21
 
 ## 대원칙
 - 활성 문서는 **`docs/`** 아래에 둔다. (루트는 `README.md`만 진입점)
 - 구버전·중단 문서는 보관하지 않고 삭제한다.
+
+## 디자인 참고 (Stitch 산출물)
+
+- **`assets/stitch-reference/`** — Stitch에서보낸 HTML·이미지 등 **참고 전용**. 앱은 이 경로를 런타임에 읽지 않음.  
+  자세한 안내: [`assets/stitch-reference/README.md`](../assets/stitch-reference/README.md)
 
 ## 디렉터리 구조
 

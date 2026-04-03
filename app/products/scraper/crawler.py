@@ -2,11 +2,13 @@
 네이버 카페 크롤러 - Project DAYBREAK (최종 복구 및 ID 추출 강화 버전)
 """
 import os
-import time
 import random
 import re
+import shutil
+import subprocess
+import time
 import pickle
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from collections import deque
@@ -21,6 +23,79 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+
+
+def _detect_installed_chrome_major_version() -> Optional[int]:
+    """로컬에 설치된 Google Chrome 메이저 버전 (uc.Chrome version_main 용). 감지 실패 시 None."""
+    # Windows 레지스트리 (가장 안정적)
+    if os.name == "nt":
+        try:
+            import winreg  # type: ignore
+
+            for hive, path in (
+                (winreg.HKEY_CURRENT_USER, r"Software\Google\Chrome\BLBeacon"),
+                (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Google\Chrome\BLBeacon"),
+            ):
+                try:
+                    with winreg.OpenKey(hive, path) as k:
+                        ver, _ = winreg.QueryValueEx(k, "version")
+                    major = int(str(ver).split(".")[0])
+                    if 90 <= major <= 200:
+                        return major
+                except OSError:
+                    continue
+        except Exception:
+            pass
+
+    # chrome --version (Windows / macOS / Linux 공통 시도)
+    candidates = []
+    if os.name == "nt":
+        pf = os.environ.get("PROGRAMFILES", r"C:\Program Files")
+        pfx86 = os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)")
+        la = os.environ.get("LOCALAPPDATA", "")
+        candidates = [
+            os.path.join(pf, r"Google\Chrome\Application\chrome.exe"),
+            os.path.join(pfx86, r"Google\Chrome\Application\chrome.exe"),
+            os.path.join(la, r"Google\Chrome\Application\chrome.exe") if la else "",
+        ]
+        w = shutil.which("chrome") or shutil.which("chrome.exe")
+        if w:
+            candidates.append(w)
+    else:
+        candidates = [
+            "/usr/bin/google-chrome",
+            "/usr/bin/google-chrome-stable",
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "google-chrome",
+            "chromium",
+            "chromium-browser",
+        ]
+
+    for exe in candidates:
+        if not exe:
+            continue
+        if os.name == "nt" and exe.endswith(".exe") and not os.path.isfile(exe):
+            continue
+        if os.name != "nt" and exe.startswith("/") and not os.path.isfile(exe):
+            continue
+        try:
+            proc = subprocess.run(
+                [exe, "--version"],
+                capture_output=True,
+                text=True,
+                timeout=8,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            )
+            txt = (proc.stdout or proc.stderr or "").strip()
+            m = re.search(r"(\d{3})\.", txt) or re.search(r"(\d+)\.", txt)
+            if m:
+                major = int(m.group(1))
+                if 90 <= major <= 200:
+                    return major
+        except Exception:
+            continue
+    return None
+
 
 class NaverCafeCrawler:
     def __init__(self, chrome_profile_path: str = "", output_dir: str = "outputs", debug_mode: bool = False):
@@ -358,6 +433,55 @@ class NaverCafeCrawler:
         except Exception as e:
             if self.debug_mode:
                 self._update_status(f"[디버그] API 메타 추출 실패: {e}")
+        return out
+
+    def _get_article_body_via_article_api(self, club_id: Optional[str], article_id: Optional[str]) -> Dict[str, Any]:
+        """
+        게시글 본문(API 기반) 추출.
+        Returns:
+          {
+            "content_text": str,   # 태그 제거된 본문 텍스트
+            "image_count": int,    # 본문 이미지 수(가능한 범위 추정)
+          }
+        """
+        out: Dict[str, Any] = {"content_text": "", "image_count": 0}
+        if not club_id or not article_id:
+            return out
+        try:
+            s = self._build_requests_session_from_driver()
+            url = f"https://apis.naver.com/cafe-web/cafe-article/v1/articles/{article_id}?useCafeId=false&buid={club_id}"
+            headers = {
+                "Referer": f"https://m.cafe.naver.com/ca-fe/web/cafes/{club_id}/articles/{article_id}",
+                "Origin": "https://m.cafe.naver.com",
+                "Accept": "application/json, text/plain, */*",
+            }
+            r = s.get(url, headers=headers, timeout=10)
+            if r.status_code != 200:
+                return out
+            data = r.json()
+            article = data.get("result", {}).get("article", {}) if isinstance(data, dict) else {}
+            if not isinstance(article, dict):
+                return out
+
+            raw_content = ""
+            for k in ["content", "articleContent", "postContent", "body", "text"]:
+                v = article.get(k)
+                if isinstance(v, str) and v.strip():
+                    raw_content = v
+                    break
+            if raw_content:
+                txt = BeautifulSoup(raw_content, "html.parser").get_text(" ", strip=True)
+                out["content_text"] = self._clean_text(txt)
+                out["image_count"] = len(re.findall(r"<img\b", raw_content, flags=re.I))
+
+            if not out["image_count"]:
+                for k in ["imageCount", "imgCount", "photoCount", "attachImageCount", "attachedImageCount"]:
+                    vv = article.get(k)
+                    if isinstance(vv, (int, float)):
+                        out["image_count"] = max(0, int(vv))
+                        break
+        except Exception:
+            return out
         return out
 
     def get_article_meta(self, article_url: str) -> Dict[str, Any]:
@@ -730,36 +854,131 @@ class NaverCafeCrawler:
                 return None
 
             out: List[Dict[str, Any]] = []
+
+            def _safe_int(v: Any) -> int:
+                try:
+                    if v is None:
+                        return 0
+                    if isinstance(v, bool):
+                        return int(v)
+                    return int(v)
+                except Exception:
+                    return 0
+
+            def _count_inline_images(itm: Dict[str, Any]) -> int:
+                # API 구조가 자주 바뀌므로, 대표 키 후보를 넓게 방어
+                int_keys = [
+                    "imageCount", "imgCount", "stickerCount", "emoticonCount",
+                    "photoCount", "attachImageCount", "attachedImageCount",
+                ]
+                list_keys = [
+                    "imageList", "images", "imgList", "photoList",
+                    "stickerList", "emoticonList", "attachImageList",
+                ]
+                total = 0
+                for k in int_keys:
+                    if k in itm:
+                        total += max(0, _safe_int(itm.get(k)))
+                for k in list_keys:
+                    v = itm.get(k)
+                    if isinstance(v, list):
+                        total += len(v)
+                # content에 이미지 태그가 들어오는 경우 보정
+                raw_content = str(
+                    itm.get("content")
+                    or itm.get("commentContent")
+                    or itm.get("comment")
+                    or itm.get("text")
+                    or ""
+                )
+                if raw_content:
+                    total += len(re.findall(r"<img\b", raw_content, flags=re.I))
+                return max(0, int(total))
+
+            def _extract_writer_nick(itm: Dict[str, Any]) -> str:
+                # 1) 최우선: 작성자 전용 키
+                direct_keys = [
+                    "writerNick",
+                    "writer_nick",
+                    "writerName",
+                    "nickName",
+                    "nickname",
+                    "name",
+                ]
+                for k in direct_keys:
+                    v = itm.get(k)
+                    if isinstance(v, str) and self._clean_text(v):
+                        return self._clean_text(v)
+
+                # 2) 작성자 객체 후보군
+                for wk in ["writer", "commentWriter", "user", "member", "author"]:
+                    wv = itm.get(wk)
+                    if isinstance(wv, dict):
+                        for k in ["nickName", "nickname", "writerNick", "writerName", "name"]:
+                            vv = wv.get(k)
+                            if isinstance(vv, str) and self._clean_text(vv):
+                                return self._clean_text(vv)
+
+                # 3) 마지막 폴백: deep search (답글 대상 키는 제외)
+                bad_key_hints = ["reply", "target", "parent", "receiver", "mention", "to"]
+                try:
+                    seen = set()
+                    q = [itm]
+                    while q:
+                        cur = q.pop(0)
+                        if id(cur) in seen:
+                            continue
+                        seen.add(id(cur))
+                        if isinstance(cur, dict):
+                            for kk, vv in cur.items():
+                                kls = str(kk).lower()
+                                if isinstance(vv, (dict, list)):
+                                    q.append(vv)
+                                    continue
+                                if not isinstance(vv, str):
+                                    continue
+                                if any(bad in kls for bad in bad_key_hints):
+                                    continue
+                                if ("nick" in kls or "writer" in kls) and self._clean_text(vv):
+                                    return self._clean_text(vv)
+                except Exception:
+                    pass
+                return "unknown"
+
+            def _extract_writer_id(itm: Dict[str, Any]) -> str:
+                # 1) 최우선: 작성자 id 후보
+                direct_keys = [
+                    "writerId",
+                    "writer_id",
+                    "writerid",
+                    "memberKey",
+                    "writerMemberKey",
+                    "userKey",
+                    "memberId",
+                    "member_id",
+                    "userId",
+                    "userid",
+                ]
+                for k in direct_keys:
+                    v = itm.get(k)
+                    if isinstance(v, str) and v.strip():
+                        return v.strip()
+
+                # 2) 작성자 객체 후보군
+                for wk in ["writer", "commentWriter", "user", "member", "author"]:
+                    wv = itm.get(wk)
+                    if isinstance(wv, dict):
+                        for k in ["id", "writerId", "memberId", "memberKey", "userId", "userKey"]:
+                            vv = wv.get(k)
+                            if isinstance(vv, str) and vv.strip():
+                                return vv.strip()
+                return "unknown"
+
             for it in items:
                 if not isinstance(it, dict):
                     continue
-                # writer id 키 변형 방어
-                writer_id = (
-                    it.get("writerId")
-                    or it.get("writer_id")
-                    or it.get("writerid")
-                    or it.get("memberKey")
-                    or it.get("writerMemberKey")
-                    or it.get("userKey")
-                    or it.get("memberId")
-                    or it.get("member_id")
-                    or it.get("userId")
-                    or it.get("userid")
-                    or "unknown"
-                )
-                nickname = (
-                    it.get("writerNick")
-                    or it.get("writer_nick")
-                    or it.get("nickName")
-                    or it.get("nickname")
-                    or it.get("writerName")
-                    or it.get("name")
-                    or "unknown"
-                )
-                if nickname == "unknown":
-                    found = self._deep_find_first_string(it, ["nick", "nickname", "writerNick", "name"])
-                    if found:
-                        nickname = found
+                writer_id = _extract_writer_id(it)
+                nickname = _extract_writer_nick(it)
                 content = (
                     it.get("content")
                     or it.get("commentContent")
@@ -787,6 +1006,17 @@ class NaverCafeCrawler:
                     or it.get("time")
                     or it.get("timestamp")
                 )
+                if not raw_date:
+                    # API 키 변형 대응: 중첩 객체에서도 날짜/시간 후보를 탐색
+                    raw_date = self._deep_find_first_string(
+                        it,
+                        ["regdate", "registerdate", "writedate", "createdate", "commentdate", "date", "time", "timestamp"],
+                    )
+                if not raw_date:
+                    raw_date = self._deep_find_first_int(
+                        it,
+                        ["regdate", "registerdate", "writedate", "createdate", "commentdate", "date", "time", "timestamp"],
+                    )
                 comment_ymd = self._to_ymd(raw_date)
 
                 # 댓글 ID / 등급(멤버등급) 후보군 방어
@@ -817,6 +1047,7 @@ class NaverCafeCrawler:
                     found_level = self._deep_find_first_string(it, ["level", "grade"])
                     if found_level:
                         level_name = self._clean_text(found_level)
+                inline_image_count = _count_inline_images(it)
 
                 out.append(
                     {
@@ -826,6 +1057,7 @@ class NaverCafeCrawler:
                         "date": comment_ymd,
                         "comment_id": str(comment_id) if comment_id is not None else "",
                         "level": level_name,
+                        "inline_image_count": inline_image_count,
                     }
                 )
 
@@ -844,7 +1076,35 @@ class NaverCafeCrawler:
             normalized = self._normalize_article_url(article_url or "")
             club_id, article_id = self._parse_club_article_ids(normalized)
             api_comments = self._get_comments_via_commentview(club_id, article_id)
-            return api_comments or []
+            if api_comments:
+                return api_comments
+
+            # API 빈응답 시 상세페이지 폴백(느리지만 누락 방지 우선)
+            detail = self.scrape_article_detail(
+                normalized,
+                post_author_id="unknown",
+                admin_nicks=[],
+                comment_mode="all",
+            )
+            fallback_comments = detail.get("comments") if isinstance(detail, dict) else []
+            if isinstance(fallback_comments, list):
+                out: List[Dict[str, Any]] = []
+                for c in fallback_comments:
+                    if not isinstance(c, dict):
+                        continue
+                    out.append(
+                        {
+                            "writer_id": str(c.get("writer_id") or "unknown"),
+                            "nickname": str(c.get("nickname") or "unknown"),
+                            "content": str(c.get("content") or ""),
+                            "date": str(c.get("date") or ""),
+                            "comment_id": str(c.get("comment_id") or ""),
+                            "level": str(c.get("level") or ""),
+                            "inline_image_count": int(c.get("inline_image_count") or 0),
+                        }
+                    )
+                return out
+            return []
         except:
             return []
 
@@ -1131,10 +1391,13 @@ class NaverCafeCrawler:
             options.add_argument("--no-sandbox")
             options.add_argument("--disable-dev-shm-usage")
 
-            # undetected_chromedriver 인스턴스 생성 (자동화 탐지 우회)
-            # version_main=144로 현재 Chrome 버전 명시
-            # use_subprocess=True: 멀티프로세싱 에러 방지
-            self.driver = uc.Chrome(options=options, version_main=144, use_subprocess=True)
+            # uc 자동 매칭이 최신 정식 Chrome보다 앞선 드라이버를 받는 경우가 있어,
+            # 로컬 설치 버전으로 version_main 고정 (기능 동일, 호환만 보장).
+            _vm = _detect_installed_chrome_major_version()
+            _kw = {"options": options, "use_subprocess": True}
+            if _vm is not None:
+                _kw["version_main"] = _vm
+            self.driver = uc.Chrome(**_kw)
             self.driver.set_page_load_timeout(30)
             
             self.driver.get("https://cafe.naver.com")
@@ -1249,6 +1512,27 @@ class NaverCafeCrawler:
             if m:
                 y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
                 return datetime(y, mo, d).strftime("%Y-%m-%d")
+
+            # MM.DD / MM-DD / MM/DD 형태(연도 없음)는 올해로 보정
+            m2 = re.search(r"\b(\d{1,2})[./-](\d{1,2})\.?\b", s)
+            if m2:
+                now = datetime.now()
+                mo, d = int(m2.group(1)), int(m2.group(2))
+                # 연초에 전년도 글이 보이는 경우를 대비해, 미래 날짜면 전년으로 보정
+                y = now.year
+                if (mo, d) > (now.month, now.day):
+                    y -= 1
+                return datetime(y, mo, d).strftime("%Y-%m-%d")
+
+            # 상대 날짜(오늘/어제/N일 전)
+            if "오늘" in s:
+                return datetime.now().strftime("%Y-%m-%d")
+            if "어제" in s:
+                return (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+            m3 = re.search(r"(\d+)\s*일\s*전", s)
+            if m3:
+                days = int(m3.group(1))
+                return (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
         except:
             return ""
         return ""
@@ -1992,9 +2276,19 @@ class NaverCafeCrawler:
             return f"https://cafe.naver.com/ArticleRead.nhn?clubid={match.group(1)}&articleid={match.group(2)}"
         return article_url
     
-    def scrape_article_detail(self, article_url: str, post_author_id: str, admin_nicks: List[str]) -> Dict[str, Any]:
+    def scrape_article_detail(
+        self,
+        article_url: str,
+        post_author_id: str,
+        admin_nicks: Optional[List[str]] = None,
+        comment_mode: str = "author_admin",
+    ) -> Dict[str, Any]:
         """본문 텍스트 추출 및 관계 중심 댓글 필터링"""
         try:
+            admin_nicks = admin_nicks or []
+            comment_mode = str(comment_mode or "author_admin").strip().lower()
+            if comment_mode not in ("author_admin", "all", "none"):
+                comment_mode = "author_admin"
             article_url = self._normalize_article_url(article_url)
             self.driver.get(article_url)
             self._sleep_scaled(3.0)
@@ -2004,6 +2298,7 @@ class NaverCafeCrawler:
             club_id, article_id = self._parse_club_article_ids(article_url)
             writer_info = self._get_writer_info_via_article_api(club_id, article_id)
             meta_info = self._get_article_meta_via_article_api(club_id, article_id)
+            body_info = self._get_article_body_via_article_api(club_id, article_id)
             
             # API가 실패했으면(0) 화면에서 재시도 (PC 버전 Selector)
             if (meta_info.get("view_count", 0) or 0) == 0 and (meta_info.get("like_count", 0) or 0) == 0:
@@ -2066,17 +2361,26 @@ class NaverCafeCrawler:
                     pass
             
             # 본문 추출
-            content = ""
-            content_selectors = [".se-main-container", "div[class*='ArticleContentBox']", "#articleBody", "div.article_viewer"]
-            for content_sel in content_selectors:
-                try:
-                    content_area = WebDriverWait(self.driver, 5).until(EC.presence_of_element_located((By.CSS_SELECTOR, content_sel)))
-                    content = content_area.text.strip()
-                    if content and len(content) > 10: break
-                except: continue
+            content = str(body_info.get("content_text") or "").strip()
+            post_image_count = int(body_info.get("image_count") or 0)
+            if not content:
+                content_selectors = [".se-main-container", "div[class*='ArticleContentBox']", "#articleBody", "div.article_viewer"]
+                for content_sel in content_selectors:
+                    try:
+                        content_area = WebDriverWait(self.driver, 5).until(EC.presence_of_element_located((By.CSS_SELECTOR, content_sel)))
+                        content = content_area.text.strip()
+                        try:
+                            post_image_count = max(0, int(len(content_area.find_elements(By.CSS_SELECTOR, "img"))))
+                        except Exception:
+                            post_image_count = 0
+                        if content and len(content) > 3:
+                            break
+                    except:
+                        continue
 
             # 치유일기 고정 안내문 제거(해당 패턴일 때만)
             content = self._strip_healing_diary_preamble(content)
+            post_char_count = len(re.sub(r"\s+", "", str(content or "")))
 
             # 카테고리(말머리) DOM 백업
             category = str(meta_info.get("category") or "").strip()
@@ -2182,6 +2486,20 @@ class NaverCafeCrawler:
             
             # 댓글 필터링
             filtered_comments = []
+            if comment_mode == "none":
+                return {
+                    "content": content,
+                    "comments": filtered_comments,
+                    "member_id": post_author_id,
+                    "nickname": api_author_nick,
+                    "member_level": api_member_level,
+                    "board_name": board_name,
+                    "category": category,
+                    "view_count": int(meta_info.get("view_count", 0) or 0),
+                    "like_count": int(meta_info.get("like_count", 0) or 0),
+                    "post_char_count": int(post_char_count),
+                    "post_image_count": int(post_image_count),
+                }
             try:
                 # 1) 댓글 JSON 우회(가장 안정) 시도
                 api_comments = self._get_comments_via_commentview(club_id, article_id)
@@ -2189,14 +2507,19 @@ class NaverCafeCrawler:
                     for c in api_comments:
                         writer_id = c.get("writer_id", "unknown")
                         nick = c.get("nickname", "unknown")
-                        is_author = (writer_id == post_author_id and post_author_id != "unknown")
+                        is_author = writer_id == post_author_id and post_author_id != "unknown"
                         is_admin = any(admin_nick.strip() in (nick or "") for admin_nick in admin_nicks)
-                        if is_author or is_admin:
+                        should_include = (comment_mode == "all") or is_author or is_admin
+                        if should_include:
                             filtered_comments.append(
                                 {
                                     "writer_id": writer_id,
                                     "nickname": nick,
                                     "content": c.get("content", ""),
+                                    "date": c.get("date", ""),
+                                    "comment_id": c.get("comment_id", ""),
+                                    "level": c.get("level", ""),
+                                    "inline_image_count": int(c.get("inline_image_count") or 0),
                                     "is_target": 1,
                                 }
                             )
@@ -2210,6 +2533,8 @@ class NaverCafeCrawler:
                         "category": category,
                         "view_count": int(meta_info.get("view_count", 0) or 0),
                         "like_count": int(meta_info.get("like_count", 0) or 0),
+                        "post_char_count": int(post_char_count),
+                        "post_image_count": int(post_image_count),
                     }
 
                 # 2) 실패 시 Selenium DOM 방식으로 폴백
@@ -2221,22 +2546,38 @@ class NaverCafeCrawler:
                         nick = self._extract_text_from_element(nick_el) or "unknown"
                         writer_id = self._extract_id_from_element(nick_el)
                         
-                        is_author = (writer_id == post_author_id and post_author_id != "unknown")
+                        is_author = writer_id == post_author_id and post_author_id != "unknown"
                         is_admin = any(admin_nick.strip() in nick for admin_nick in admin_nicks)
 
                         # 운영자 댓글인데 ID가 unknown이면, 레이어 클릭으로 보강 (너무 느려지지 않게 제한)
                         if writer_id == "unknown" and is_admin and layer_attempts < 5:
                             writer_id = self._get_member_id_via_layer(nick_el)
                             layer_attempts += 1
-                            is_author = (writer_id == post_author_id and post_author_id != "unknown")
+                            is_author = writer_id == post_author_id and post_author_id != "unknown"
                         
-                        if is_author or is_admin:
+                        should_include = (comment_mode == "all") or is_author or is_admin
+                        if should_include:
                             text_el = item.find_element(By.CSS_SELECTOR, ".comment_text_view, .txt, div[class*='comment_text']")
+                            ctext = text_el.text.strip()
+                            chtml = ""
+                            try:
+                                chtml = text_el.get_attribute("innerHTML") or ""
+                            except:
+                                chtml = ""
+                            img_cnt = 0
+                            try:
+                                img_cnt = max(0, int(len(re.findall(r"<img\\b", chtml, flags=re.I))))
+                            except:
+                                img_cnt = 0
                             filtered_comments.append({
                                 "writer_id": writer_id,
                                 "nickname": nick,
-                                "content": text_el.text.strip(),
-                                "is_target": 1
+                                "content": ctext,
+                                "date": "",
+                                "comment_id": "",
+                                "level": "",
+                                "inline_image_count": img_cnt,
+                                "is_target": 1,
                             })
                     except: continue
             except: pass
@@ -2251,6 +2592,8 @@ class NaverCafeCrawler:
                 "category": category,
                 "view_count": int(meta_info.get("view_count", 0) or 0),
                 "like_count": int(meta_info.get("like_count", 0) or 0),
+                "post_char_count": int(post_char_count),
+                "post_image_count": int(post_image_count),
             }
         except Exception as e:
             return {
@@ -2263,6 +2606,8 @@ class NaverCafeCrawler:
                 "category": "",
                 "view_count": 0,
                 "like_count": 0,
+                "post_char_count": 0,
+                "post_image_count": 0,
             }
 
     def close(self):

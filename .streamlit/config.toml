@@ -1,6 +1,18 @@
 [browser]
 gatherUsageStats = false
 
+# 기본 사이드바의 페이지 목록 숨김 → 상단 가로 메뉴로만 이동 (가로 폭 확보)
+[client]
+showSidebarNavigation = false
+
+# CafeMonster — assets/stitch-reference/monster_logic_pro/DESIGN.md 토큰 (UI만)
+[theme]
+primaryColor = "#003629"
+backgroundColor = "#f8fafb"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#191c1d"
+font = "sans serif"
+
 [server]
 headless = false
 port = 8501

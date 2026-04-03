@@ -7,17 +7,27 @@ import subprocess
 import time
 import json
 import re
+from pathlib import Path
 
 from app.products.scraper.crawler import VitaminDWikiCrawler
 from app.utils.sqlite_db import init_db
 from app.utils.paths import get_config_path, resolve_db_path
+from app.utils.streamlit_top_nav import (
+    inject_settings_three_cards_css,
+    render_main_top_nav,
+    render_settings_card_title,
+)
 
 
 st.set_page_config(page_title="마케팅 몬스터 · 사이트 콘텐츠 수집", layout="wide")
 
+render_main_top_nav(active="papers")
+
 if st.session_state.get("crawl_running", False):
     st.warning("메인 크롤링이 진행 중입니다. 메인 페이지에서 중단 후 다시 시도해주세요.")
     st.stop()
+
+inject_settings_three_cards_css(key_basename="papers_settings_card")
 
 CONFIG_PATH = str(get_config_path())
 
@@ -176,74 +186,26 @@ def add_log(msg: str):
     st.session_state.wiki_last_msg = msg
 
 
-# ── 사이드바 ──────────────────────────────────────────────────
-with st.sidebar:
-    st.header("⚙️ 설정")
-    st.session_state.wiki_debug_mode = st.checkbox(
-        "🐞 디버그 모드", value=bool(config.get("wiki_debug_mode", False))
-    )
+def _render_papers_dashboard_header() -> None:
+    """메인 `_render_cafe_dashboard_header`와 동일 그리드: 로고 + 제목·가이드."""
+    _logo_path = Path(__file__).resolve().parent.parent / "assets" / "CafeMonster_logo.png"
 
-    st.subheader("🌐 사이트 수집 옵션")
-    wiki_start_url = st.text_input(
-        "시작 URL",
-        value=config.get("wiki_start_url", "https://vitamindwiki.com/pages/health-problems-and-d/"),
-        disabled=st.session_state.wiki_running,
-    )
-    wiki_delay = st.number_input(
-        "요청 딜레이(초)",
-        min_value=0.0,
-        max_value=3.0,
-        value=float(config.get("wiki_delay", 0.5)),
-        step=0.1,
-        disabled=st.session_state.wiki_running,
-    )
-    wiki_max_pages = st.number_input(
-        "최대 페이지(0=무제한)",
-        min_value=0,
-        max_value=500000,
-        value=int(config.get("wiki_max_pages", 0)),
-        step=100,
-        disabled=st.session_state.wiki_running,
-    )
-    skip_existing = st.checkbox(
-        "✅ 이미 수집한 URL 재방문 스킵(추천)",
-        value=bool(config.get("wiki_skip_existing", True)),
-        disabled=st.session_state.wiki_running,
-    )
-
-    if st.button("💾 설정 저장", width="stretch", disabled=st.session_state.wiki_running):
-        config["wiki_debug_mode"] = bool(st.session_state.wiki_debug_mode)
-        config["wiki_start_url"] = wiki_start_url
-        config["wiki_delay"] = float(wiki_delay)
-        config["wiki_max_pages"] = int(wiki_max_pages)
-        config["wiki_skip_existing"] = bool(skip_existing)
-        save_config(config)
-        st.success("✅ 설정 저장 완료")
-
-    st.markdown("---")
-    st.subheader("💾 DB")
-    db_full_path = os.path.abspath(DB_PATH)
-    st.caption(f"경로: {db_full_path}")
-    _t, _c, _d = get_papers_stats()
-    st.metric("수집된 논문 수", f"{_t:,}개")
-    if st.button("📂 DB 폴더 열기", width="stretch", key="open_db_folder_papers"):
-        try:
-            subprocess.run(["explorer", "/select,", db_full_path])
-        except Exception:
-            st.info(f"경로: {db_full_path}")
-
-
-# ── 메인 헤더 ─────────────────────────────────────────────────
-st.title("📚 사이트 콘텐츠 수집")
-st.caption(
-    "**[마케팅 몬스터]** 공개 웹 페이지를 sitemap·RSS로 수집합니다. "
-    "**[카페 몬스터]** 메인 화면의 카페 크롤과는 별도 제품 라인입니다. "
-    "우산 브랜드: **3Monster**."
-)
-
-with st.expander("📖 사용 가이드 (필독 · 용어·주의사항)", expanded=False):
-    st.markdown(
-        """
+    _hdr_logo, _hdr_mid = st.columns([0.55, 4.45], gap="small")
+    with _hdr_logo:
+        if _logo_path.exists():
+            st.image(str(_logo_path), width=92)
+    with _hdr_mid:
+        _title_col, _guide_col = st.columns([2.65, 1.35], gap="small")
+        with _title_col:
+            st.markdown(
+                '<h2 style="margin:0 0 0.15rem 0;padding:0;line-height:1.2;font-size:1.35rem;">'
+                "사이트 콘텐츠 수집</h2>",
+                unsafe_allow_html=True,
+            )
+        with _guide_col:
+            with st.expander("📖 사용 가이드 (필독)", expanded=False):
+                st.markdown(
+                    """
         #### 1) 이 도구가 하는 일
         - 시작 URL의 **도메인**을 기준으로, **웹 표준 방식**으로 글(페이지) 목록을 만든 뒤 **한 건씩 방문**해 DB(`papers` 테이블)에 저장합니다.
         - **① sitemap.xml** 이 있으면 → 사이트맵에 적힌 URL을 순서대로 수집합니다.
@@ -298,8 +260,79 @@ with st.expander("📖 사용 가이드 (필독 · 용어·주의사항)", expan
         - **마케팅 몬스터** — 이 화면(공개 웹 콘텐츠)
         - **카페 몬스터** — 메인(네이버 카페)
         - (예정) **앱 몬스터** · 필요 시 **세일 몬스터** 분화
-        """
-    )
+                    """
+                )
+
+
+# ── 메인 헤더 (카페 수집기와 동일 레이아웃) ───────────────────
+_render_papers_dashboard_header()
+
+st.markdown("#### ⚙️ 수집 설정")
+_pw1, _pw2, _pw3 = st.columns([1, 1, 1], gap="medium")
+with _pw1:
+    with st.container(border=True, key="papers_settings_card_1", gap=None):
+        render_settings_card_title("사이트 · 연결", icon="🌐")
+        wiki_start_url = st.text_input(
+            "시작 URL",
+            value=config.get("wiki_start_url", "https://vitamindwiki.com/pages/health-problems-and-d/"),
+            disabled=st.session_state.wiki_running,
+        )
+        with st.expander("🐞 고급 · 디버그", expanded=False):
+            st.session_state.wiki_debug_mode = st.checkbox(
+                "🐞 디버그 모드",
+                value=bool(config.get("wiki_debug_mode", False)),
+                disabled=st.session_state.wiki_running,
+            )
+
+with _pw2:
+    with st.container(border=True, key="papers_settings_card_2", gap=None):
+        render_settings_card_title("수집 옵션", icon="⚙️")
+        wiki_delay = st.number_input(
+            "요청 딜레이(초)",
+            min_value=0.0,
+            max_value=3.0,
+            value=float(config.get("wiki_delay", 0.5)),
+            step=0.1,
+            disabled=st.session_state.wiki_running,
+        )
+        wiki_max_pages = st.number_input(
+            "최대 페이지(0=무제한)",
+            min_value=0,
+            max_value=500000,
+            value=int(config.get("wiki_max_pages", 0)),
+            step=100,
+            disabled=st.session_state.wiki_running,
+        )
+        skip_existing = st.checkbox(
+            "✅ 이미 수집한 URL 재방문 스킵(추천)",
+            value=bool(config.get("wiki_skip_existing", True)),
+            disabled=st.session_state.wiki_running,
+        )
+
+with _pw3:
+    with st.container(border=True, key="papers_settings_card_3", gap=None):
+        render_settings_card_title("설정 · DB", icon="💾")
+        if st.button("💾 설정 저장", width="stretch", disabled=st.session_state.wiki_running):
+            config["wiki_debug_mode"] = bool(st.session_state.wiki_debug_mode)
+            config["wiki_start_url"] = wiki_start_url
+            config["wiki_delay"] = float(wiki_delay)
+            config["wiki_max_pages"] = int(wiki_max_pages)
+            config["wiki_skip_existing"] = bool(skip_existing)
+            save_config(config)
+            st.success("✅ 설정 저장 완료")
+
+        db_full_path = os.path.abspath(DB_PATH)
+        _t_card, _c_card, _d_card = get_papers_stats()
+        st.caption(f"경로: `{db_full_path}`")
+        st.caption(f"마지막 수집일: `{_d_card}`")
+        _pm1, _pm2 = st.columns(2)
+        _pm1.metric("논문", f"{int(_t_card):,}개")
+        _pm2.metric("카테고리", f"{int(_c_card):,}개")
+        if st.button("📂 DB 폴더 열기", width="stretch", key="open_db_folder_papers"):
+            try:
+                subprocess.run(["explorer", "/select,", db_full_path])
+            except Exception:
+                st.info(f"경로: {db_full_path}")
 
 st.markdown("---")
 
