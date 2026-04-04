@@ -110,6 +110,8 @@ class NaverCafeCrawler:
         self.last_scan_oldest_date = ""
         self.last_scanned_page = 0
         self.speed_profile = "stable"  # stable | fast
+        self.last_comment_fetch_debug: Dict[str, Any] = {}
+        self._last_known_club_id: Optional[str] = None
 
     def set_speed_profile(self, profile: str = "stable") -> None:
         try:
@@ -727,11 +729,42 @@ class NaverCafeCrawler:
                 club_id = q.get("clubid", [None])[0]
                 article_id = q.get("articleid", [None])[0]
                 if club_id and article_id:
+                    if club_id:
+                        self._last_known_club_id = str(club_id)
                     return str(club_id), str(article_id)
 
             m = re.search(r"/cafes/(\d+)/articles/(\d+)", normalized)
             if m:
+                self._last_known_club_id = m.group(1)
                 return m.group(1), m.group(2)
+
+            m2 = re.search(r"/cafes/(\d+)/articles/(\d+)", article_url or "")
+            if m2:
+                self._last_known_club_id = m2.group(1)
+                return m2.group(1), m2.group(2)
+
+            # URL에 clubid 없이 articleid만 있는 경우 → 저장된 club_id 폴백
+            article_id = None
+            m3 = re.search(r"articleid=(\d+)", article_url or "")
+            if m3:
+                article_id = m3.group(1)
+            if not article_id:
+                m4 = re.search(r"/(\d{5,})(?:\?|$)", article_url or "")
+                if m4:
+                    article_id = m4.group(1)
+            if article_id:
+                fallback_club = self._last_known_club_id
+                if not fallback_club and self.driver:
+                    try:
+                        fallback_club = self.driver.execute_script(
+                            "return (window.g_sClubId || document.querySelector('input[name=\"clubid\"]')?.value || '')"
+                        ) or None
+                        if fallback_club:
+                            self._last_known_club_id = str(fallback_club)
+                    except Exception:
+                        pass
+                if fallback_club:
+                    return str(fallback_club), str(article_id)
         except:
             pass
         return None, None
@@ -814,6 +847,223 @@ class NaverCafeCrawler:
                 self._update_status(f"[디버그] API writer 정보 추출 실패: {e}")
         return out
 
+    def _fetch_json_via_browser(self, url: str) -> Optional[dict]:
+        """브라우저 세션(쿠키/로그인) 그대로 사용해 JSON fetch."""
+        if not self.driver:
+            return None
+        try:
+            self.driver.switch_to.default_content()
+        except Exception:
+            pass
+
+        # 방법1: 브라우저 내부 fetch (로그인 세션 활용)
+        try:
+            js = """
+                var url = arguments[0];
+                var cb  = arguments[1];
+                fetch(url, {credentials: 'include'})
+                    .then(function(r){ return r.text(); })
+                    .then(function(t){
+                        try { cb(JSON.parse(t)); } catch(_) {
+                            var m = t.match(/\\(({[\\s\\S]*})\\)\\s*;?\\s*$/);
+                            if (m) { cb(JSON.parse(m[1])); }
+                            else   { cb(null); }
+                        }
+                    })
+                    .catch(function(){ cb(null); });
+            """
+            data = self.driver.execute_async_script(js, url)
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+
+        # 방법2: XMLHttpRequest 동기 (fetch 실패 시 폴백)
+        try:
+            js2 = """
+                var url = arguments[0];
+                try {
+                    var xhr = new XMLHttpRequest();
+                    xhr.open('GET', url, false);
+                    xhr.withCredentials = true;
+                    xhr.send();
+                    if (xhr.status === 200) {
+                        var t = xhr.responseText;
+                        try { return JSON.parse(t); } catch(_) {
+                            var m = t.match(/\\(({[\\s\\S]*})\\)\\s*;?\\s*$/);
+                            if (m) return JSON.parse(m[1]);
+                        }
+                    }
+                } catch(e) {}
+                return null;
+            """
+            data2 = self.driver.execute_script(js2, url)
+            if isinstance(data2, dict):
+                return data2
+        except Exception:
+            pass
+
+        # 방법3: requests 라이브러리 (쿠키 복사)
+        try:
+            s = self._build_requests_session_from_driver()
+            r = s.get(url, timeout=10)
+            if r.status_code == 200:
+                try:
+                    return r.json()
+                except Exception:
+                    m = re.search(r"\((\{[\s\S]*\})\)\s*;?\s*$", r.text or "")
+                    if m:
+                        return json.loads(m.group(1))
+        except Exception:
+            pass
+        return None
+
+    def _ensure_browser_on_cafe(self, club_id: Optional[str] = None) -> None:
+        """SPA API 호출 전 브라우저가 cafe.naver.com 도메인에 있도록 보장."""
+        try:
+            cur = str(getattr(self.driver, "current_url", "") or "").lower()
+            if "cafe.naver.com" in cur or "section.cafe.naver.com" in cur:
+                return
+            target = f"https://cafe.naver.com/ca-fe/cafes/{club_id}" if club_id else "https://cafe.naver.com"
+            self.driver.get(target)
+            time.sleep(1)
+        except Exception:
+            pass
+
+    def _get_comments_via_spa_api(self, club_id: Optional[str], article_id: Optional[str]) -> Optional[List[Dict[str, Any]]]:
+        """SPA 방식 댓글 API (cafe-articleapi/v2). 브라우저 fetch로 로그인 세션 활용."""
+        if not club_id or not article_id or not self.driver:
+            return None
+        try:
+            self._ensure_browser_on_cafe(club_id)
+
+            all_comments: List[Dict[str, Any]] = []
+            seen_ids: set = set()
+            page = 1
+            max_pages = 50
+
+            while page <= max_pages:
+                api_url = (
+                    f"https://apis.naver.com/cafe-web/cafe-articleapi/v2/"
+                    f"cafes/{club_id}/articles/{article_id}/comments"
+                    f"?page={page}&orderBy=asc"
+                )
+                try:
+                    self.driver.switch_to.default_content()
+                except Exception:
+                    pass
+
+                js = """
+                    var url = arguments[0];
+                    var cb  = arguments[1];
+                    var done = false;
+                    var timer = setTimeout(function(){ if(!done){done=true; cb(null);} }, 10000);
+                    fetch(url, {credentials: 'include'})
+                        .then(function(r){ return r.text(); })
+                        .then(function(t){
+                            clearTimeout(timer);
+                            if(done) return;
+                            done = true;
+                            try { cb(JSON.parse(t)); } catch(_) { cb(null); }
+                        })
+                        .catch(function(e){
+                            clearTimeout(timer);
+                            if(done) return;
+                            done = true;
+                            cb({_fetchError: e.toString()});
+                        });
+                """
+                data = None
+                try:
+                    data = self.driver.execute_async_script(js, api_url)
+                except Exception as _exc:
+                    self._update_status(f"[댓글수집] SPA fetch 예외: {_exc}")
+                    pass
+                if isinstance(data, dict) and "_fetchError" in data:
+                    self._update_status(f"[댓글수집] SPA fetch CORS/네트워크 에러: {data.get('_fetchError')}")
+                    if page == 1:
+                        return None
+                    break
+                if not isinstance(data, dict):
+                    self._update_status(f"[댓글수집] SPA API 응답 없음 (page={page}, data_type={type(data).__name__})")
+                    if page == 1:
+                        return None
+                    break
+
+                result = data.get("result")
+                if not isinstance(result, dict):
+                    if page == 1:
+                        return None
+                    break
+
+                comments_block = result.get("comments")
+                if not isinstance(comments_block, dict):
+                    break
+                items = comments_block.get("items")
+                if not isinstance(items, list) or len(items) == 0:
+                    break
+
+                new_count = 0
+                for itm in items:
+                    if not isinstance(itm, dict):
+                        continue
+                    cid = str(itm.get("id") or "")
+                    if cid and cid in seen_ids:
+                        continue
+                    if cid:
+                        seen_ids.add(cid)
+
+                    writer = itm.get("writer") or {}
+                    nick = str(writer.get("nick") or "unknown")
+                    writer_id = str(writer.get("memberKey") or writer.get("id") or "unknown")
+                    content = str(itm.get("content") or "")
+                    update_epoch = itm.get("updateDate") or itm.get("writeDate") or 0
+                    date_str = ""
+                    if isinstance(update_epoch, (int, float)) and update_epoch > 1_000_000_000:
+                        from datetime import datetime as _dt
+                        try:
+                            if update_epoch > 1_000_000_000_000:
+                                update_epoch = update_epoch / 1000
+                            date_str = _dt.fromtimestamp(update_epoch).strftime("%Y.%m.%d %H:%M")
+                        except Exception:
+                            pass
+
+                    member_level = itm.get("memberLevel")
+                    level_code = ""
+                    if isinstance(member_level, int):
+                        level_map = {0: "sprout", 999: "m", 998: "sub_manager", 997: "s", 996: "v"}
+                        level_code = level_map.get(member_level, str(member_level)) if member_level >= 996 or member_level == 0 else str(member_level)
+
+                    img_count = 0
+                    if content:
+                        img_count += len(re.findall(r"<img\b", content, flags=re.I))
+
+                    all_comments.append({
+                        "writer_id": writer_id,
+                        "nickname": nick,
+                        "content": content,
+                        "date": date_str,
+                        "comment_id": cid,
+                        "level_code": level_code,
+                        "level": "",
+                        "inline_image_count": img_count,
+                    })
+                    new_count += 1
+
+                if new_count == 0:
+                    break
+
+                has_next = comments_block.get("hasNext", False)
+                if not has_next:
+                    break
+                page += 1
+
+            return all_comments if all_comments else None
+        except Exception as e:
+            if self.debug_mode:
+                self._update_status(f"[디버그] SPA 댓글 API 실패: {e}")
+            return None
+
     def _get_comments_via_commentview(self, club_id: Optional[str], article_id: Optional[str]) -> Optional[List[Dict[str, Any]]]:
         """
         댓글 JSON 우회 추출.
@@ -823,38 +1073,7 @@ class NaverCafeCrawler:
         if not club_id or not article_id:
             return None
         try:
-            s = self._build_requests_session_from_driver()
-            url = f"https://cafe.naver.com/CommentView.nhn?search.clubid={club_id}&search.articleid={article_id}"
-            headers = {
-                "Referer": f"https://cafe.naver.com/ArticleRead.nhn?clubid={club_id}&articleid={article_id}",
-            }
-            r = s.get(url, headers=headers, timeout=10)
-            if r.status_code != 200:
-                return None
-
-            # JSON / JSONP 모두 방어
-            data = None
-            try:
-                data = r.json()
-            except:
-                txt = (r.text or "").strip()
-                # 예: callback({...})
-                m = re.search(r"\((\{.*\})\)\s*;?\s*$", txt, re.S)
-                if m:
-                    data = json.loads(m.group(1))
-                else:
-                    # 그냥 JSON 본문일 수 있음
-                    data = json.loads(txt)
-
-            result = data.get("result") if isinstance(data, dict) else None
-            items = None
-            if isinstance(result, dict):
-                items = result.get("list") or result.get("commentList") or result.get("comments")
-            if not isinstance(items, list):
-                return None
-
-            out: List[Dict[str, Any]] = []
-
+            base_url = "https://cafe.naver.com/CommentView.nhn"
             def _safe_int(v: Any) -> int:
                 try:
                     if v is None:
@@ -864,6 +1083,115 @@ class NaverCafeCrawler:
                     return int(v)
                 except Exception:
                     return 0
+
+            def _fetch_items(extra_params: Optional[Dict[str, Any]] = None) -> tuple[Optional[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
+                params: Dict[str, Any] = {
+                    "search.clubid": str(club_id),
+                    "search.articleid": str(article_id),
+                }
+                if extra_params:
+                    params.update(extra_params)
+                qs = "&".join(f"{k}={v}" for k, v in params.items())
+                fetch_url = f"{base_url}?{qs}"
+                data = self._fetch_json_via_browser(fetch_url)
+                if not isinstance(data, dict):
+                    return None, None
+
+                result = data.get("result") if isinstance(data, dict) else None
+                if not isinstance(result, dict):
+                    return None, None
+                items = result.get("list") or result.get("commentList") or result.get("comments")
+                if not isinstance(items, list):
+                    return result, None
+                return result, items
+
+            result, items = _fetch_items()
+            if self.debug_mode or not isinstance(items, list):
+                self._update_status(
+                    f"[디버그] CommentView 1차 결과: club={club_id} art={article_id} "
+                    f"result_type={type(result).__name__} items={'list('+str(len(items))+')' if isinstance(items, list) else str(type(items).__name__)}"
+                )
+            if not isinstance(items, list):
+                return None
+
+            all_items: List[Dict[str, Any]] = list(items)
+            seen_item_keys: set[str] = set()
+
+            def _item_key(itm: Dict[str, Any]) -> str:
+                cid = str(
+                    itm.get("commentId")
+                    or itm.get("comment_id")
+                    or itm.get("commentid")
+                    or itm.get("id")
+                    or itm.get("commentNo")
+                    or itm.get("commentNoEnc")
+                    or ""
+                ).strip()
+                if cid:
+                    return f"cid::{cid}"
+                return "sig::{}|{}|{}|{}".format(
+                    str(itm.get("writerId") or itm.get("writer_id") or itm.get("writerid") or "").strip().lower(),
+                    str(itm.get("nickName") or itm.get("nickname") or itm.get("writerNick") or "").strip().lower(),
+                    str(itm.get("regDate") or itm.get("commentDate") or itm.get("date") or "").strip(),
+                    re.sub(r"\s+", " ", str(itm.get("content") or itm.get("commentContent") or itm.get("comment") or "").strip()),
+                )
+
+            dedup_items: List[Dict[str, Any]] = []
+            for it in all_items:
+                if not isinstance(it, dict):
+                    continue
+                k = _item_key(it)
+                if k in seen_item_keys:
+                    continue
+                seen_item_keys.add(k)
+                dedup_items.append(it)
+            all_items = dedup_items
+
+            total_hint = 0
+            if isinstance(result, dict):
+                for tk in ("totalCount", "commentCount", "totalCommentCount", "count", "listCount"):
+                    if tk in result:
+                        total_hint = max(total_hint, _safe_int(result.get(tk)))
+
+            # 일부 카페는 페이지 파라미터가 있어 첫 페이지만 내려온다.
+            if total_hint <= 0:
+                total_hint = len(all_items)
+            if len(all_items) < total_hint:
+                page_param_style: Optional[str] = None
+                for cand in ("search.page", "page", "search.commentPage", "pageNo"):
+                    _r2, _it2 = _fetch_items({cand: 2})
+                    if isinstance(_it2, list) and len(_it2) > 0:
+                        probe_new = 0
+                        for _x in _it2:
+                            if not isinstance(_x, dict):
+                                continue
+                            if _item_key(_x) not in seen_item_keys:
+                                probe_new += 1
+                        if probe_new > 0:
+                            page_param_style = cand
+                            break
+
+                if page_param_style:
+                    for p in range(2, 51):
+                        _rp, _itp = _fetch_items({page_param_style: p})
+                        if not isinstance(_itp, list) or len(_itp) == 0:
+                            break
+                        new_count = 0
+                        for _x in _itp:
+                            if not isinstance(_x, dict):
+                                continue
+                            kx = _item_key(_x)
+                            if kx in seen_item_keys:
+                                continue
+                            seen_item_keys.add(kx)
+                            all_items.append(_x)
+                            new_count += 1
+                        if new_count == 0:
+                            break
+                        if len(all_items) >= total_hint:
+                            break
+
+            out: List[Dict[str, Any]] = []
 
             def _count_inline_images(itm: Dict[str, Any]) -> int:
                 # API 구조가 자주 바뀌므로, 대표 키 후보를 넓게 방어
@@ -894,6 +1222,98 @@ class NaverCafeCrawler:
                 if raw_content:
                     total += len(re.findall(r"<img\b", raw_content, flags=re.I))
                 return max(0, int(total))
+
+            def _extract_comment_ymd(itm: Dict[str, Any]) -> str:
+                # 1) 대표 날짜 키 우선
+                direct_keys = [
+                    "regDate", "registerDate", "registeredDate",
+                    "writeDate", "writtenDate",
+                    "createDate", "createdDate",
+                    "commentDate", "commentRegDate",
+                    "regTime", "registerTime", "writeTime", "writtenTime",
+                    "createdAt", "updatedAt", "dateTime", "datetime",
+                    "regDttm", "createDttm", "modDttm",
+                    "date", "time", "timestamp",
+                ]
+                for k in direct_keys:
+                    if k in itm:
+                        ymd = self._to_ymd(itm.get(k))
+                        if ymd:
+                            return ymd
+
+                # 2) 중첩 문자열 후보
+                deep_s = self._deep_find_first_string(
+                    itm,
+                    [
+                        "regdate", "registerdate", "writedate", "createdate", "commentdate",
+                        "regtime", "registertime", "writetime", "createdat", "updatedat",
+                        "datetime", "dttm", "timestamp", "date", "time",
+                    ],
+                )
+                if deep_s:
+                    ymd = self._to_ymd(deep_s)
+                    if ymd:
+                        return ymd
+
+                # 3) 중첩 숫자 후보(epoch)
+                deep_i = self._deep_find_first_int(
+                    itm,
+                    [
+                        "regdate", "registerdate", "writedate", "createdate", "commentdate",
+                        "regtime", "registertime", "writetime", "createdat", "updatedat",
+                        "datetime", "dttm", "timestamp", "epoch", "unix", "time",
+                    ],
+                )
+                if deep_i:
+                    ymd = self._to_ymd(deep_i)
+                    if ymd:
+                        return ymd
+
+                # 4) 전체 숫자 후보에서 date/time 계열 key만 엄격 선별
+                ints = self._deep_collect_ints(itm, max_depth=7)
+                if ints:
+                    dateish = [
+                        v for (k, v) in ints
+                        if (
+                            "date" in k
+                            or "time" in k
+                            or "stamp" in k
+                            or "epoch" in k
+                            or "unix" in k
+                            or "create" in k
+                            or "update" in k
+                            or "write" in k
+                            or "reg" in k
+                        )
+                    ]
+                    # 최신값이 들어오는 경우가 많아 큰 값부터 시도
+                    for v in sorted(set(dateish), reverse=True):
+                        ymd = self._to_ymd(v)
+                        if ymd:
+                            return ymd
+                return ""
+
+            def _extract_level_icon_hint(itm: Dict[str, Any]) -> str:
+                hints: List[str] = []
+                try:
+                    # 중첩 dict/list에서 등급/아이콘 계열 문자열 힌트 수집
+                    key_hints = [
+                        "levelicon", "gradeicon", "levelimg", "gradeimg",
+                        "icon", "badge", "emoticon", "sticker",
+                        "level", "grade", "class", "src", "alt", "title",
+                    ]
+                    for hk in key_hints:
+                        v = self._deep_find_first_string(itm, [hk], max_depth=6)
+                        if v:
+                            hints.append(v)
+                    # 숫자 코드(1/2/3/4)가 int로만 내려오는 경우 보강
+                    for hk in ["level", "grade", "levelno", "gradeno", "levelcode", "gradecode", "icon"]:
+                        iv = self._deep_find_first_int(itm, [hk], max_depth=6)
+                        if iv is not None:
+                            hints.append(str(iv))
+                except Exception:
+                    pass
+                return " | ".join([h for h in hints if str(h).strip()])
 
             def _extract_writer_nick(itm: Dict[str, Any]) -> str:
                 # 1) 최우선: 작성자 전용 키
@@ -974,7 +1394,7 @@ class NaverCafeCrawler:
                                 return vv.strip()
                 return "unknown"
 
-            for it in items:
+            for it in all_items:
                 if not isinstance(it, dict):
                     continue
                 writer_id = _extract_writer_id(it)
@@ -991,33 +1411,8 @@ class NaverCafeCrawler:
                     content = re.sub(r"<[^>]+>", " ", content)
                     content = re.sub(r"\s+", " ", content).strip()
 
-                # 댓글 작성일(일자만) 추출: 필드명이 자주 바뀌므로 후보군 방어
-                raw_date = (
-                    it.get("regDate")
-                    or it.get("registerDate")
-                    or it.get("registeredDate")
-                    or it.get("writeDate")
-                    or it.get("writtenDate")
-                    or it.get("createDate")
-                    or it.get("createdDate")
-                    or it.get("commentDate")
-                    or it.get("commentRegDate")
-                    or it.get("date")
-                    or it.get("time")
-                    or it.get("timestamp")
-                )
-                if not raw_date:
-                    # API 키 변형 대응: 중첩 객체에서도 날짜/시간 후보를 탐색
-                    raw_date = self._deep_find_first_string(
-                        it,
-                        ["regdate", "registerdate", "writedate", "createdate", "commentdate", "date", "time", "timestamp"],
-                    )
-                if not raw_date:
-                    raw_date = self._deep_find_first_int(
-                        it,
-                        ["regdate", "registerdate", "writedate", "createdate", "commentdate", "date", "time", "timestamp"],
-                    )
-                comment_ymd = self._to_ymd(raw_date)
+                # 댓글 작성일(일자만) 추출: 키 변형/중첩/epoch까지 방어
+                comment_ymd = _extract_comment_ymd(it)
 
                 # 댓글 ID / 등급(멤버등급) 후보군 방어
                 comment_id = (
@@ -1032,14 +1427,31 @@ class NaverCafeCrawler:
                 raw_level = (
                     it.get("memberLevelName")
                     or it.get("memberLevel")
+                    or it.get("memberLevelNo")
+                    or it.get("memberLevelCode")
                     or it.get("levelName")
                     or it.get("level")
+                    or it.get("levelNo")
+                    or it.get("levelCode")
                     or it.get("gradeName")
                     or it.get("grade")
+                    or it.get("gradeNo")
+                    or it.get("gradeCode")
                     or it.get("writerLevelName")
                     or it.get("writerGradeName")
                     or it.get("writerLevel")
                     or it.get("writerGrade")
+                    or it.get("writerLevelNo")
+                    or it.get("writerGradeNo")
+                    or it.get("levelIcon")
+                    or it.get("gradeIcon")
+                    or ""
+                )
+                if raw_level == "":
+                    # 첫 체인에서 놓친 경우: 중첩 숫자/문자 후보를 한 번 더
+                    raw_level = (
+                        self._deep_find_first_string(it, ["level", "grade", "icon"])
+                        or self._deep_find_first_int(it, ["level", "grade", "icon"])
                     or ""
                 )
                 level_name = self._clean_text(raw_level) if isinstance(raw_level, str) else str(raw_level or "").strip()
@@ -1047,6 +1459,8 @@ class NaverCafeCrawler:
                     found_level = self._deep_find_first_string(it, ["level", "grade"])
                     if found_level:
                         level_name = self._clean_text(found_level)
+                level_hint = _extract_level_icon_hint(it)
+                level_code, level_name = self._map_comment_level(level_name, raw_level, level_hint)
                 inline_image_count = _count_inline_images(it)
 
                 out.append(
@@ -1056,6 +1470,7 @@ class NaverCafeCrawler:
                         "content": str(content) if content is not None else "",
                         "date": comment_ymd,
                         "comment_id": str(comment_id) if comment_id is not None else "",
+                        "level_code": str(level_code or ""),
                         "level": level_name,
                         "inline_image_count": inline_image_count,
                     }
@@ -1070,42 +1485,106 @@ class NaverCafeCrawler:
     def get_all_comments_for_article(self, article_url: str) -> List[Dict[str, Any]]:
         """
         이벤트/분석용: 특정 게시글의 '모든 댓글'을 API 기반으로 수집.
-        - 반환: [{"writer_id","nickname","content","date"}...]
+        SPA API 우선, CommentView.nhn 폴백, DOM 폴백 순서로 시도 후 병합.
         """
         try:
             normalized = self._normalize_article_url(article_url or "")
             club_id, article_id = self._parse_club_article_ids(normalized)
-            api_comments = self._get_comments_via_commentview(club_id, article_id)
-            if api_comments:
-                return api_comments
+            self.last_comment_fetch_debug = {
+                "article_url": normalized,
+                "club_id": str(club_id or ""),
+                "article_id": str(article_id or ""),
+                "api_count": 0,
+                "dom_count": 0,
+                "merged_count": 0,
+                "source": "none",
+            }
+            self._update_status(f"[댓글수집] article_id={article_id} club_id={club_id} url={normalized[:80]}")
 
-            # API 빈응답 시 상세페이지 폴백(느리지만 누락 방지 우선)
+            # 1) SPA API 우선 시도
+            spa_comments = self._get_comments_via_spa_api(club_id, article_id)
+            if spa_comments is not None:
+                self._update_status(f"[댓글수집] SPA API 결과: {len(spa_comments)}개")
+                self.last_comment_fetch_debug["api_count"] = len(spa_comments)
+                self.last_comment_fetch_debug["source"] = "spa_api"
+                self.last_comment_fetch_debug["merged_count"] = len(spa_comments)
+                return spa_comments
+            self._update_status("[댓글수집] SPA API 실패 → CommentView 폴백 시도")
+
+            # 2) CommentView.nhn 폴백
+            api_comments = self._get_comments_via_commentview(club_id, article_id) or []
+            self._update_status(f"[댓글수집] CommentView 결과: {len(api_comments)}개")
+            self.last_comment_fetch_debug["api_count"] = len(api_comments)
+
+            # 3) DOM 폴백 + 병합
             detail = self.scrape_article_detail(
                 normalized,
                 post_author_id="unknown",
                 admin_nicks=[],
                 comment_mode="all",
+                force_dom_comment_parse=True,
             )
             fallback_comments = detail.get("comments") if isinstance(detail, dict) else []
             if isinstance(fallback_comments, list):
-                out: List[Dict[str, Any]] = []
+                dom_comments: List[Dict[str, Any]] = []
                 for c in fallback_comments:
                     if not isinstance(c, dict):
                         continue
-                    out.append(
-                        {
-                            "writer_id": str(c.get("writer_id") or "unknown"),
-                            "nickname": str(c.get("nickname") or "unknown"),
-                            "content": str(c.get("content") or ""),
-                            "date": str(c.get("date") or ""),
-                            "comment_id": str(c.get("comment_id") or ""),
-                            "level": str(c.get("level") or ""),
-                            "inline_image_count": int(c.get("inline_image_count") or 0),
-                        }
+                    dom_comments.append({
+                        "writer_id": str(c.get("writer_id") or "unknown"),
+                        "nickname": str(c.get("nickname") or "unknown"),
+                        "content": str(c.get("content") or ""),
+                        "date": str(c.get("date") or ""),
+                        "comment_id": str(c.get("comment_id") or ""),
+                        "level_code": str(c.get("level_code") or ""),
+                        "level": str(c.get("level") or ""),
+                        "inline_image_count": int(c.get("inline_image_count") or 0),
+                    })
+                self.last_comment_fetch_debug["dom_count"] = len(dom_comments)
+
+                merged: List[Dict[str, Any]] = []
+                seen: set[str] = set()
+
+                def _mk_key(x: Dict[str, Any]) -> str:
+                    cid = str(x.get("comment_id") or "").strip()
+                    if cid:
+                        return f"cid::{cid}"
+                    return "sig::{}|{}|{}|{}".format(
+                        str(x.get("writer_id") or "").strip().lower(),
+                        str(x.get("nickname") or "").strip().lower(),
+                        str(x.get("date") or "").strip(),
+                        re.sub(r"\s+", " ", str(x.get("content") or "").strip()),
                     )
-                return out
-            return []
-        except:
+
+                for src in (api_comments, dom_comments):
+                    for row in src:
+                        k = _mk_key(row)
+                        if k in seen:
+                            continue
+                        seen.add(k)
+                        merged.append(row)
+
+                if merged:
+                    self.last_comment_fetch_debug["merged_count"] = len(merged)
+                    self.last_comment_fetch_debug["source"] = "merged"
+                    if self.debug_mode:
+                        self._update_status(
+                            f"[디버그] 댓글 병합: API {len(api_comments)} + DOM {len(dom_comments)} -> {len(merged)}"
+                        )
+                    return merged
+
+            self.last_comment_fetch_debug["merged_count"] = len(api_comments)
+            self.last_comment_fetch_debug["source"] = "api_only"
+            return api_comments
+        except Exception as e:
+            self.last_comment_fetch_debug = {
+                "article_url": str(article_url or ""),
+                "api_count": 0,
+                "dom_count": 0,
+                "merged_count": 0,
+                "source": "error",
+                "error": str(e),
+            }
             return []
 
     def _get_member_id_via_js_state(self) -> str:
@@ -1161,6 +1640,118 @@ class NaverCafeCrawler:
         """전략: SPA 전역 상태에서 등급명(member level) 추출"""
         if not self.driver:
             return ""
+
+    def _get_comments_via_js_state(self) -> List[Dict[str, Any]]:
+        """
+        SPA 전역 상태(__INITIAL_STATE__/__NEXT_DATA__/__APOLLO_STATE__)에서
+        댓글 후보를 추출한다. (DOM 셀렉터 실패 시 폴백)
+        """
+        if not self.driver:
+            return []
+        try:
+            js = r"""
+                try {
+                    const roots = [];
+                    if (window.__INITIAL_STATE__) roots.push(window.__INITIAL_STATE__);
+                    if (window.__NEXT_DATA__) roots.push(window.__NEXT_DATA__);
+                    if (window.__APOLLO_STATE__) roots.push(window.__APOLLO_STATE__);
+                    if (!roots.length) return [];
+
+                    const seenObj = new WeakSet();
+                    const out = [];
+                    const seenSig = new Set();
+
+                    function asText(v) {
+                        if (v === null || v === undefined) return "";
+                        return String(v).trim();
+                    }
+                    function pick(obj, keys) {
+                        for (const k of keys) {
+                            if (obj && Object.prototype.hasOwnProperty.call(obj, k)) {
+                                const v = obj[k];
+                                if (v !== null && v !== undefined && String(v).trim() !== "") return v;
+                            }
+                        }
+                        return "";
+                    }
+                    function pushCandidate(obj) {
+                        if (!obj || typeof obj !== "object") return;
+                        const content = asText(
+                            pick(obj, ["content","commentContent","comment","text","body","message"])
+                        );
+                        if (!content) return;
+                        const nickname = asText(
+                            pick(obj, ["writerNick","writerName","nickName","nickname","name"])
+                        ) || asText(pick(obj.writer || {}, ["nickName","nickname","name","writerNick","writerName"]));
+                        const writerId = asText(
+                            pick(obj, ["writerId","writer_id","writerid","memberId","member_id","userId","userid","memberKey","userKey"])
+                        ) || asText(pick(obj.writer || {}, ["id","writerId","memberId","memberKey","userId","userKey"]));
+                        const date = asText(
+                            pick(obj, ["regDate","commentDate","writeDate","createDate","createdAt","date","time","timestamp"])
+                        );
+                        const commentId = asText(
+                            pick(obj, ["commentId","comment_id","commentid","id","commentNo","commentNoEnc"])
+                        );
+                        const sig = [writerId.toLowerCase(), nickname.toLowerCase(), date, content.replace(/\s+/g, " ").trim()].join("|");
+                        if (seenSig.has(sig)) return;
+                        seenSig.add(sig);
+                        out.push({
+                            writer_id: writerId || "unknown",
+                            nickname: nickname || "unknown",
+                            content: content,
+                            date: date || "",
+                            comment_id: commentId || "",
+                            level_code: "",
+                            level: "",
+                            inline_image_count: 0,
+                        });
+                    }
+                    function walk(node, depth) {
+                        if (!node || depth > 9) return;
+                        if (typeof node !== "object") return;
+                        if (seenObj.has(node)) return;
+                        seenObj.add(node);
+
+                        if (Array.isArray(node)) {
+                            for (const v of node) walk(v, depth + 1);
+                            return;
+                        }
+                        pushCandidate(node);
+                        for (const k of Object.keys(node)) {
+                            const v = node[k];
+                            if (v && typeof v === "object") walk(v, depth + 1);
+                        }
+                    }
+
+                    for (const r of roots) walk(r, 0);
+                    return out.slice(0, 500);
+                } catch (e) {
+                    return [];
+                }
+            """
+            rows = self.driver.execute_script(js)
+            if not isinstance(rows, list):
+                return []
+            out: List[Dict[str, Any]] = []
+            for r in rows:
+                if not isinstance(r, dict):
+                    continue
+                out.append(
+                    {
+                        "writer_id": str(r.get("writer_id") or "unknown"),
+                        "nickname": str(r.get("nickname") or "unknown"),
+                        "content": str(r.get("content") or ""),
+                        "date": str(r.get("date") or ""),
+                        "comment_id": str(r.get("comment_id") or ""),
+                        "level_code": str(r.get("level_code") or ""),
+                        "level": str(r.get("level") or ""),
+                        "inline_image_count": int(r.get("inline_image_count") or 0),
+                        "is_target": 1,
+                    }
+                )
+            return out
+        except Exception:
+            return []
         try:
             js = r"""
                 try {
@@ -1502,6 +2093,24 @@ class NaverCafeCrawler:
             if not s:
                 return ""
 
+            # epoch가 문자열로 들어오는 케이스 대응
+            # 예: "1719991234", "1719991234000", "/Date(1719991234000)/"
+            m_epoch = re.search(r"(?<!\d)(\d{10,16})(?!\d)", s)
+            if m_epoch:
+                try:
+                    ev = int(m_epoch.group(1))
+                    if ev > 1_000_000_000_000_000:  # ns
+                        dt = datetime.fromtimestamp(ev / 1_000_000_000.0)
+                    elif ev > 10_000_000_000_000:  # us
+                        dt = datetime.fromtimestamp(ev / 1_000_000.0)
+                    elif ev > 10_000_000_000:  # ms
+                        dt = datetime.fromtimestamp(ev / 1000.0)
+                    else:  # sec
+                        dt = datetime.fromtimestamp(ev)
+                    return dt.strftime("%Y-%m-%d")
+                except Exception:
+                    pass
+
             # YYYYMMDD 형태도 방어
             m0 = re.search(r"\b(\d{4})(\d{2})(\d{2})\b", s)
             if m0:
@@ -1511,6 +2120,12 @@ class NaverCafeCrawler:
             m = re.search(r"(\d{4})[./-](\d{1,2})[./-](\d{1,2})", s)
             if m:
                 y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+                return datetime(y, mo, d).strftime("%Y-%m-%d")
+
+            # 한글 날짜 표기: 2026년 3월 1일
+            m_kr = re.search(r"(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일", s)
+            if m_kr:
+                y, mo, d = int(m_kr.group(1)), int(m_kr.group(2)), int(m_kr.group(3))
                 return datetime(y, mo, d).strftime("%Y-%m-%d")
 
             # MM.DD / MM-DD / MM/DD 형태(연도 없음)는 올해로 보정
@@ -1529,6 +2144,16 @@ class NaverCafeCrawler:
                 return datetime.now().strftime("%Y-%m-%d")
             if "어제" in s:
                 return (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+            if "방금" in s:
+                return datetime.now().strftime("%Y-%m-%d")
+            m_h = re.search(r"(\d+)\s*시간\s*전", s)
+            if m_h:
+                hours = int(m_h.group(1))
+                return (datetime.now() - timedelta(hours=hours)).strftime("%Y-%m-%d")
+            m_m = re.search(r"(\d+)\s*분\s*전", s)
+            if m_m:
+                mins = int(m_m.group(1))
+                return (datetime.now() - timedelta(minutes=mins)).strftime("%Y-%m-%d")
             m3 = re.search(r"(\d+)\s*일\s*전", s)
             if m3:
                 days = int(m3.group(1))
@@ -1536,6 +2161,56 @@ class NaverCafeCrawler:
         except:
             return ""
         return ""
+
+    def _map_comment_level(self, *raw_tokens: Any) -> tuple[str, str]:
+        """
+        원본 level/아이콘 토큰 문자열에서 카페 공통 등급코드/기본등급명을 하드코딩 매핑한다.
+        공통 기준:
+        - sprout/새싹 -> 새싹멤버
+        - 1 -> 일반멤버
+        - 2 -> 준초급
+        - 3 -> 초급자
+        - 4 -> 중급자
+        - v -> 상급자
+        - s -> 스탭
+        - m -> 매니저
+        """
+        parts: List[str] = []
+        for t in raw_tokens:
+            s = str(t or "").strip()
+            if s:
+                parts.append(s)
+        if not parts:
+            return ("unknown", "미분류")
+        merged_l = " | ".join(parts).lower()
+        # 알파/숫자 토큰 단위로도 함께 판단해서 단일 문자(s/m/v) 오탐을 줄인다.
+        token_set = set(re.findall(r"[a-z0-9]+", merged_l))
+
+        if ("새싹" in merged_l) or ("sprout" in token_set):
+            return ("sprout", "새싹멤버")
+        if ("스탭" in merged_l) or ("staff" in token_set) or ("icon_s" in merged_l) or ("level_s" in merged_l) or ("grade_s" in merged_l) or (" s " in f" {merged_l} ") or ("s" in token_set):
+            return ("s", "스탭")
+        if ("부매니저" in merged_l) or ("submanager" in token_set):
+            return ("sub_manager", "부 매니저")
+        if ("매니저" in merged_l) or ("manager" in token_set) or ("icon_m" in merged_l) or ("level_m" in merged_l) or ("grade_m" in merged_l) or (" m " in f" {merged_l} ") or ("m" in token_set):
+            return ("m", "매니저")
+        if ("상급자" in merged_l) or ("icon_v" in merged_l) or ("level_v" in merged_l) or ("grade_v" in merged_l) or (" v " in f" {merged_l} ") or ("v" in token_set):
+            return ("v", "상급자")
+        if ("중급자" in merged_l) or ("level4" in merged_l) or ("grade4" in merged_l) or ("4" in token_set):
+            return ("4", "중급자")
+        if ("초급자" in merged_l) or ("level3" in merged_l) or ("grade3" in merged_l) or ("3" in token_set):
+            return ("3", "초급자")
+        if ("준초급" in merged_l) or ("level2" in merged_l) or ("grade2" in merged_l) or ("2" in token_set):
+            return ("2", "준초급")
+        if ("일반멤버" in merged_l) or ("level1" in merged_l) or ("grade1" in merged_l) or ("1" in token_set):
+            return ("1", "일반멤버")
+        if "열심멤버" in merged_l:
+            return ("active", "열심멤버")
+        if "정회원" in merged_l:
+            return ("regular", "정회원")
+        # 어떤 이유로도 공백 저장은 피한다.
+        fallback_name = str(parts[0]).strip() or "미분류"
+        return ("unknown", fallback_name)
 
     def set_stop_check_callback(self, callback):
         self.stop_check_callback = callback
@@ -1757,8 +2432,10 @@ class NaverCafeCrawler:
             self._update_status("❌ 게시판 URL이 비어 있습니다.")
             return [], True
 
-        # (수정) URL을 레거시 포맷으로 변환하여 50개씩 보기가 확실히 적용되도록 함
         board_url = self._convert_to_legacy_board_url(board_url)
+        _m_club = re.search(r"clubid=(\d+)", board_url) or re.search(r"/cafes/(\d+)", board_url)
+        if _m_club:
+            self._last_known_club_id = _m_club.group(1)
 
         exclude_norm = set()
         if exclude_boards:
@@ -2067,7 +2744,7 @@ class NaverCafeCrawler:
                             try:
                                 # href에서 articleid 추출
                                 link_el_temp = None
-                                for ls in ["a[class*='ArticleLink']", "a.article", "a[href*='articleid']"]:
+                                for ls in ["a[class*='ArticleLink']", "a.article", "a[href*='articleid']", "a[href*='/articles/']"]:
                                     try:
                                         link_el_temp = row.find_element(By.CSS_SELECTOR, ls)
                                         if link_el_temp: break
@@ -2112,7 +2789,7 @@ class NaverCafeCrawler:
                         
                         # 링크/제목
                         link_el = None
-                        for ls in ["a[class*='ArticleLink']", "a.article", "a[href*='articleid']"]:
+                        for ls in ["a[class*='ArticleLink']", "a.article", "a[href*='articleid']", "a[href*='/articles/']"]:
                             try:
                                 link_el = row.find_element(By.CSS_SELECTOR, ls)
                                 if link_el: break
@@ -2121,6 +2798,39 @@ class NaverCafeCrawler:
                         if not link_el: continue
                         href = link_el.get_attribute("href")
                         title = link_el.text.strip()
+                        list_comment_count = 0
+                        try:
+                            m_cnt = re.search(r"\[(\d+)\]\s*$", title)
+                            if m_cnt:
+                                list_comment_count = int(m_cnt.group(1))
+                                title = re.sub(r"\s*\[\d+\]\s*$", "", title).strip()
+                        except Exception:
+                            list_comment_count = 0
+                        if list_comment_count <= 0:
+                            # 제목 옆 배지/별도 컬럼에 댓글수가 분리된 레이아웃 대응
+                            for cs in [
+                                "em[class*='comment']",
+                                "span[class*='comment']",
+                                "a[class*='num']",
+                                "td.td_comment",
+                                "td[class*='comment']",
+                            ]:
+                                try:
+                                    c_el = row.find_element(By.CSS_SELECTOR, cs)
+                                    c_txt = (c_el.text or "").strip()
+                                    m_cnt2 = re.search(r"(\d+)", c_txt)
+                                    if m_cnt2:
+                                        list_comment_count = int(m_cnt2.group(1))
+                                        break
+                                except Exception:
+                                    continue
+                        if list_comment_count <= 0:
+                            try:
+                                m_cnt3 = re.search(r"\[(\d+)\]", (row.text or ""))
+                                if m_cnt3:
+                                    list_comment_count = int(m_cnt3.group(1))
+                            except Exception:
+                                pass
                         
                         match = re.search(r'articleid=(\d+)', href) or re.search(r'/articles/(\d+)', href)
                         if not match: continue
@@ -2181,6 +2891,7 @@ class NaverCafeCrawler:
                             "date": date_val.strftime("%Y-%m-%d"),
                             "nickname": nickname,
                             "board_name": board_name,
+                            "list_comment_count": int(list_comment_count),
                         })
                         page_found_count += 1
                         
@@ -2274,6 +2985,10 @@ class NaverCafeCrawler:
         match = re.search(r'/cafes/(\d+)/articles/(\d+)', article_url)
         if match:
             return f"https://cafe.naver.com/ArticleRead.nhn?clubid={match.group(1)}&articleid={match.group(2)}"
+        # /f-e/cafes/... 형태 대응 (SPA 프론트엔드 경로)
+        match_fe = re.search(r'/f-e/cafes/(\d+)/articles/(\d+)', article_url)
+        if match_fe:
+            return f"https://cafe.naver.com/ArticleRead.nhn?clubid={match_fe.group(1)}&articleid={match_fe.group(2)}"
         return article_url
     
     def scrape_article_detail(
@@ -2282,6 +2997,7 @@ class NaverCafeCrawler:
         post_author_id: str,
         admin_nicks: Optional[List[str]] = None,
         comment_mode: str = "author_admin",
+        force_dom_comment_parse: bool = False,
     ) -> Dict[str, Any]:
         """본문 텍스트 추출 및 관계 중심 댓글 필터링"""
         try:
@@ -2501,85 +3217,186 @@ class NaverCafeCrawler:
                     "post_image_count": int(post_image_count),
                 }
             try:
-                # 1) 댓글 JSON 우회(가장 안정) 시도
-                api_comments = self._get_comments_via_commentview(club_id, article_id)
-                if api_comments:
-                    for c in api_comments:
-                        writer_id = c.get("writer_id", "unknown")
-                        nick = c.get("nickname", "unknown")
-                        is_author = writer_id == post_author_id and post_author_id != "unknown"
-                        is_admin = any(admin_nick.strip() in (nick or "") for admin_nick in admin_nicks)
-                        should_include = (comment_mode == "all") or is_author or is_admin
-                        if should_include:
-                            filtered_comments.append(
-                                {
-                                    "writer_id": writer_id,
-                                    "nickname": nick,
-                                    "content": c.get("content", ""),
-                                    "date": c.get("date", ""),
-                                    "comment_id": c.get("comment_id", ""),
-                                    "level": c.get("level", ""),
-                                    "inline_image_count": int(c.get("inline_image_count") or 0),
-                                    "is_target": 1,
-                                }
-                            )
-                    return {
-                        "content": content,
-                        "comments": filtered_comments,
-                        "member_id": post_author_id,
-                        "nickname": api_author_nick,
-                        "member_level": api_member_level,
-                        "board_name": board_name,
-                        "category": category,
-                        "view_count": int(meta_info.get("view_count", 0) or 0),
-                        "like_count": int(meta_info.get("like_count", 0) or 0),
-                        "post_char_count": int(post_char_count),
-                        "post_image_count": int(post_image_count),
-                    }
+                if not force_dom_comment_parse:
+                    # 1) 댓글 JSON 우회(가장 안정) 시도
+                    api_comments = self._get_comments_via_commentview(club_id, article_id)
+                    if api_comments:
+                        for c in api_comments:
+                            writer_id = c.get("writer_id", "unknown")
+                            nick = c.get("nickname", "unknown")
+                            is_author = writer_id == post_author_id and post_author_id != "unknown"
+                            is_admin = any(admin_nick.strip() in (nick or "") for admin_nick in admin_nicks)
+                            should_include = (comment_mode == "all") or is_author or is_admin
+                            if should_include:
+                                filtered_comments.append(
+                                    {
+                                        "writer_id": writer_id,
+                                        "nickname": nick,
+                                        "content": c.get("content", ""),
+                                        "date": c.get("date", ""),
+                                        "comment_id": c.get("comment_id", ""),
+                                        "level_code": c.get("level_code", ""),
+                                        "level": c.get("level", ""),
+                                        "inline_image_count": int(c.get("inline_image_count") or 0),
+                                        "is_target": 1,
+                                    }
+                                )
+                        return {
+                            "content": content,
+                            "comments": filtered_comments,
+                            "member_id": post_author_id,
+                            "nickname": api_author_nick,
+                            "member_level": api_member_level,
+                            "board_name": board_name,
+                            "category": category,
+                            "view_count": int(meta_info.get("view_count", 0) or 0),
+                            "like_count": int(meta_info.get("like_count", 0) or 0),
+                            "post_char_count": int(post_char_count),
+                            "post_image_count": int(post_image_count),
+                        }
 
                 # 2) 실패 시 Selenium DOM 방식으로 폴백
+                # 댓글 더보기 버튼을 먼저 펼쳐 누락을 줄인다.
+                for _ in range(12):
+                    clicked = False
+                    try:
+                        btns = self.driver.find_elements(
+                            By.CSS_SELECTOR,
+                            "a.more, button.more, .btn_more, .CommentItem_more, .comment_more_button, [class*='more']"
+                        )
+                        for b in btns:
+                            try:
+                                t = (b.text or "").strip()
+                            except Exception:
+                                t = ""
+                            if ("더보기" in t) or ("이전댓글" in t) or ("이전 댓글" in t):
+                                if b.is_displayed() and b.is_enabled():
+                                    self.driver.execute_script("arguments[0].click();", b)
+                                    self._sleep_scaled(0.45, floor=0.25)
+                                    clicked = True
+                                    break
+                    except Exception:
+                        pass
+                    if not clicked:
+                        break
+
                 comment_elements = self.driver.find_elements(By.CSS_SELECTOR, "li.CommentItem, .comment_list li, div[class*='Comment']")
                 layer_attempts = 0
                 for item in comment_elements:
                     try:
-                        nick_el = item.find_element(By.CSS_SELECTOR, ".comment_nickname a, .nick a, a[class*='nickname']")
-                        nick = self._extract_text_from_element(nick_el) or "unknown"
-                        writer_id = self._extract_id_from_element(nick_el)
+                        nick = "unknown"
+                        writer_id = "unknown"
+                        nick_el = None
+                        nick_selectors = [
+                            ".comment_nickname a",
+                            ".comment_nickname span",
+                            ".comment_nickname strong",
+                            ".nick a",
+                            ".nick span",
+                            "a[class*='nickname']",
+                            "span[class*='nickname']",
+                            "[class*='writer'] a",
+                            "[class*='writer'] span",
+                        ]
+                        for ns in nick_selectors:
+                            try:
+                                _el = item.find_element(By.CSS_SELECTOR, ns)
+                                _tx = self._extract_text_from_element(_el)
+                                if _tx:
+                                    nick = _tx
+                                    nick_el = _el
+                                    break
+                            except Exception:
+                                continue
+                        if nick_el is not None:
+                            try:
+                                writer_id = self._extract_id_from_element(nick_el)
+                            except Exception:
+                                writer_id = "unknown"
                         
                         is_author = writer_id == post_author_id and post_author_id != "unknown"
                         is_admin = any(admin_nick.strip() in nick for admin_nick in admin_nicks)
 
                         # 운영자 댓글인데 ID가 unknown이면, 레이어 클릭으로 보강 (너무 느려지지 않게 제한)
-                        if writer_id == "unknown" and is_admin and layer_attempts < 5:
+                        if writer_id == "unknown" and is_admin and nick_el is not None and layer_attempts < 5:
                             writer_id = self._get_member_id_via_layer(nick_el)
                             layer_attempts += 1
                             is_author = writer_id == post_author_id and post_author_id != "unknown"
                         
                         should_include = (comment_mode == "all") or is_author or is_admin
                         if should_include:
-                            text_el = item.find_element(By.CSS_SELECTOR, ".comment_text_view, .txt, div[class*='comment_text']")
-                            ctext = text_el.text.strip()
+                            ctext = ""
+                            text_el = None
+                            for ts in [".comment_text_view", ".txt", "div[class*='comment_text']", ".CommentText", "p[class*='text']"]:
+                                try:
+                                    text_el = item.find_element(By.CSS_SELECTOR, ts)
+                                    ctext = (text_el.text or "").strip()
+                                    if ctext:
+                                        break
+                                except Exception:
+                                    continue
                             chtml = ""
-                            try:
-                                chtml = text_el.get_attribute("innerHTML") or ""
-                            except:
-                                chtml = ""
+                            if text_el is not None:
+                                try:
+                                    chtml = text_el.get_attribute("innerHTML") or ""
+                                except:
+                                    chtml = ""
                             img_cnt = 0
                             try:
                                 img_cnt = max(0, int(len(re.findall(r"<img\\b", chtml, flags=re.I))))
                             except:
                                 img_cnt = 0
+                            # 스티커/이미지 전용 댓글은 텍스트가 비어도 보존
+                            if (not ctext) and chtml:
+                                ctext = re.sub(r"<[^>]+>", " ", chtml)
+                                ctext = re.sub(r"\s+", " ", ctext).strip()
+                            level_hint_parts: List[str] = []
+                            try:
+                                lvl_candidates = item.find_elements(
+                                    By.CSS_SELECTOR,
+                                    ".comment_nickname img, .comment_nickname em, .nick img, .nick em, "
+                                    "[class*='level'], [class*='Level'], [class*='grade'], [class*='Grade']"
+                                )
+                                for lv in lvl_candidates[:8]:
+                                    try:
+                                        t = self._clean_text(lv.text or "")
+                                        if t:
+                                            level_hint_parts.append(t)
+                                    except:
+                                        pass
+                                    for attr in ("title", "alt", "class", "src", "data-level", "data-grade"):
+                                        try:
+                                            av = lv.get_attribute(attr) or ""
+                                            av = str(av).strip()
+                                            if av:
+                                                level_hint_parts.append(av)
+                                        except:
+                                            continue
+                            except:
+                                pass
+                            level_code, level_name = self._map_comment_level(" | ".join(level_hint_parts))
                             filtered_comments.append({
                                 "writer_id": writer_id,
                                 "nickname": nick,
                                 "content": ctext,
                                 "date": "",
                                 "comment_id": "",
-                                "level": "",
+                                "level_code": level_code,
+                                "level": level_name,
                                 "inline_image_count": img_cnt,
                                 "is_target": 1,
                             })
                     except: continue
+
+                # 3) DOM 셀렉터가 놓치는 스킨/구조 대응: JS 상태에서 댓글 후보 보강
+                if comment_mode == "all" and len(filtered_comments) == 0:
+                    js_state_comments = self._get_comments_via_js_state()
+                    if js_state_comments:
+                        filtered_comments.extend(js_state_comments)
+                        if self.debug_mode:
+                            self._update_status(
+                                f"[디버그] JS state 댓글 폴백 사용: {len(js_state_comments)}개"
+                            )
             except: pass
                 
             return {

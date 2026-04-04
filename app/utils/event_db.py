@@ -33,6 +33,7 @@ def init_event_db(db_path: str) -> None:
             comment_id TEXT,
             comment_writer_id TEXT,
             comment_level TEXT,
+            comment_grade_code TEXT,
             comment_nickname TEXT,
             comment_date TEXT,
             comment_content TEXT,
@@ -89,6 +90,8 @@ def init_event_db(db_path: str) -> None:
             cur.execute("ALTER TABLE event_comments ADD COLUMN comment_id TEXT")
         if "comment_level" not in cols:
             cur.execute("ALTER TABLE event_comments ADD COLUMN comment_level TEXT")
+        if "comment_grade_code" not in cols:
+            cur.execute("ALTER TABLE event_comments ADD COLUMN comment_grade_code TEXT")
         if "comment_length" not in cols:
             cur.execute("ALTER TABLE event_comments ADD COLUMN comment_length INTEGER")
             cur.execute("UPDATE event_comments SET comment_length = LENGTH(comment_content) WHERE comment_length IS NULL")
@@ -212,32 +215,71 @@ def save_event_comments(
     inserted = 0
     for c in comments:
         content = str(c.get("content") or "")
-        h = _hash_content(content)
+        comment_id = str(c.get("comment_id") or "").strip()
+        raw_writer_id = str(c.get("writer_id") or "unknown").strip()
+        nickname = str(c.get("nickname") or "unknown").strip()
+        # writer_id가 unknown일 때 동일 유저 구분력을 높이기 위해 닉네임 기반 키 사용
+        writer_key = raw_writer_id
+        if (not writer_key) or (writer_key.lower() == "unknown"):
+            writer_key = f"nick::{nickname.lower()}"
+
+        # 기존 UNIQUE(post_id, comment_writer_id, comment_date, content_hash) 제약 하에서
+        # comment_id가 있으면 해시에 포함해 동일 문구 다중 댓글 누락을 줄인다.
+        # 단, 기존 데이터(content만 해시)와의 호환을 위해 old/new 해시를 모두 조회해 중복 삽입을 막는다.
+        old_hash = _hash_content(content)
+        hash_src = content if not comment_id else f"{content}|cid:{comment_id}"
+        h = _hash_content(hash_src)
         clen = len(content)
         emoji_count = int(_count_emoji(content))
         inline_image_count = int(c.get("inline_image_count") or 0)
         text_char_count = int(_text_char_count_without_emoji(content))
 
+        comment_date = str(c.get("date") or "")
+        post_id = str(post.get("post_id") or "")
+        legacy_writer_key = raw_writer_id if raw_writer_id else "unknown"
+        cur.execute(
+            """
+            SELECT 1
+            FROM event_comments
+            WHERE post_id = ?
+              AND comment_writer_id IN (?, ?)
+              AND comment_date = ?
+              AND content_hash IN (?, ?)
+            LIMIT 1
+            """,
+            (
+                post_id,
+                writer_key,
+                legacy_writer_key,
+                comment_date,
+                old_hash,
+                h,
+            ),
+        )
+        if cur.fetchone() is not None:
+            continue
+
         cur.execute(
             """
             INSERT OR IGNORE INTO event_comments (
                 post_id, post_url, post_title, post_date, board_name,
-                comment_id, comment_writer_id, comment_level, comment_nickname, comment_date, comment_content,
+                comment_id, comment_writer_id, comment_level, comment_grade_code, comment_nickname, comment_date, comment_content,
                 comment_length, emoji_count, inline_image_count, text_char_count, content_hash
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                str(post.get("post_id") or ""),
+                post_id,
                 str(post.get("url") or ""),
                 str(post.get("title") or ""),
                 str(post.get("date") or ""),
                 str(post.get("board_name") or ""),
-                str(c.get("comment_id") or ""),
-                str(c.get("writer_id") or "unknown"),
+                comment_id,
+                writer_key,
                 str(c.get("level") or ""),
-                str(c.get("nickname") or "unknown"),
-                str(c.get("date") or ""),
+                str(c.get("level_code") or ""),
+                nickname,
+                comment_date,
                 content,
                 int(clen),
                 emoji_count,

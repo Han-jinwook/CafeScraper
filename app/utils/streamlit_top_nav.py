@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+from urllib.parse import quote
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -14,6 +15,35 @@ PAGE_HOME = "app.py"
 PAGE_PAPERS = "pages/02_논문_수집.py"
 PAGE_EVENT = "pages/03_이벤트_댓글_추첨.py"
 PAGE_COMMENTER = "pages/04_자동_댓글러.py"
+
+# (session active 키, URL 경로명, 표시 라벨) — 순서 고정
+_NAV_ENTRIES: tuple[tuple[str, str, str], ...] = (
+    ("app", "", "카페 수집"),
+    ("event", "이벤트_댓글_추첨", "이벤트 댓글 분석"),
+    ("papers", "논문_수집", "논문 수집"),
+    ("commenter", "자동_댓글러", "자동 댓글러"),
+)
+
+
+def _nav_href(page_name: str) -> str:
+    """Streamlit MPA `url_pathname` 규칙과 동일: 메인은 `/`, 나머지는 `/` + page_name(인코딩)."""
+    if not page_name:
+        return "/"
+    return "/" + quote(page_name, safe="_")
+
+
+def _html_top_nav_row(*, active: str) -> str:
+    parts: list[str] = [
+        '<nav class="cafe-monster-topnav" role="navigation" aria-label="메인 메뉴">'
+    ]
+    for nav_key, pathname, label in _NAV_ENTRIES:
+        href = _nav_href(pathname)
+        current = ' aria-current="page"' if active == nav_key else ""
+        parts.append(
+            f'<a href="{html.escape(href)}"{current}>{html.escape(label)}</a>'
+        )
+    parts.append("</nav>")
+    return "".join(parts)
 
 
 def render_main_top_nav(*, active: str) -> None:
@@ -38,30 +68,46 @@ def render_main_top_nav(*, active: str) -> None:
                 margin-right: auto !important;
                 box-sizing: border-box !important;
             }}
-            /* 가로 탭 버튼: key가 st-key-…-nav_main 형태라 [class*="nav_"]로 매칭 */
-            div[class*="st-key-"][class*="nav_"] button {{
-                min-height: 2.85rem !important;
-                padding-top: 0.55rem !important;
-                padding-bottom: 0.55rem !important;
-                display: inline-flex !important;
-                align-items: center !important;
-                justify-content: center !important;
-                line-height: 1.4 !important;
+            /* 상단 메뉴: Streamlit column/page_link 조합이 세로로 쌓이는 환경 대비 — 순수 flex HTML */
+            nav.cafe-monster-topnav {{
+                display: flex !important;
+                flex-direction: row !important;
+                flex-wrap: nowrap !important;
+                gap: 0.5rem !important;
+                width: 100% !important;
+                box-sizing: border-box !important;
+                margin: 0 0 0.45rem 0 !important;
+                padding: 0 !important;
+            }}
+            nav.cafe-monster-topnav > a {{
+                flex: 1 1 0% !important;
+                min-width: 0 !important;
+                text-align: center !important;
+                text-decoration: none !important;
+                font-weight: 600 !important;
+                font-size: 0.92rem !important;
+                line-height: 1.35 !important;
+                padding: 0.55rem 0.35rem !important;
+                border-radius: 0.45rem !important;
+                border: 1px solid #cfdbf3 !important;
+                background: #ffffff !important;
+                color: #191c1d !important;
                 box-sizing: border-box !important;
             }}
-            div[class*="st-key-"][class*="nav_"] button p {{
-                margin: 0 !important;
-                padding: 0 !important;
-                line-height: inherit !important;
+            nav.cafe-monster-topnav > a:hover {{
+                background: #eef4ff !important;
             }}
-            /* style 태그로 인한 빈 여백 제거 */
-            div.element-container:has(style:only-child) {{
-                display: none !important;
+            nav.cafe-monster-topnav > a[aria-current="page"] {{
+                background: #003629 !important;
+                border-color: #003629 !important;
+                color: #ffffff !important;
             }}
         </style>
         """,
         unsafe_allow_html=True,
     )
+
+    st.markdown(_html_top_nav_row(active=active), unsafe_allow_html=True)
 
     # date_input 팝업(캘린더)의 월/요일 영문 라벨을 한국어로 보정
     components.html(
@@ -122,36 +168,10 @@ def render_main_top_nav(*, active: str) -> None:
         })();
         </script>
         """,
-        height=0,
-        width=0,
+        height=2,
+        width=720,
+        scrolling=False,
     )
-    
-    c_brand, c_nav = st.columns([1.15, 4.85], gap="small")
-    with c_brand:
-        pass
-
-    with c_nav:
-        n1, n2, n3, n4 = st.columns(4, gap="small")
-        
-        def _nav_btn(col, label: str, page: str, is_active: bool, key: str):
-            with col:
-                # 활성화된 탭은 primary, 나머지는 secondary
-                clicked = st.button(
-                    label,
-                    key=key,
-                    type="primary" if is_active else "secondary",
-                    use_container_width=True
-                )
-                if clicked and not is_active:
-                    try:
-                        st.switch_page(page)
-                    except Exception as e:
-                        st.error(f"페이지 이동 실패: {e}")
-
-        _nav_btn(n1, "카페 수집", PAGE_HOME, active == "app", "nav_main")
-        _nav_btn(n2, "이벤트 댓글 분석", PAGE_EVENT, active == "event", "nav_event")
-        _nav_btn(n3, "논문 수집", PAGE_PAPERS, active == "papers", "nav_papers")
-        _nav_btn(n4, "자동 댓글러", PAGE_COMMENTER, active == "commenter", "nav_commenter")
 
     st.markdown(
         '<div style="height:0;margin:0.15rem 0 0.55rem 0;border:none;'
@@ -182,7 +202,7 @@ def render_settings_card_title(label: str, *, icon: str | None = None) -> None:
 def inject_settings_three_cards_css(*, key_basename: str) -> None:
     """
     메인(카페)·논문 수집 등 동일한 상단 3카드 설정 블록 스타일.
-    st.container(border=True, key=f"{key_basename}_1", gap=None) 와 짝.
+    st.container(border=True, key=f"{key_basename}_1") 와 짝.
 
     key_basename 예: "settings_card", "papers_settings_card"
     Streamlit 1.5x: `key=` 가 붙은 노드가 곧 `data-testid="stVerticalBlock"` 이므로

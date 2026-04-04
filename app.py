@@ -1,4 +1,4 @@
-import html
+﻿import html
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
@@ -14,15 +14,20 @@ from app.products.scraper.crawler import NaverCafeCrawler
 from app.utils.sqlite_db import init_db
 from app.utils.paths import get_config_path, get_logs_dir, get_project_root, resolve_db_path
 from app.utils.streamlit_input_history import inject_connect_history_suggestions
+from app.utils.streamlit_brand import render_logo_png
 from app.utils.streamlit_top_nav import render_main_top_nav, render_settings_card_title
+from app.utils.naver_login import (
+    _has_naver_login_cookie,
+    _is_captcha_like_page,
+    auto_login_naver_with_js as _auto_login_naver_with_js,
+)
 from selenium.webdriver.common.by import By
 import shutil
 
 # 페이지 설정
-_logo_for_icon = Path(__file__).resolve().parent / "assets" / "CafeMonster_logo.png"
 st.set_page_config(
     page_title="[카페 몬스터] 카페 추출기 Pro V1.0",
-    page_icon=str(_logo_for_icon) if _logo_for_icon.exists() else "☕",
+    page_icon="☕",
     layout="wide",
 )
 
@@ -814,138 +819,8 @@ def _is_overall_board_url(url: str) -> bool:
     return False
 
 
-def _has_naver_login_cookie(crawler_obj) -> bool:
-    try:
-        if not crawler_obj or not getattr(crawler_obj, "driver", None):
-            return False
-        cookie_names = {str(c.get("name", "")).upper() for c in (crawler_obj.driver.get_cookies() or [])}
-        return ("NID_SES" in cookie_names) or ("NID_AUT" in cookie_names)
-    except Exception:
-        return False
-
-
-def _is_captcha_like_page(driver) -> bool:
-    try:
-        cur_url = str(getattr(driver, "current_url", "") or "").lower()
-        title = str(getattr(driver, "title", "") or "").lower()
-        keys = ["captcha", "캡차", "자동입력", "robot", "recaptcha"]
-        if any(k in cur_url for k in keys):
-            return True
-        if any(k in title for k in keys):
-            return True
-        # page_source 전체 스캔은 무거울 수 있어 짧은 본문 텍스트만 검사
-        try:
-            body_text = str(
-                driver.execute_script(
-                    "return (document.body && (document.body.innerText || '').slice(0, 2000)) || '';"
-                )
-                or ""
-            ).lower()
-            return any(k in body_text for k in keys)
-        except Exception:
-            return False
-    except Exception:
-        return False
-
-
-def _type_like_human(driver, css_selector: str, value: str) -> bool:
-    try:
-        driver.execute_script(
-            """
-            const el = document.querySelector(arguments[0]);
-            if (el) {
-              el.focus();
-              el.click();
-              return true;
-            }
-            return false;
-            """,
-            css_selector,
-        )
-        active = driver.switch_to.active_element
-        try:
-            active.clear()
-        except Exception:
-            pass
-        for ch in str(value or ""):
-            active.send_keys(ch)
-            time.sleep(random.uniform(0.02, 0.07))
-        time.sleep(random.uniform(0.08, 0.25))
-        return True
-    except Exception:
-        return False
-
-
-def _auto_login_naver_with_js(crawler_obj, user_id: str, user_pw: str) -> tuple[bool, str]:
-    """네이버 자동 로그인 - 원본 방식: id_el/pw_el 직접 참조 JS 입력 (active_element 의존 없음)."""
-    from selenium.webdriver.common.by import By
-    from selenium.webdriver.support.ui import WebDriverWait
-    from selenium.webdriver.support import expected_conditions as EC
-    try:
-        if not crawler_obj or not getattr(crawler_obj, "driver", None):
-            return False, "드라이버 없음"
-        driver = crawler_obj.driver
-        uid = str(user_id or "").strip()
-        upw = str(user_pw or "")
-        if (not uid) or (not upw):
-            return False, "아이디/비밀번호 미입력"
-
-        # 0) 이미 로그인 세션이 살아있으면 생략
-        if _has_naver_login_cookie(crawler_obj):
-            return True, "기존 세션 유지"
-
-        # 1) 로그인 페이지 진입 (url= 파라미터로 로그인 후 카페로 자동 복귀)
-        driver.get("https://nid.naver.com/nidlogin.login?mode=form&url=https://cafe.naver.com/")
-        time.sleep(random.uniform(1.0, 1.8))
-
-        if _is_captcha_like_page(driver):
-            return False, "캡챠 감지"
-
-        # 2) id/pw 요소를 직접 잡아서 JS로 값 세팅 (active_element 미사용 → 캡챠 포커스 이동 무관)
-        wait = WebDriverWait(driver, 10)
-        id_el = wait.until(EC.presence_of_element_located((By.ID, "id")))
-        pw_el = wait.until(EC.presence_of_element_located((By.ID, "pw")))
-
-        driver.execute_script(
-            """
-            const idEl = arguments[0], pwEl = arguments[1],
-                  uid  = arguments[2], upw  = arguments[3];
-            idEl.focus(); idEl.value = uid;
-            idEl.dispatchEvent(new Event('input',  {bubbles: true}));
-            idEl.dispatchEvent(new Event('change', {bubbles: true}));
-            pwEl.focus(); pwEl.value = upw;
-            pwEl.dispatchEvent(new Event('input',  {bubbles: true}));
-            pwEl.dispatchEvent(new Event('change', {bubbles: true}));
-            """,
-            id_el, pw_el, uid, upw,
-        )
-        time.sleep(random.uniform(0.3, 0.6))
-
-        if _is_captcha_like_page(driver):
-            return False, "캡챠 감지(입력 후)"
-
-        # 3) 로그인 버튼 클릭
-        try:
-            login_btn = driver.find_element(By.CSS_SELECTOR, "#log\\.login, button[type='submit']")
-            login_btn.click()
-        except Exception:
-            return False, "로그인 버튼 클릭 실패"
-
-        time.sleep(random.uniform(1.8, 2.5))
-
-        # 4) 성공 판정: 쿠키 또는 URL로 확인
-        if _has_naver_login_cookie(crawler_obj):
-            return True, "로그인 성공"
-        cur_url = str(getattr(driver, "current_url", "") or "")
-        if "nid.naver.com" not in cur_url:
-            return True, "로그인 성공(페이지 이동 확인)"
-
-        if _is_captcha_like_page(driver):
-            return False, "캡챠 감지(로그인 후)"
-
-        return False, "세션 쿠키 확인 실패 - 수동 로그인 필요"
-    except Exception as e:
-        return False, f"예외: {e}"
+## 로그인 유틸 함수들은 app.utils.naver_login 에서 import 됨
+## _has_naver_login_cookie, _is_captcha_like_page, _auto_login_naver_with_js
 
 
 # 시안 레이아웃: 가로 메뉴 → 대시보드 타이틀·가이드 → 3열 수집 설정 → 하단 col_main(실행·리스트)
@@ -1019,10 +894,9 @@ render_main_top_nav(active="app")
 def _render_cafe_dashboard_header() -> None:
     _logo_path = Path(__file__).resolve().parent / "assets" / "CafeMonster_logo.png"
     
-    _hdr_logo, _hdr_mid = st.columns([0.55, 4.45], gap="small")
+    _hdr_logo, _hdr_mid = st.columns([1, 5], gap="small")
     with _hdr_logo:
-        if _logo_path.exists():
-            st.image(str(_logo_path), width=92)
+        render_logo_png(_logo_path, width_px=92)
     with _hdr_mid:
         _title_col, _guide_col = st.columns([1.95, 2.05], gap="small")
         with _title_col:
@@ -1303,7 +1177,7 @@ st.markdown('''
 st.markdown("#### ⚙️ 수집 설정")
 _t1, _t2, _t3 = st.columns([1, 1, 1], gap="medium")
 with _t1:
-    with st.container(border=True, key="settings_card_1", gap=None):
+    with st.container(border=True, key="settings_card_1"):
         render_settings_card_title("카페 · 연결", icon="🏪")
         if st.session_state.pop("_pending_clear_cafe_name_input", False):
             st.session_state.cafe_name_input = ""
@@ -1751,7 +1625,7 @@ with _t1:
                 )
             board_url = selected_urls_str
 with _t2:
-    with st.container(border=True, key="settings_card_2", gap=None):
+    with st.container(border=True, key="settings_card_2"):
         render_settings_card_title("수집 세부설정", icon="📅")
         exclude_boards_text = ""
 
@@ -1881,7 +1755,7 @@ with _t2:
             progress_log_every = 100
 
             st.markdown("---")
-            if st.button("💾 저장", width="stretch"):
+            if st.button("💾 저장", use_container_width=True):
                 # 기존 키를 보존한 채, 화면에서 수정한 항목만 갱신
                 new_config = dict(config or {})
                 new_config.update({
@@ -1895,7 +1769,7 @@ with _t2:
                 save_config(new_config)
                 st.success("✅ 설정이 저장되었습니다.")
 with _t3:
-    with st.container(border=True, key="settings_card_3", gap=None):
+    with st.container(border=True, key="settings_card_3"):
         render_settings_card_title("데이터/DB", icon="💾")
         db_full_path = os.path.abspath(DB_PATH)
         exists = os.path.exists(db_full_path)
@@ -1935,7 +1809,7 @@ with _t3:
             st.markdown("<hr style='margin: 0.5rem 0; border: none; border-top: 1px dashed #e2e8f0;'>", unsafe_allow_html=True)
             col_db1, col_db2 = st.columns(2)
             with col_db1:
-                if st.button("폴더 열기", width="stretch", key="open_db_folder"):
+                if st.button("폴더 열기", use_container_width=True, key="open_db_folder"):
                     try:
                         import subprocess
                         subprocess.run(['explorer', '/select,', db_full_path])
@@ -1943,7 +1817,7 @@ with _t3:
                         st.error(f"폴더 열기 실패: {e}")
             with col_db2:
                 log_dir = str(get_logs_dir())
-                if st.button("로그 폴더", width="stretch", key="open_log_folder"):
+                if st.button("로그 폴더", use_container_width=True, key="open_log_folder"):
                     try:
                         import subprocess
                         subprocess.run(['explorer', log_dir])
@@ -1962,7 +1836,7 @@ with _t3:
 
                 c1, c2 = st.columns(2)
                 with c1:
-                    if st.button("경로 저장(파일 이동 없음)", width="stretch", key="apply_db_path_only"):
+                    if st.button("경로 저장(파일 이동 없음)", use_container_width=True, key="apply_db_path_only"):
                         target = (db_path_override or "").strip()
                         if not target:
                             st.error("대상 DB 경로가 비어 있습니다.")
@@ -1971,7 +1845,7 @@ with _t3:
                             save_config(config)
                             st.success("✅ 저장 완료. 앱을 새로고침하세요.")
                 with c2:
-                    if st.button("현재 DB 복사 + 전환", width="stretch", key="copy_db_and_apply"):
+                    if st.button("현재 DB 복사 + 전환", use_container_width=True, key="copy_db_and_apply"):
                         target = (db_path_override or "").strip()
                         if not target:
                             st.error("대상 DB 경로가 비어 있습니다.")
@@ -2034,7 +1908,7 @@ def _render_cafe_main_workspace():
     with step_col1:
         if st.button(
             "1단계: 브라우저 열기",
-            width="stretch",
+            use_container_width=True,
             disabled=bool(st.session_state.crawl_running) or bool(browser_opened),
             type="primary" if not step2_ready else "secondary",
             key="open_browser_btn",
@@ -2103,14 +1977,14 @@ def _render_cafe_main_workspace():
 
     with step_col2:
         if st.session_state.crawl_running:
-            if st.button("⏹ 진행중... 중단", type="primary", width="stretch", key="stop_crawl_btn"):
+            if st.button("⏹ 진행중... 중단", type="primary", use_container_width=True, key="stop_crawl_btn"):
                 st.session_state.crawl_stop_requested = True
                 update_logs("🛑 중단 요청이 접수되었습니다. 현재 항목 처리 후 중단합니다.")
         else:
             if st.button(
                 "2단계: 게시글·댓글 수집 시작",
                 type="primary",
-                width="stretch",
+                use_container_width=True,
                 disabled=not step2_ready,
                 key="start_crawl_btn",
             ):
@@ -2228,7 +2102,7 @@ def _render_cafe_main_workspace():
                 st.warning("로그인 감지에 문제가 있습니다. 브라우저에서 로그인 상태를 확인한 뒤 수동으로 진행하세요.")
                 if st.button(
                     "로그인 완료",
-                    width="stretch",
+                    use_container_width=True,
                     key="manual_login_confirm_btn_recovery",
                     disabled=(not browser_opened) or bool(step2_ready),
                 ):
@@ -2236,7 +2110,7 @@ def _render_cafe_main_workspace():
                     st.rerun()
 
             if show_reset_recovery:
-                if st.button("🔄 실행 상태 초기화 (리셋)", width="stretch", key="reset_runtime_btn_recovery"):
+                if st.button("🔄 실행 상태 초기화 (리셋)", use_container_width=True, key="reset_runtime_btn_recovery"):
                     try:
                         crawler_ref = st.session_state.get("crawler")
                         if crawler_ref:
@@ -2343,7 +2217,7 @@ def _render_cafe_main_workspace():
                 st.caption("※ 재개 버튼을 누르면 현재 화면 설정으로 이어서 수집합니다.")
 
         st.caption("▶ 체크포인트 재개 — 중단된 지점부터 이어서 수집합니다. 새로 시작하려면 위의 2단계 크롤링 시작을 누르세요.")
-        if st.button("▶ 체크포인트 재개", width="stretch", key="resume_from_checkpoint"):
+        if st.button("▶ 체크포인트 재개", use_container_width=True, key="resume_from_checkpoint"):
             # 재개 시 현재 UI의 대기 설정을 반영 (저장된 예전 값 덮어쓰기)
             ctx = st.session_state.crawl_state
             # 재개 기준점 기록: 완료 요약에서 이미 처리된 건수를 스킵으로 표시
@@ -3054,7 +2928,7 @@ def _render_cafe_main_workspace():
                         "url": st.column_config.LinkColumn("URL", width="small")
                     },
                     hide_index=True,
-                    width="stretch",
+                    use_container_width=True,
                     disabled=[
                         "post_id",
                         "member_id",
@@ -3081,17 +2955,17 @@ def _render_cafe_main_workspace():
                     st.markdown("#### 🧰 선택/삭제 작업")
                     st.caption(f"반영된 선택: {len(st.session_state.selected_posts)}개")
 
-                    if st.button("✅ 선택 반영", width="stretch", key="apply_posts_selection_left"):
+                    if st.button("✅ 선택 반영", use_container_width=True, key="apply_posts_selection_left"):
                         st.session_state.selected_posts = pending_selected_posts
                         st.session_state.posts_editor_refresh += 1
                         st.rerun()
 
-                    if st.button("☑️ 전체 선택", width="stretch", key="select_all_posts"):
+                    if st.button("☑️ 전체 선택", use_container_width=True, key="select_all_posts"):
                         st.session_state.selected_posts = df_posts['post_id'].tolist()
                         st.session_state.posts_editor_refresh += 1
                         st.rerun()
 
-                    if st.button("⬜ 전체 해제", width="stretch", key="deselect_all_posts"):
+                    if st.button("⬜ 전체 해제", use_container_width=True, key="deselect_all_posts"):
                         st.session_state.selected_posts = []
                         st.session_state.posts_editor_refresh += 1
                         st.rerun()
@@ -3100,19 +2974,19 @@ def _render_cafe_main_workspace():
                         if "confirm_delete_posts" not in st.session_state:
                             st.session_state.confirm_delete_posts = False
                         if not st.session_state.confirm_delete_posts:
-                            if st.button(f"🗑️ 선택 항목 삭제 ({len(st.session_state.selected_posts)})", type="primary", width="stretch", key="delete_posts_req"):
+                            if st.button(f"🗑️ 선택 항목 삭제 ({len(st.session_state.selected_posts)})", type="primary", use_container_width=True, key="delete_posts_req"):
                                 st.session_state.confirm_delete_posts = True
                                 st.rerun()
                         else:
-                            st.button("삭제 대기 중...", disabled=True, width="stretch", key="delete_posts_wait")
+                            st.button("삭제 대기 중...", disabled=True, use_container_width=True, key="delete_posts_wait")
                     else:
-                        st.button("🗑️ 선택 항목 삭제", disabled=True, width="stretch", key="delete_posts_disabled")
+                        st.button("🗑️ 선택 항목 삭제", disabled=True, use_container_width=True, key="delete_posts_disabled")
 
                     if st.session_state.get("confirm_delete_posts", False):
                         st.warning(
                             f"선택한 {len(st.session_state.selected_posts)}개 게시글과 관련 댓글이 영구 삭제됩니다. 되돌릴 수 없습니다."
                         )
-                        if st.button("✅ 예, 확실히 삭제합니다", type="primary", width="stretch", key="real_delete_posts"):
+                        if st.button("✅ 예, 확실히 삭제합니다", type="primary", use_container_width=True, key="real_delete_posts"):
                             try:
                                 cursor = conn.cursor()
                                 for post_id in st.session_state.selected_posts:
@@ -3126,7 +3000,7 @@ def _render_cafe_main_workspace():
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"삭제 실패: {e}")
-                        if st.button("❌ 취소", width="stretch", key="cancel_delete_posts"):
+                        if st.button("❌ 취소", use_container_width=True, key="cancel_delete_posts"):
                             st.session_state.confirm_delete_posts = False
                             st.rerun()
 
@@ -3199,7 +3073,7 @@ def _render_cafe_main_workspace():
                 if selected_post_id:
                     st.markdown("**💬 댓글 ({:,}개)**".format(len(df_post_comments)))
                     if not df_post_comments.empty:
-                        st.dataframe(df_post_comments, width="stretch", hide_index=True)
+                        st.dataframe(df_post_comments, use_container_width=True, hide_index=True)
                     else:
                         st.info("수집된 댓글이 없습니다.")
             else:
@@ -3245,7 +3119,7 @@ def _render_cafe_main_workspace():
                         "post_title": "원글 제목"
                     },
                     hide_index=True,
-                    width="stretch",
+                    use_container_width=True,
                     disabled=["comment_id", "post_id", "writer_id", "nickname", "content", "is_target", "post_title"],
                     key=f"comments_editor_{st.session_state.comments_editor_refresh}"
                 )
@@ -3257,13 +3131,13 @@ def _render_cafe_main_workspace():
                 col_action1, col_action2, col_action3 = st.columns([1, 1, 1])
             
                 with col_action1:
-                    if st.button("☑️ 전체 선택", width="stretch", key="select_all_comments"):
+                    if st.button("☑️ 전체 선택", use_container_width=True, key="select_all_comments"):
                         st.session_state.selected_comments = df_comments['comment_id'].tolist()
                         st.session_state.comments_editor_refresh += 1
                         st.rerun()
             
                 with col_action2:
-                    if st.button("⬜ 전체 해제", width="stretch", key="deselect_all_comments"):
+                    if st.button("⬜ 전체 해제", use_container_width=True, key="deselect_all_comments"):
                         st.session_state.selected_comments = []
                         st.session_state.comments_editor_refresh += 1
                         st.rerun()
@@ -3275,13 +3149,13 @@ def _render_cafe_main_workspace():
                             st.session_state.confirm_delete_comments = False
 
                         if not st.session_state.confirm_delete_comments:
-                            if st.button(f"🗑️ 선택 항목 삭제 ({len(st.session_state.selected_comments)})", type="primary", width="stretch", key="delete_comments_req"):
+                            if st.button(f"🗑️ 선택 항목 삭제 ({len(st.session_state.selected_comments)})", type="primary", use_container_width=True, key="delete_comments_req"):
                                 st.session_state.confirm_delete_comments = True
                                 st.rerun()
                         else:
-                            st.button("삭제 대기 중...", disabled=True, width="stretch", key="delete_comments_wait")
+                            st.button("삭제 대기 중...", disabled=True, use_container_width=True, key="delete_comments_wait")
                     else:
-                        st.button("🗑️ 선택 항목 삭제", disabled=True, width="stretch", key="delete_comments_disabled")
+                        st.button("🗑️ 선택 항목 삭제", disabled=True, use_container_width=True, key="delete_comments_disabled")
 
                 # 삭제 확인 UI
                 if st.session_state.get("confirm_delete_comments", False):
@@ -3296,7 +3170,7 @@ def _render_cafe_main_workspace():
                     )
                     col_conf1, col_conf2 = st.columns([1, 1])
                     with col_conf1:
-                        if st.button("✅ 예, 확실히 삭제합니다", type="primary", width="stretch", key="real_delete_comments"):
+                        if st.button("✅ 예, 확실히 삭제합니다", type="primary", use_container_width=True, key="real_delete_comments"):
                             try:
                                 cursor = conn.cursor()
                                 for comment_id in st.session_state.selected_comments:
@@ -3310,7 +3184,7 @@ def _render_cafe_main_workspace():
                             except Exception as e:
                                 st.error(f"삭제 실패: {e}")
                     with col_conf2:
-                        if st.button("❌ 취소", width="stretch", key="cancel_delete_comments"):
+                        if st.button("❌ 취소", use_container_width=True, key="cancel_delete_comments"):
                             st.session_state.confirm_delete_comments = False
                             st.rerun()
             else:
@@ -3324,3 +3198,4 @@ def _render_cafe_main_workspace():
 with col_main:
     with st.container(border=True):
         _render_cafe_main_workspace()
+

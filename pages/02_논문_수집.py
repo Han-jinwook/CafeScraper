@@ -1,4 +1,4 @@
-import streamlit as st
+﻿import streamlit as st
 import pandas as pd
 from datetime import datetime
 import sqlite3
@@ -12,6 +12,7 @@ from pathlib import Path
 from app.products.scraper.crawler import VitaminDWikiCrawler
 from app.utils.sqlite_db import init_db
 from app.utils.paths import get_config_path, resolve_db_path
+from app.utils.streamlit_brand import render_logo_png
 from app.utils.streamlit_top_nav import (
     inject_settings_three_cards_css,
     render_main_top_nav,
@@ -190,10 +191,9 @@ def _render_papers_dashboard_header() -> None:
     """메인 `_render_cafe_dashboard_header`와 동일 그리드: 로고 + 제목·가이드."""
     _logo_path = Path(__file__).resolve().parent.parent / "assets" / "CafeMonster_logo.png"
 
-    _hdr_logo, _hdr_mid = st.columns([0.55, 4.45], gap="small")
+    _hdr_logo, _hdr_mid = st.columns([1, 5], gap="small")
     with _hdr_logo:
-        if _logo_path.exists():
-            st.image(str(_logo_path), width=92)
+        render_logo_png(_logo_path, width_px=92)
     with _hdr_mid:
         _title_col, _guide_col = st.columns([2.65, 1.35], gap="small")
         with _title_col:
@@ -270,7 +270,7 @@ _render_papers_dashboard_header()
 st.markdown("#### ⚙️ 수집 설정")
 _pw1, _pw2, _pw3 = st.columns([1, 1, 1], gap="medium")
 with _pw1:
-    with st.container(border=True, key="papers_settings_card_1", gap=None):
+    with st.container(border=True, key="papers_settings_card_1"):
         render_settings_card_title("사이트 · 연결", icon="🌐")
         wiki_start_url = st.text_input(
             "시작 URL",
@@ -285,7 +285,7 @@ with _pw1:
             )
 
 with _pw2:
-    with st.container(border=True, key="papers_settings_card_2", gap=None):
+    with st.container(border=True, key="papers_settings_card_2"):
         render_settings_card_title("수집 옵션", icon="⚙️")
         wiki_delay = st.number_input(
             "요청 딜레이(초)",
@@ -310,9 +310,9 @@ with _pw2:
         )
 
 with _pw3:
-    with st.container(border=True, key="papers_settings_card_3", gap=None):
+    with st.container(border=True, key="papers_settings_card_3"):
         render_settings_card_title("설정 · DB", icon="💾")
-        if st.button("💾 설정 저장", width="stretch", disabled=st.session_state.wiki_running):
+        if st.button("💾 설정 저장", use_container_width=True, disabled=st.session_state.wiki_running):
             config["wiki_debug_mode"] = bool(st.session_state.wiki_debug_mode)
             config["wiki_start_url"] = wiki_start_url
             config["wiki_delay"] = float(wiki_delay)
@@ -328,7 +328,7 @@ with _pw3:
         _pm1, _pm2 = st.columns(2)
         _pm1.metric("논문", f"{int(_t_card):,}개")
         _pm2.metric("카테고리", f"{int(_c_card):,}개")
-        if st.button("📂 DB 폴더 열기", width="stretch", key="open_db_folder_papers"):
+        if st.button("📂 DB 폴더 열기", use_container_width=True, key="open_db_folder_papers"):
             try:
                 subprocess.run(["explorer", "/select,", db_full_path])
             except Exception:
@@ -359,12 +359,12 @@ col_btn1, col_btn2 = st.columns([1, 1])
 
 with col_btn1:
     if st.session_state.wiki_running:
-        if st.button("⏹ 수집 중... 중단하기", type="primary", width="stretch", key="stop_wiki_btn"):
+        if st.button("⏹ 수집 중... 중단하기", type="primary", use_container_width=True, key="stop_wiki_btn"):
             st.session_state.wiki_stop_requested = True
             add_log("🛑 중단 요청 접수. 현재 배치 완료 후 중단합니다.")
             st.rerun()
     else:
-        if st.button("🚀 전수 조사 시작", type="primary", width="stretch", key="start_wiki_btn"):
+        if st.button("🚀 전수 조사 시작", type="primary", use_container_width=True, key="start_wiki_btn"):
             wiki_crawler = VitaminDWikiCrawler(
                 delay_sec=float(wiki_delay),
                 debug_mode=bool(st.session_state.wiki_debug_mode),
@@ -392,10 +392,10 @@ with col_btn1:
 
 with col_btn2:
     if not st.session_state.wiki_running:
-        if st.button("🔄 현황 새로고침", width="stretch", key="refresh_wiki_btn"):
+        if st.button("🔄 현황 새로고침", use_container_width=True, key="refresh_wiki_btn"):
             st.rerun()
     else:
-        st.button("🔄 현황 새로고침", width="stretch", disabled=True, key="refresh_wiki_btn_dis")
+        st.button("🔄 현황 새로고침", use_container_width=True, disabled=True, key="refresh_wiki_btn_dis")
 
 # ── 실시간 진행 현황판 ────────────────────────────────────────
 live_stats = st.empty()
@@ -609,7 +609,7 @@ try:
                 "요약미리보기": st.column_config.TextColumn("미리보기", width="large"),
             },
             hide_index=True,
-            width="stretch",
+            use_container_width=True,
             disabled=["url", "title", "category", "collected_date", "요약미리보기"],
             key=f"papers_editor_{st.session_state.papers_editor_refresh}",
         )
@@ -619,12 +619,12 @@ try:
         st.markdown("---")
         a1, a2, a3 = st.columns([1, 1, 1])
         with a1:
-            if st.button("☑️ 전체 선택", width="stretch", key="select_all_papers"):
+            if st.button("☑️ 전체 선택", use_container_width=True, key="select_all_papers"):
                 st.session_state.selected_papers = df["url"].tolist()
                 st.session_state.papers_editor_refresh += 1
                 st.rerun()
         with a2:
-            if st.button("⬜ 전체 해제", width="stretch", key="deselect_all_papers"):
+            if st.button("⬜ 전체 해제", use_container_width=True, key="deselect_all_papers"):
                 st.session_state.selected_papers = []
                 st.session_state.papers_editor_refresh += 1
                 st.rerun()
@@ -633,7 +633,7 @@ try:
                 if st.button(
                     f"🗑️ 선택 항목 삭제 ({len(st.session_state.selected_papers)})",
                     type="primary",
-                    width="stretch",
+                    use_container_width=True,
                     key="delete_papers",
                 ):
                     cur = conn.cursor()
@@ -648,7 +648,7 @@ try:
                 st.button(
                     "🗑️ 선택 항목 삭제",
                     disabled=True,
-                    width="stretch",
+                    use_container_width=True,
                     key="delete_papers_disabled",
                 )
 
@@ -685,3 +685,4 @@ try:
     conn.close()
 except Exception as e:
     st.error(f"DB 조회 중 오류: {e}")
+

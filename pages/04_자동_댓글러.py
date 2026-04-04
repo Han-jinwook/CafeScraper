@@ -11,6 +11,7 @@ from pathlib import Path
 from app.products.commenter.bot import NaverCafeCommenter
 from app.utils.paths import get_project_root, resolve_db_path
 from app.utils.sqlite_db import init_db
+from app.utils.streamlit_brand import render_logo_png
 from app.utils.streamlit_top_nav import (
     inject_settings_three_cards_css,
     render_main_top_nav,
@@ -119,10 +120,9 @@ def save_articles_to_db(articles, db_path):
 
 def _render_commenter_dashboard_header() -> None:
     _logo_path = Path(__file__).resolve().parent.parent / "assets" / "CafeMonster_logo.png"
-    _hdr_logo, _hdr_mid = st.columns([0.55, 4.45], gap="small")
+    _hdr_logo, _hdr_mid = st.columns([1, 5], gap="small")
     with _hdr_logo:
-        if _logo_path.exists():
-            st.image(str(_logo_path), width=92)
+        render_logo_png(_logo_path, width_px=92)
     with _hdr_mid:
         _title_col, _guide_col = st.columns([2.65, 1.35], gap="small")
         with _title_col:
@@ -152,7 +152,7 @@ st.markdown("#### ⚙️ 설정")
 _col1, _col2, _col3 = st.columns([1, 1, 1], gap="medium")
 
 with _col1:
-    with st.container(border=True, key="commenter_settings_card_1", gap=None):
+    with st.container(border=True, key="commenter_settings_card_1"):
         render_settings_card_title("타겟 · 소스", icon="🎯")
         target_source = st.radio(
             "타겟 소스",
@@ -367,7 +367,7 @@ with _col1:
                     st.info("데이터 없음")
 
     with _col2:
-        with st.container(border=True, key="commenter_settings_card_2", gap=None):
+        with st.container(border=True, key="commenter_settings_card_2"):
             render_settings_card_title("댓글 내용", icon="💬")
             st.session_state.template_list = load_templates()
             selected_template = st.selectbox(
@@ -390,7 +390,7 @@ with _col1:
                     st.rerun()
 
     with _col3:
-        with st.container(border=True, key="commenter_settings_card_3", gap=None):
+        with st.container(border=True, key="commenter_settings_card_3"):
             render_settings_card_title("실행", icon="▶️")
             st.caption(f"메인 DB: {MAIN_DB_PATH}")
             if st.button("🌐 브라우저 열기", type="secondary", use_container_width=True):

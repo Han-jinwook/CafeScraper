@@ -92,6 +92,7 @@ def inject_connect_history_suggestions(
         }})();
         </script>
         """,
-        height=0,
-        width=0,
+        height=2,
+        width=720,
+        scrolling=False,
     )
