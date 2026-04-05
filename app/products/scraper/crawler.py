@@ -2614,6 +2614,13 @@ class NaverCafeCrawler:
             self._update_status("✅ 해당 기간이 최신 구간으로 판단되어 1페이지부터 시작합니다.")
             return 1
             
+        # 특정 게시판 선택 시 게시판 이름을 페이지 헤더에서 1회 추출
+        _fallback_board_name = ""
+        _is_specific_board = bool(
+            re.search(r"menuid=([1-9]\d*)", board_url)
+            or re.search(r"/menus/([1-9]\d*)", board_url)
+        )
+
         all_articles = []
         page = _auto_locate_start_page(end_date, start_page)
         self.last_effective_start_page = int(page)
@@ -2658,8 +2665,22 @@ class NaverCafeCrawler:
                 self.driver.execute_script("window.scrollTo(0, 1000);")
                 self._sleep_scaled(1.0)
                 
+                # 특정 게시판일 때 헤더에서 게시판 이름 1회 추출
+                if _is_specific_board and not _fallback_board_name:
+                    for _bns in [
+                        "h3.title", ".board-name", ".tit-board", ".sub-tit",
+                        "h2.title", ".cafe-menu-tit", "a.tit",
+                    ]:
+                        try:
+                            _bn_el = self.driver.find_element(By.CSS_SELECTOR, _bns)
+                            _bn_txt = self._extract_text_from_element(_bn_el)
+                            if _bn_txt:
+                                _fallback_board_name = _bn_txt
+                                break
+                        except Exception:
+                            continue
+
                 # 게시글 행 찾기 (최신 SPA 구조 우선)
-                # 고속 모드에서 간헐적으로 목록 렌더링이 늦게 붙는 경우가 있어, 빈 페이지는 짧게 재확인한다.
                 row_selector = "div[class*='ArticleItem'], li[class*='article'], div.article-board table tbody tr"
                 rows = []
                 empty_retries = 3 if self.speed_profile == "fast" else 2
@@ -2851,6 +2872,9 @@ class NaverCafeCrawler:
                                     break
                             except:
                                 continue
+
+                        if not board_name and _fallback_board_name:
+                            board_name = _fallback_board_name
 
                         # 제외 게시판 필터
                         if board_name and exclude_norm:

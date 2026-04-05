@@ -235,36 +235,51 @@ def _build_final_summary_report(db_path: str) -> dict:
         df_sum_raw["comment_length"],
     )
 
-    def _base_coupon(chars: int) -> int:
-        if chars <= 50:
-            return 1
-        if chars <= 130:
-            return 2
-        return 3
+    def _text_ticket(chars: int) -> int:
+        if chars <= 0:
+            return 0
+        return max(1, (chars - 1) // 100 + 1)
 
-    df_sum_raw["base_coupon"] = df_sum_raw["effective_chars"].apply(lambda v: _base_coupon(int(v)))
-    df_sum_raw["extra_coupon"] = (
+    df_sum_raw["text_ticket"] = df_sum_raw["effective_chars"].apply(lambda v: _text_ticket(int(v)))
+    df_sum_raw["image_ticket"] = (
         (df_sum_raw["emoji_count"] > 0) | (df_sum_raw["inline_image_count"] > 0)
     ).astype(int)
-    df_sum_raw["coupon_per_comment"] = (df_sum_raw["base_coupon"] + df_sum_raw["extra_coupon"]).clip(upper=4)
+    df_sum_raw["ticket_per_comment"] = df_sum_raw["text_ticket"] + df_sum_raw["image_ticket"]
 
-    # 중복/복붙 보정: 같은 별명+같은 내용 그룹에서 첫 댓글(원문) 제외 나머지는 쿠폰 1개로 고정
+    # 중복/복붙 보정: 같은 별명+같은 내용 그룹에서 첫 댓글(원문) 제외 나머지는 글자수 10 기준(=티켓 1)
     df_sum_raw["dup_idx"] = df_sum_raw.groupby(["nickname", "comment_content"]).cumcount()
     dup_group_size = df_sum_raw.groupby(["nickname", "comment_content"])["id"].transform("size")
     copy_mask = (dup_group_size > 1) & (df_sum_raw["dup_idx"] > 0)
-    df_sum_raw.loc[copy_mask, "coupon_per_comment"] = 1
+    df_sum_raw.loc[copy_mask, "ticket_per_comment"] = 1
 
-    sum_df = (
+    base_agg = (
         df_sum_raw.groupby("nickname", as_index=False)
         .agg(
-            comment_count=("id", "count"),
-            coupon_1=("coupon_per_comment", lambda s: int((s == 1).sum())),
-            coupon_2=("coupon_per_comment", lambda s: int((s == 2).sum())),
-            coupon_3=("coupon_per_comment", lambda s: int((s == 3).sum())),
-            coupon_4=("coupon_per_comment", lambda s: int((s == 4).sum())),
-            total_coupon=("coupon_per_comment", "sum"),
+            댓글수=("id", "count"),
+            글자티켓=("text_ticket", "sum"),
+            이미지티켓=("image_ticket", "sum"),
+            총티켓수=("ticket_per_comment", "sum"),
         )
-        .sort_values(["total_coupon", "comment_count"], ascending=[False, False])
+        .rename(columns={"nickname": "별명"})
+    )
+
+    max_ticket = int(df_sum_raw["ticket_per_comment"].max()) if not df_sum_raw.empty else 1
+    for tv in range(1, max_ticket + 1):
+        col_name = f"티켓{tv}"
+        ticket_counts = (
+            df_sum_raw[df_sum_raw["ticket_per_comment"] == tv]
+            .groupby("nickname")["id"].count()
+            .rename(col_name)
+        )
+        base_agg = base_agg.merge(
+            ticket_counts, left_on="별명", right_index=True, how="left"
+        )
+        base_agg[col_name] = base_agg[col_name].fillna(0).astype(int)
+
+    ticket_cols = [c for c in base_agg.columns if c.startswith("티켓") and c != "총티켓수"]
+    ordered = ["별명", "총티켓수", "댓글수"] + sorted(ticket_cols, key=lambda x: int(x.replace("티켓", ""))) + ["글자티켓", "이미지티켓"]
+    sum_df = base_agg[[c for c in ordered if c in base_agg.columns]].sort_values(
+        ["총티켓수", "댓글수"], ascending=[False, False]
     )
     return {"status": "data", "df": sum_df}
 
@@ -1292,14 +1307,62 @@ if st.session_state.event_run_pending and st.session_state.event_running:
     exclude_comment_nicks_raw = str(payload.get("exclude_comment_nicks_text") or "")
 
     prog = st.progress(max(0.0, min(1.0, float(st.session_state.get("event_progress_ratio", 0.0) or 0.0))))
-    prog_msg = st.empty()
+    _metrics_placeholder = st.empty()
+    _detail_placeholder = st.empty()
+    _run_start_time = time.time()
+
+    def _fmt_duration(sec: float) -> str:
+        sec = max(0, int(sec))
+        if sec < 60:
+            return f"{sec}초"
+        m, s = divmod(sec, 60)
+        if m < 60:
+            return f"{int(m)}분 {s}초"
+        h, m = divmod(int(m), 60)
+        return f"{h}시간 {int(m)}분"
 
     def _set_event_progress(ratio: float, msg: str) -> None:
         rr = max(0.0, min(1.0, float(ratio)))
         st.session_state.event_progress_ratio = rr
         st.session_state.event_progress_label = str(msg or "")
         prog.progress(rr)
-        prog_msg.caption(str(msg or ""))
+        elapsed = time.time() - _run_start_time
+        eta_str = "계산 중..."
+        eta_total_str = ""
+        if rr > 0.02:
+            eta = elapsed / rr * (1.0 - rr)
+            total_est = elapsed + eta
+            eta_str = _fmt_duration(eta)
+            eta_total_str = f" / 총 {_fmt_duration(total_est)}"
+        _done = int(total_articles_processed)
+        _fail = int(failed_articles)
+        _seen = int(comments_seen_total)
+        _saved = int(inserted_total)
+        _avg = (elapsed / _done) if _done > 0 else 0
+
+        with _metrics_placeholder.container():
+            _mc1, _mc2, _mc3, _mc4 = st.columns([1, 1, 1, 1.4])
+            _mc1.metric("처리 게시글", f"{_done:,}개", delta=f"실패 {_fail}개" if _fail else None, delta_color="inverse" if _fail else "off")
+            _mc2.metric("댓글 조회", f"{_seen:,}개", delta=f"저장 {_saved:,}개")
+            _mc3.metric("경과 시간", _fmt_duration(elapsed))
+            _mc4.markdown(
+                f"<div style='background:linear-gradient(180deg,#f8fbff 0%,#f3f7fc 100%);"
+                f"border:1px solid #dbe5f2;border-radius:12px;padding:12px 14px;"
+                f"box-shadow:0 2px 8px rgba(15,23,42,0.04);min-height:90px;"
+                f"display:flex;flex-direction:column;justify-content:center;'>"
+                f"<div style='font-size:0.86rem;color:#64748b;font-weight:700;'>예상 남은 시간</div>"
+                f"<div style='font-size:1.25rem;line-height:1.35;color:#0f172a;font-weight:800;'>"
+                f"{eta_str}{eta_total_str}</div></div>",
+                unsafe_allow_html=True,
+            )
+
+        _detail_placeholder.markdown(
+            f"<div style='font-size:0.95rem;color:#334155;font-weight:600;padding:2px 0 6px 0;'>"
+            f"{msg}"
+            f"{(' · 평균 ' + f'{_avg:.1f}초/건') if _done > 0 else ''}"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
 
     try:
         update_logs("🔍 선택한 조건 실행 시작...")
@@ -1650,12 +1713,25 @@ if st.session_state.event_run_pending and st.session_state.event_running:
                     adaptive_delay_min, adaptive_delay_max = adaptive_delay_max, adaptive_delay_min
                 time.sleep(random.uniform(adaptive_delay_min, adaptive_delay_max))
 
+        _total_elapsed = time.time() - _run_start_time
         done_msg = (
             f"✅ 완료: 게시판 {len(board_urls):,}개, 게시글 {total_articles_processed:,}개 처리, "
             f"게시글 제외 {excluded_post_total:,}개, 댓글 조회 {comments_seen_total:,}개, 댓글 제외 {excluded_total:,}개, "
             f"날짜 미확인 제외 {unknown_date_excluded_total:,}개, "
             f"기간완화 {date_filter_relaxed_articles:,}개 글, "
-            f"신규 저장 {inserted_total:,}개, 게시글 분석 저장 {post_analysis_saved_total:,}개, 실패 {failed_articles:,}개"
+            f"신규 저장 {inserted_total:,}개, 게시글 분석 저장 {post_analysis_saved_total:,}개, 실패 {failed_articles:,}개 "
+            f"(소요 {_fmt_duration(_total_elapsed)})"
+        )
+        _avg_final = (_total_elapsed / total_articles_processed) if total_articles_processed > 0 else 0
+        with _metrics_placeholder.container():
+            _fc1, _fc2, _fc3, _fc4 = st.columns(4)
+            _fc1.metric("처리 게시글", f"{total_articles_processed:,}개", delta=f"실패 {failed_articles}개" if failed_articles else "전부 성공", delta_color="inverse" if failed_articles else "normal")
+            _fc2.metric("댓글 조회", f"{comments_seen_total:,}개", delta=f"저장 {inserted_total:,}개")
+            _fc3.metric("소요 시간", _fmt_duration(_total_elapsed))
+            _fc4.metric("평균 처리", f"{_avg_final:.1f}초/건" if _avg_final else "-")
+        _detail_placeholder.markdown(
+            f"<div style='font-size:0.95rem;color:#16a34a;font-weight:700;padding:2px 0 6px 0;'>✅ 수집 완료</div>",
+            unsafe_allow_html=True,
         )
         # 디버그 로그를 파일로 저장
         try:
@@ -1849,6 +1925,85 @@ try:
                 "post_image_count": st.column_config.NumberColumn("사진수", format="%d"),
             },
         )
+    if not df_post.empty:
+        st.markdown("#### 🎫 조건2 참여자 티켓수 집계")
+        _post_sum_indent, _post_sum_body = st.columns([0.05, 0.95])
+        with _post_sum_body:
+            st.caption(
+                "티켓 산정 규칙: 글자수(제목 포함) 100자당 티켓 1개 / 사진 1장당 티켓 1개"
+            )
+
+            _df_p = df_post.copy()
+            for _nc in ["post_char_count", "post_image_count"]:
+                _df_p[_nc] = pd.to_numeric(_df_p[_nc], errors="coerce").fillna(0).astype(int)
+            _df_p["_title_len"] = _df_p["post_title"].apply(lambda t: len(str(t or "")))
+            _df_p["_total_chars"] = _df_p["post_char_count"] + _df_p["_title_len"]
+
+            def _text_ticket(chars: int) -> int:
+                if chars <= 0:
+                    return 0
+                return max(1, (chars - 1) // 100 + 1)
+
+            _df_p["텍스트티켓"] = _df_p["_total_chars"].apply(_text_ticket)
+            _df_p["사진티켓"] = _df_p["post_image_count"]
+            _df_p["티켓합"] = _df_p["텍스트티켓"] + _df_p["사진티켓"]
+
+            _post_base = (
+                _df_p.groupby("author_nickname")
+                .agg(
+                    게시글수=("post_title", "count"),
+                    텍스트티켓=("텍스트티켓", "sum"),
+                    사진티켓=("사진티켓", "sum"),
+                    총티켓수=("티켓합", "sum"),
+                )
+                .rename_axis("별명")
+            )
+
+            _max_t = int(_df_p["티켓합"].max()) if not _df_p.empty else 1
+            for _tv in range(1, _max_t + 1):
+                _col = f"티켓{_tv}"
+                _tc = (
+                    _df_p[_df_p["티켓합"] == _tv]
+                    .groupby("author_nickname")["post_title"].count()
+                    .rename(_col)
+                )
+                _post_base = _post_base.merge(_tc, left_index=True, right_index=True, how="left")
+                _post_base[_col] = _post_base[_col].fillna(0).astype(int)
+
+            _tcols = [c for c in _post_base.columns if c.startswith("티켓") and c not in ("총티켓수",)]
+            _ordered = ["총티켓수", "게시글수"] + sorted(_tcols, key=lambda x: int(x.replace("티켓", ""))) + ["텍스트티켓", "사진티켓"]
+            _post_sum = _post_base[[c for c in _ordered if c in _post_base.columns]].sort_values(
+                ["총티켓수", "게시글수"], ascending=[False, False]
+            )
+
+            _p_people = len(_post_sum)
+            _p_posts = int(_post_sum["게시글수"].sum()) if "게시글수" in _post_sum.columns else 0
+            _p_total_tickets = int(_post_sum["총티켓수"].sum()) if "총티켓수" in _post_sum.columns else 0
+            _p_text_t = int(_post_sum["텍스트티켓"].sum()) if "텍스트티켓" in _post_sum.columns else 0
+            _p_img_t = int(_post_sum["사진티켓"].sum()) if "사진티켓" in _post_sum.columns else 0
+            _pm1, _pm2, _pm3, _pm4, _pm5 = st.columns(5)
+            _pm1.metric("참여자", f"{_p_people}명")
+            _pm2.metric("총 게시글", f"{_p_posts}개")
+            _pm3.metric("총 티켓", f"{_p_total_tickets:,}개")
+            _pm4.metric("글자 티켓", f"{_p_text_t:,}개")
+            _pm5.metric("사진 티켓", f"{_p_img_t:,}개")
+
+            st.dataframe(
+                _post_sum,
+                use_container_width=True,
+                hide_index=False,
+            )
+
+            _post_sum_bytes = _post_sum.to_csv(index=True, encoding="utf-8-sig").encode("utf-8-sig")
+            st.download_button(
+                "⬇️ 조건2 티켓 집계 다운로드",
+                data=_post_sum_bytes,
+                file_name=f"event_post_ticket_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv",
+                use_container_width=True,
+                key="post_ticket_download",
+            )
+
 except Exception as e:
     st.error(f"조건2 결과 조회 오류: {e}")
 
@@ -1925,13 +2080,12 @@ if comment_condition_enabled:
 # Summary Section
 # -----------------------------------------------------------------------------
 if comment_condition_enabled:
-    st.markdown("### 2. 최종 집계 (참여자 랭킹)")
+    st.markdown("### 2. 조건1 참여자 티켓수 집계")
     try:
         _sum_indent_col, _sum_body_col = st.columns([0.05, 0.95])
         with _sum_body_col:
             st.caption(
-                "쿠폰 산정 규칙: 글자수 50자 이하=쿠폰 1개, 51~130자=쿠폰 2개, 131자 이상=쿠폰 3개, "
-                "아이콘 또는 사진이 1개라도 있으면 +1개(최대 4개)."
+                "티켓 산정 규칙: 글자수 100자당 티켓 1개 / 아이콘 또는 사진 있으면 +1개 / 복붙 댓글은 티켓 1개 고정"
             )
 
             final_summary_report = st.session_state.get("event_final_summary_report")
@@ -1941,27 +2095,28 @@ if comment_condition_enabled:
                 elif str(final_summary_report.get("status") or "") == "data":
                     sum_df = final_summary_report.get("df")
                     if isinstance(sum_df, pd.DataFrame) and not sum_df.empty:
-                        st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
+                        _c_people = len(sum_df)
+                        _c_comments = int(sum_df["댓글수"].sum()) if "댓글수" in sum_df.columns else 0
+                        _c_total = int(sum_df["총티켓수"].sum()) if "총티켓수" in sum_df.columns else 0
+                        _c_text = int(sum_df["글자티켓"].sum()) if "글자티켓" in sum_df.columns else 0
+                        _c_img = int(sum_df["이미지티켓"].sum()) if "이미지티켓" in sum_df.columns else 0
+                        _cm1, _cm2, _cm3, _cm4, _cm5 = st.columns(5)
+                        _cm1.metric("참여자", f"{_c_people}명")
+                        _cm2.metric("총 댓글", f"{_c_comments}개")
+                        _cm3.metric("총 티켓", f"{_c_total:,}개")
+                        _cm4.metric("글자 티켓", f"{_c_text:,}개")
+                        _cm5.metric("이미지 티켓", f"{_c_img:,}개")
                         st.dataframe(
                             sum_df,
                             use_container_width=True,
                             hide_index=True,
-                            column_config={
-                                "nickname": "별명",
-                                "comment_count": st.column_config.NumberColumn("댓글수", format="%d개"),
-                                "coupon_1": st.column_config.NumberColumn("쿠폰 1개", format="%d개"),
-                                "coupon_2": st.column_config.NumberColumn("쿠폰 2개", format="%d개"),
-                                "coupon_3": st.column_config.NumberColumn("쿠폰 3개", format="%d개"),
-                                "coupon_4": st.column_config.NumberColumn("쿠폰 4개", format="%d개"),
-                                "total_coupon": st.column_config.NumberColumn("총 쿠폰수", format="%d개"),
-                            },
                         )
 
                         sum_bytes = sum_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
                         st.download_button(
-                            "⬇️ 랭킹 리포트 다운로드",
+                            "⬇️ 조건1 티켓 집계 다운로드",
                             data=sum_bytes,
-                            file_name=f"event_ranking_{datetime.now().strftime('%Y%m%d')}.csv",
+                            file_name=f"event_comment_ticket_{datetime.now().strftime('%Y%m%d')}.csv",
                             mime="text/csv",
                             use_container_width=True,
                         )
