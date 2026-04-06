@@ -161,7 +161,7 @@ def build_workspace(profile_key: str, output_root: Path) -> Path:
     copy_file_to("productization/requirements_product.txt", target / "requirements_product.txt")
     copy_file(".gitignore", target)
     copy_file("app.py", target)
-    copy_file("카페_게시글_댓글_크롤러.py", target)
+    copy_file_to("_archive_scripts/cafe_post_comment_crawler.py", target / "cafe_post_comment_crawler.py")
     if (ROOT / "crawler_config.json").exists():
         copy_file("crawler_config.json", target)
     copy_tree("app", target)
@@ -176,7 +176,7 @@ def build_workspace(profile_key: str, output_root: Path) -> Path:
     # 프로필 페이지 파일들
     for page in profile["pages"]:
         page_path = page["path"]
-        if page_path not in ("app.py", "카페_게시글_댓글_크롤러.py"):
+        if page_path not in ("app.py", "cafe_post_comment_crawler.py"):
             copy_file(page_path, target)
 
     # 브랜딩 적용(워크스페이스 사본에만 적용)

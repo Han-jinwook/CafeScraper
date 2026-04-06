@@ -12,16 +12,16 @@ SETTINGS_CARD_TITLE_CLASS = "cafe-monster-settings-card-title"
 SETTINGS_CARD_TITLE_ICON_CLASS = "cafe-monster-settings-card-title-icon"
 
 PAGE_HOME = "app.py"
-PAGE_PAPERS = "pages/02_논문_수집.py"
-PAGE_EVENT = "pages/03_이벤트_댓글_추첨.py"
-PAGE_COMMENTER = "pages/04_자동_댓글러.py"
+PAGE_PAPERS = "pages/02_paper_collection.py"
+PAGE_EVENT = "pages/03_event_comment_lottery.py"
+PAGE_COMMENTER = "pages/04_auto_commenter.py"
 
 # (session active 키, URL 경로명, 표시 라벨) — 순서 고정
 _NAV_ENTRIES: tuple[tuple[str, str, str], ...] = (
     ("app", "", "카페 수집"),
-    ("event", "이벤트_댓글_추첨", "이벤트 댓글 분석"),
-    ("papers", "논문_수집", "논문 수집"),
-    ("commenter", "자동_댓글러", "자동 댓글러"),
+    ("event", "event_comment_lottery", "이벤트 댓글 분석"),
+    ("papers", "paper_collection", "논문 수집"),
+    ("commenter", "auto_commenter", "자동 댓글러"),
 )
 
 

@@ -41,6 +41,66 @@ if st.session_state.get("crawl_running", False):
 
 inject_settings_three_cards_css(key_basename="event_settings_card")
 
+st.markdown(
+    """
+    <style>
+    /* 조건(1)(2) 소제목 행: 가벼운 박스 (st.container key 노드) */
+    div[class*="st-key-event_cond_row_post"],
+    div[class*="st-key-event_cond_row_comment"] {
+        background: rgba(255, 255, 255, 0.78) !important;
+        border-radius: 0.5rem !important;
+        padding: 0.38rem 0.7rem 0.42rem 0.7rem !important;
+        margin: 0 0 0.45rem 0 !important;
+        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.07) !important;
+        box-sizing: border-box !important;
+    }
+    div[class*="st-key-event_cond_row_post"] .element-container,
+    div[class*="st-key-event_cond_row_comment"] .element-container {
+        margin-bottom: 0 !important;
+    }
+    /* Streamlit 체크박스가 Root에 align-items:start + Checkmark에 margin-top을 넣어 박스가 아래로 꺼짐 → 덮어씀 */
+    div[class*="st-key-event_cond_row_post"] [data-testid="stCheckbox"],
+    div[class*="st-key-event_cond_row_comment"] [data-testid="stCheckbox"] {
+        width: fit-content !important;
+        max-width: 100% !important;
+        display: flex !important;
+        align-items: center !important;
+        min-height: 0 !important;
+    }
+    div[class*="st-key-event_cond_row_post"] .stCheckbox label[data-baseweb="checkbox"],
+    div[class*="st-key-event_cond_row_comment"] .stCheckbox label[data-baseweb="checkbox"] {
+        flex-direction: row-reverse !important;
+        align-items: center !important;
+        gap: 0.35rem !important;
+        margin: 0 !important;
+    }
+    div[class*="st-key-event_cond_row_post"] .stCheckbox label[data-baseweb="checkbox"] > span:first-of-type,
+    div[class*="st-key-event_cond_row_comment"] .stCheckbox label[data-baseweb="checkbox"] > span:first-of-type {
+        margin-top: 0 !important;
+        margin-bottom: 0 !important;
+        align-self: center !important;
+    }
+    div[class*="st-key-event_cond_row_post"] [data-testid="stCheckbox"] [data-testid="stWidgetLabel"],
+    div[class*="st-key-event_cond_row_comment"] [data-testid="stCheckbox"] [data-testid="stWidgetLabel"] {
+        margin: 0 !important;
+        padding-top: 0 !important;
+        padding-bottom: 0 !important;
+        align-self: center !important;
+    }
+    div[class*="st-key-event_cond_row_post"] .stCheckbox label[data-baseweb="checkbox"] > div:last-child,
+    div[class*="st-key-event_cond_row_comment"] .stCheckbox label[data-baseweb="checkbox"] > div:last-child {
+        font-weight: 700 !important;
+        line-height: 1.25 !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        display: flex !important;
+        align-items: center !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 CONFIG_PATH = str(get_config_path())
 SAFE_DELAY_MIN_SEC = 2.5
 SAFE_DELAY_MAX_SEC = 4.5
@@ -205,7 +265,65 @@ def _build_dup_report(db_path: str) -> dict:
     }
 
 
+def _resolve_ticket_weight(input_key: str, config_key: str, fallback: int = 100) -> int:
+    raw = st.session_state.get(input_key, "")
+    try:
+        if isinstance(raw, (int, float)):
+            return max(1, int(raw))
+        s = str(raw or "").strip()
+        if s:
+            return max(1, int(s))
+    except Exception:
+        pass
+    try:
+        return max(1, int(config.get(config_key, fallback) or fallback))
+    except Exception:
+        return max(1, int(fallback))
+
+
+def _init_ticket_text_input_from_config(state_key: str, config_key: str) -> None:
+    """config에 값이 있으면 최초 한 번 입력칸을 실제 값으로 채운다(저장 후·재접속 시 진한 본문색)."""
+    if state_key in st.session_state:
+        return
+    raw = config.get(config_key)
+    try:
+        if raw is None:
+            st.session_state[state_key] = ""
+            return
+        s = str(raw).strip()
+        if not s:
+            st.session_state[state_key] = ""
+            return
+        st.session_state[state_key] = str(max(1, int(s)))
+    except Exception:
+        st.session_state[state_key] = ""
+
+
+_EVENT_PENDING_TICKET_INPUT_MATERIALIZE = "_event_pending_ticket_input_materialize"
+
+
+def _queue_ticket_inputs_materialize_after_save(cfg: dict) -> None:
+    """저장 다음 실행에서, 위젯 생성 전에 session_state를 채우도록 예약(Streamlit은 같은 런에서 위젯 생성 후 해당 키를 수정 불가)."""
+    st.session_state[_EVENT_PENDING_TICKET_INPUT_MATERIALIZE] = {
+        "event_post_chars_per_ticket_input": str(max(1, int(cfg["event_post_chars_per_ticket"]))),
+        "event_post_images_per_ticket_input": str(max(1, int(cfg["event_post_images_per_ticket"]))),
+        "event_comment_chars_per_ticket_input": str(max(1, int(cfg["event_comment_chars_per_ticket"]))),
+        "event_comment_media_ticket_bonus_input": str(max(1, int(cfg["event_comment_media_ticket_bonus"]))),
+    }
+
+
 def _build_final_summary_report(db_path: str) -> dict:
+    comment_chars_per_ticket = _resolve_ticket_weight(
+        "event_comment_chars_per_ticket_input",
+        "event_comment_chars_per_ticket",
+        100,
+    )
+    comment_media_ticket_bonus = _resolve_ticket_weight(
+        "event_comment_media_ticket_bonus_input",
+        "event_comment_media_ticket_bonus",
+        1,
+    )
+
     conn3 = sqlite3.connect(db_path, timeout=30.0)
     df_sum_raw = pd.read_sql_query(
         """
@@ -238,12 +356,12 @@ def _build_final_summary_report(db_path: str) -> dict:
     def _text_ticket(chars: int) -> int:
         if chars <= 0:
             return 0
-        return max(1, (chars - 1) // 100 + 1)
+        return max(1, (chars - 1) // comment_chars_per_ticket + 1)
 
     df_sum_raw["text_ticket"] = df_sum_raw["effective_chars"].apply(lambda v: _text_ticket(int(v)))
     df_sum_raw["image_ticket"] = (
         (df_sum_raw["emoji_count"] > 0) | (df_sum_raw["inline_image_count"] > 0)
-    ).astype(int)
+    ).astype(int) * int(comment_media_ticket_bonus)
     df_sum_raw["ticket_per_comment"] = df_sum_raw["text_ticket"] + df_sum_raw["image_ticket"]
 
     # 중복/복붙 보정: 같은 별명+같은 내용 그룹에서 첫 댓글(원문) 제외 나머지는 글자수 10 기준(=티켓 1)
@@ -281,7 +399,12 @@ def _build_final_summary_report(db_path: str) -> dict:
     sum_df = base_agg[[c for c in ordered if c in base_agg.columns]].sort_values(
         ["총티켓수", "댓글수"], ascending=[False, False]
     )
-    return {"status": "data", "df": sum_df}
+    return {
+        "status": "data",
+        "df": sum_df,
+        "comment_chars_per_ticket": comment_chars_per_ticket,
+        "comment_media_ticket_bonus": comment_media_ticket_bonus,
+    }
 
 
 def _get_event_db_signature(db_path: str) -> str:
@@ -303,11 +426,38 @@ def _get_event_db_signature(db_path: str) -> str:
         return "0:0:"
 
 
+def _get_event_ticket_option_signature() -> str:
+    _comment_chars = _resolve_ticket_weight(
+        "event_comment_chars_per_ticket_input",
+        "event_comment_chars_per_ticket",
+        100,
+    )
+    _post_chars = _resolve_ticket_weight(
+        "event_post_chars_per_ticket_input",
+        "event_post_chars_per_ticket",
+        100,
+    )
+    _comment_media_bonus = _resolve_ticket_weight(
+        "event_comment_media_ticket_bonus_input",
+        "event_comment_media_ticket_bonus",
+        1,
+    )
+    _post_images_per_ticket = _resolve_ticket_weight(
+        "event_post_images_per_ticket_input",
+        "event_post_images_per_ticket",
+        1,
+    )
+    return (
+        f"comment_chars:{_comment_chars}|post_chars:{_post_chars}"
+        f"|comment_media_bonus:{_comment_media_bonus}|post_images_per_ticket:{_post_images_per_ticket}"
+    )
+
+
 def _ensure_event_analysis_reports(*, force: bool = False) -> None:
     if st.session_state.get("event_running") or st.session_state.get("event_run_pending"):
         return
 
-    current_sig = _get_event_db_signature(EVENT_DB_PATH)
+    current_sig = f"{_get_event_db_signature(EVENT_DB_PATH)}|{_get_event_ticket_option_signature()}"
     has_reports = (
         st.session_state.get("event_dup_report") is not None
         and st.session_state.get("event_final_summary_report") is not None
@@ -389,15 +539,9 @@ if config.get("event_comment_end_date"):
         pass
 
 _comment_search_default_start = _comment_default_start
-_comment_search_default_end = _comment_default_end
 if config.get("event_comment_search_start_date"):
     try:
         _comment_search_default_start = datetime.strptime(config["event_comment_search_start_date"], "%Y-%m-%d")
-    except Exception:
-        pass
-if config.get("event_comment_search_end_date"):
-    try:
-        _comment_search_default_end = datetime.strptime(config["event_comment_search_end_date"], "%Y-%m-%d")
     except Exception:
         pass
 
@@ -413,6 +557,23 @@ if config.get("event_post_end_date"):
         _post_default_end = datetime.strptime(config["event_post_end_date"], "%Y-%m-%d")
     except Exception:
         pass
+
+_comment_chars_per_ticket_default = int(config.get("event_comment_chars_per_ticket", 100) or 100)
+_post_chars_per_ticket_default = int(config.get("event_post_chars_per_ticket", 100) or 100)
+_comment_chars_per_ticket_default = max(1, _comment_chars_per_ticket_default)
+_post_chars_per_ticket_default = max(1, _post_chars_per_ticket_default)
+_comment_media_ticket_bonus_default = int(config.get("event_comment_media_ticket_bonus", 1) or 1)
+_post_images_per_ticket_default = int(config.get("event_post_images_per_ticket", 1) or 1)
+_comment_media_ticket_bonus_default = max(1, _comment_media_ticket_bonus_default)
+_post_images_per_ticket_default = max(1, _post_images_per_ticket_default)
+_pending_ticket_vals = st.session_state.pop(_EVENT_PENDING_TICKET_INPUT_MATERIALIZE, None)
+if _pending_ticket_vals is not None:
+    for _pt_key, _pt_val in _pending_ticket_vals.items():
+        st.session_state[_pt_key] = _pt_val
+_init_ticket_text_input_from_config("event_comment_chars_per_ticket_input", "event_comment_chars_per_ticket")
+_init_ticket_text_input_from_config("event_post_chars_per_ticket_input", "event_post_chars_per_ticket")
+_init_ticket_text_input_from_config("event_comment_media_ticket_bonus_input", "event_comment_media_ticket_bonus")
+_init_ticket_text_input_from_config("event_post_images_per_ticket_input", "event_post_images_per_ticket")
 
 st.markdown("#### ⚙️ 수집 설정")
 _ev1, _ev2, _ev3 = st.columns([1, 1, 1], gap="medium")
@@ -912,6 +1073,12 @@ with _ev2:
                 config.get("event_apply_comment_exclude", False),
             )
         )
+        _apply_post_exclude = bool(
+            st.session_state.get(
+                "event_apply_post_exclude_checkbox",
+                config.get("event_apply_post_exclude", True),
+            )
+        )
         def _parse_level_map(raw_text: str) -> dict[str, str]:
             out: dict[str, str] = {}
             for ln in str(raw_text or "").splitlines():
@@ -935,46 +1102,138 @@ with _ev2:
             f"🚫 제외 설정 (게시글 {_exclude_post_count}명 · 댓글 {_exclude_comment_count}명)",
             expanded=False,
         ):
-            exclude_post_nicks_text = st.text_area(
-                "게시글 제외 별명 (줄바꿈 구분)",
-                value=config.get("event_exclude_post_nicks", "마법사멀린"),
-                height=170,
-                help="해당 별명이 작성한 게시글은 수집/분석 대상에서 제외합니다.",
-                key="event_exclude_post_nicks_text",
-            )
-            exclude_comment_nicks_text = st.text_area(
-                "댓글 제외 별명 (줄바꿈 구분)",
-                value=config.get("event_exclude_comment_nicks", config.get("event_exclude_nicks", "마법사멀린\n해나라")),
-                height=220,
-                help="해당 별명이 작성한 댓글은 저장/집계에서 제외합니다. 200명 이상 붙여넣어도 됩니다.",
-                key="event_exclude_comment_nicks_text",
-            )
-            apply_comment_exclude = st.checkbox(
-                "댓글 제외 별명 적용",
-                value=_apply_comment_exclude,
-                key="event_apply_comment_exclude_checkbox",
-                help="끄면 위 댓글 제외 별명 목록은 저장만 되고 수집/집계에서 제외하지 않습니다.",
-            )
-            if (not apply_comment_exclude) and _exclude_comment_count > 0:
-                st.caption("현재 댓글 제외 목록은 저장만 되어 있고, 실행에는 적용되지 않습니다.")
-        with st.expander("🧩 수집 조건", expanded=False):
-            _mode_options = ["조건1", "조건2"]
-            _current_comment_enabled = bool(st.session_state.get("event_condition_comment_enabled", True))
-            _current_mode_idx = 0 if _current_comment_enabled else 1
-            selected_mode = st.radio(
-                "실행 조건 선택 (하나만 선택)",
-                _mode_options,
-                index=_current_mode_idx,
-                key="event_condition_mode_radio",
-                horizontal=False,
-                format_func=lambda x: "조건1. 댓글 수집·분석" if x == "조건1" else "조건2. 게시글 수집·분석",
-            )
-            cond1_checked = selected_mode == "조건1"
-            cond2_checked = selected_mode == "조건2"
-            st.session_state.event_condition_comment_enabled = bool(cond1_checked)
-            st.session_state.event_condition_post_enabled = bool(cond2_checked)
+            _post_left, _post_right = st.columns([4.9, 1.3], gap="medium")
+            with _post_left:
+                exclude_post_nicks_text = st.text_area(
+                    "게시글 제외 별명 (줄바꿈 구분)",
+                    value=config.get("event_exclude_post_nicks", "마법사멀린"),
+                    height=170,
+                    help="줄바꿈으로 별명을 구분합니다. 게시글 제외 적용 체크가 ON일 때만 이 목록을 실행에 반영하며, OFF면 저장만 됩니다.",
+                    key="event_exclude_post_nicks_text",
+                )
+            with _post_right:
+                apply_post_exclude = st.checkbox(
+                    "적용",
+                    value=_apply_post_exclude,
+                    key="event_apply_post_exclude_checkbox",
+                )
 
-            st.markdown("**조건1. 댓글 수집·분석**")
+            _comment_left, _comment_right = st.columns([4.9, 1.3], gap="medium")
+            with _comment_left:
+                exclude_comment_nicks_text = st.text_area(
+                    "댓글 제외 별명 (줄바꿈 구분)",
+                    value=config.get("event_exclude_comment_nicks", config.get("event_exclude_nicks", "마법사멀린\n해나라")),
+                    height=220,
+                    help="줄바꿈으로 별명을 구분합니다. 댓글 제외 적용 체크가 ON일 때만 이 목록을 실행에 반영하며, OFF면 저장만 됩니다.",
+                    key="event_exclude_comment_nicks_text",
+                )
+            with _comment_right:
+                apply_comment_exclude = st.checkbox(
+                    "적용",
+                    value=_apply_comment_exclude,
+                    key="event_apply_comment_exclude_checkbox",
+                )
+        with st.expander("🧩 수집 조건", expanded=False):
+            if "event_cond_pick_post_checkbox" not in st.session_state:
+                st.session_state.event_cond_pick_post_checkbox = bool(
+                    st.session_state.get("event_condition_post_enabled", False)
+                )
+            if "event_cond_pick_comment_checkbox" not in st.session_state:
+                st.session_state.event_cond_pick_comment_checkbox = bool(
+                    st.session_state.get("event_condition_comment_enabled", True)
+                )
+            # 초기 진입 시 둘 다 같으면(둘 다 true/false) 댓글 조건을 기본으로 둠
+            if st.session_state.event_cond_pick_post_checkbox == st.session_state.event_cond_pick_comment_checkbox:
+                st.session_state.event_cond_pick_post_checkbox = False
+                st.session_state.event_cond_pick_comment_checkbox = True
+
+            def _pick_post_mode():
+                if st.session_state.get("event_cond_pick_post_checkbox", False):
+                    st.session_state.event_cond_pick_comment_checkbox = False
+                elif not st.session_state.get("event_cond_pick_comment_checkbox", False):
+                    st.session_state.event_cond_pick_comment_checkbox = True
+
+            def _pick_comment_mode():
+                if st.session_state.get("event_cond_pick_comment_checkbox", False):
+                    st.session_state.event_cond_pick_post_checkbox = False
+                elif not st.session_state.get("event_cond_pick_post_checkbox", False):
+                    st.session_state.event_cond_pick_post_checkbox = True
+
+            cond1_checked = bool(st.session_state.get("event_cond_pick_post_checkbox", False))  # UI 조건1 = 게시글
+            cond2_checked = bool(st.session_state.get("event_cond_pick_comment_checkbox", True))  # UI 조건2 = 댓글
+            st.session_state.event_condition_post_enabled = bool(cond1_checked)
+            st.session_state.event_condition_comment_enabled = bool(cond2_checked)
+
+            with st.container(key="event_cond_row_post"):
+                st.checkbox(
+                    "**조건(1)** 게시글 수집·분석",
+                    key="event_cond_pick_post_checkbox",
+                    on_change=_pick_post_mode,
+                    width="content",
+                )
+            _p1, _p2 = st.columns(2)
+            with _p1:
+                post_start_date = st.date_input(
+                    "시작일",
+                    _post_default_start,
+                    key="event_post_start_date_input",
+                    disabled=not cond1_checked,
+                )
+            with _p2:
+                post_end_date = st.date_input(
+                    "종료일",
+                    _post_default_end,
+                    key="event_post_end_date_input",
+                    disabled=not cond1_checked,
+                )
+            _post_chars_preview = _resolve_ticket_weight(
+                "event_post_chars_per_ticket_input",
+                "event_post_chars_per_ticket",
+                _post_chars_per_ticket_default,
+            )
+            _post_images_preview = _resolve_ticket_weight(
+                "event_post_images_per_ticket_input",
+                "event_post_images_per_ticket",
+                _post_images_per_ticket_default,
+            )
+            _p_t1, _p_t2 = st.columns(2)
+            with _p_t1:
+                st.text_input(
+                    "게시글 글자수 기준",
+                    value=str(st.session_state.get("event_post_chars_per_ticket_input", "") or ""),
+                    placeholder=str(_post_chars_per_ticket_default),
+                    key="event_post_chars_per_ticket_input",
+                    disabled=not cond1_checked,
+                )
+            with _p_t2:
+                st.text_input(
+                    "티켓 수",
+                    value=str(st.session_state.get("event_post_images_per_ticket_input", "") or ""),
+                    placeholder=str(_post_images_per_ticket_default),
+                    key="event_post_images_per_ticket_input",
+                    disabled=not cond1_checked,
+                )
+            if cond1_checked:
+                _post_rule_panel = "background:rgba(37,99,235,0.08);color:#1e3a8a;"
+            else:
+                _post_rule_panel = "background:rgba(100,116,139,0.06);color:#475569;"
+            st.markdown(
+                f"<div style='margin:0.35rem 0 0.5rem;padding:0.45rem 0.6rem;border-radius:0.4rem;"
+                f"{_post_rule_panel}"
+                f"font-weight:600;font-size:0.96rem;letter-spacing:-0.02em;line-height:1.35;'>"
+                f"[ {_post_chars_preview} ] 자 당 {_post_images_preview}티켓</div>",
+                unsafe_allow_html=True,
+            )
+
+            st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
+            st.markdown("---")
+            with st.container(key="event_cond_row_comment"):
+                st.checkbox(
+                    "**조건(2)** 댓글 수집·분석",
+                    key="event_cond_pick_comment_checkbox",
+                    on_change=_pick_comment_mode,
+                    width="content",
+                )
             st.caption("목표 기간(댓글 작성일 기준)")
             _c1t1, _c1t2 = st.columns(2)
             with _c1t1:
@@ -982,50 +1241,62 @@ with _ev2:
                     "목표 시작일",
                     _comment_default_start,
                     key="event_comment_start_date_input",
-                    disabled=not cond1_checked,
+                    disabled=not cond2_checked,
                 )
             with _c1t2:
                 comment_end_date = st.date_input(
                     "목표 종료일",
                     _comment_default_end,
                     key="event_comment_end_date_input",
-                    disabled=not cond1_checked,
-                )
-
-            st.caption("탐색 기간(게시글 검색 범위)")
-            _c1s1, _c1s2 = st.columns(2)
-            with _c1s1:
-                comment_search_start_date = st.date_input(
-                    "탐색 시작일",
-                    _comment_search_default_start,
-                    key="event_comment_search_start_date_input",
-                    disabled=not cond1_checked,
-                )
-            with _c1s2:
-                comment_search_end_date = st.date_input(
-                    "탐색 종료일",
-                    _comment_search_default_end,
-                    key="event_comment_search_end_date_input",
-                    disabled=not cond1_checked,
-                )
-
-            st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
-            st.markdown("**조건2. 게시글 수집·분석**")
-            _p1, _p2 = st.columns(2)
-            with _p1:
-                post_start_date = st.date_input(
-                    "조건2 시작일",
-                    _post_default_start,
-                    key="event_post_start_date_input",
                     disabled=not cond2_checked,
                 )
-            with _p2:
-                post_end_date = st.date_input(
-                    "조건2 종료일",
-                    _post_default_end,
-                    key="event_post_end_date_input",
+
+            st.caption("게시글 탐색 범위(댓글 목표기간 보완용)")
+            comment_search_start_date = st.date_input(
+                "게시글 탐색 시작일",
+                _comment_search_default_start,
+                key="event_comment_search_start_date_input",
+                disabled=not cond2_checked,
+            )
+            st.caption("탐색 종료 기준은 목표 종료일과 동일하게 자동 적용됩니다.")
+            _comment_chars_preview = _resolve_ticket_weight(
+                "event_comment_chars_per_ticket_input",
+                "event_comment_chars_per_ticket",
+                _comment_chars_per_ticket_default,
+            )
+            _comment_media_preview = _resolve_ticket_weight(
+                "event_comment_media_ticket_bonus_input",
+                "event_comment_media_ticket_bonus",
+                _comment_media_ticket_bonus_default,
+            )
+            _c_t1, _c_t2 = st.columns(2)
+            with _c_t1:
+                st.text_input(
+                    "댓글 글자수 기준",
+                    value=str(st.session_state.get("event_comment_chars_per_ticket_input", "") or ""),
+                    placeholder=str(_comment_chars_per_ticket_default),
+                    key="event_comment_chars_per_ticket_input",
                     disabled=not cond2_checked,
                 )
+            with _c_t2:
+                st.text_input(
+                    "아이콘 or 사진 1장 = ( ) 티켓",
+                    value=str(st.session_state.get("event_comment_media_ticket_bonus_input", "") or ""),
+                    placeholder=str(_comment_media_ticket_bonus_default),
+                    key="event_comment_media_ticket_bonus_input",
+                    disabled=not cond2_checked,
+                )
+            if cond2_checked:
+                _comment_rule_panel = "background:rgba(37,99,235,0.08);color:#1e3a8a;"
+            else:
+                _comment_rule_panel = "background:rgba(100,116,139,0.06);color:#475569;"
+            st.markdown(
+                f"<div style='margin:0.35rem 0 0.5rem;padding:0.45rem 0.6rem;border-radius:0.4rem;"
+                f"{_comment_rule_panel}"
+                f"font-weight:600;font-size:0.96rem;letter-spacing:-0.02em;line-height:1.35;'>"
+                f"[ {_comment_chars_preview} ] 자당 1티켓 · 이미지 1장 {_comment_media_preview}티켓</div>",
+                unsafe_allow_html=True,
+            )
         st.markdown("<div style='margin-top: 10px;'></div>", unsafe_allow_html=True)
         if st.button("💾 저장", use_container_width=True, key="event_save_settings_btn"):
             config["event_cafe_name"] = str(event_cafe_name or "").strip()
@@ -1038,13 +1309,37 @@ with _ev2:
             config["event_comment_start_date"] = comment_start_date.strftime("%Y-%m-%d")
             config["event_comment_end_date"] = comment_end_date.strftime("%Y-%m-%d")
             config["event_comment_search_start_date"] = comment_search_start_date.strftime("%Y-%m-%d")
-            config["event_comment_search_end_date"] = comment_search_end_date.strftime("%Y-%m-%d")
+            # 하위호환: 기존 키는 목표 종료일과 동일 값으로 유지
+            config["event_comment_search_end_date"] = comment_end_date.strftime("%Y-%m-%d")
             config["event_condition_post_enabled"] = bool(st.session_state.get("event_condition_post_enabled", False))
             config["event_post_start_date"] = post_start_date.strftime("%Y-%m-%d")
             config["event_post_end_date"] = post_end_date.strftime("%Y-%m-%d")
+            config["event_comment_chars_per_ticket"] = _resolve_ticket_weight(
+                "event_comment_chars_per_ticket_input",
+                "event_comment_chars_per_ticket",
+                _comment_chars_per_ticket_default,
+            )
+            config["event_post_chars_per_ticket"] = _resolve_ticket_weight(
+                "event_post_chars_per_ticket_input",
+                "event_post_chars_per_ticket",
+                _post_chars_per_ticket_default,
+            )
+            config["event_comment_media_ticket_bonus"] = _resolve_ticket_weight(
+                "event_comment_media_ticket_bonus_input",
+                "event_comment_media_ticket_bonus",
+                _comment_media_ticket_bonus_default,
+            )
+            config["event_post_images_per_ticket"] = _resolve_ticket_weight(
+                "event_post_images_per_ticket_input",
+                "event_post_images_per_ticket",
+                _post_images_per_ticket_default,
+            )
             config["event_max_posts"] = 0
             config["event_exclude_post_nicks"] = exclude_post_nicks_text
             config["event_exclude_comment_nicks"] = exclude_comment_nicks_text
+            config["event_apply_post_exclude"] = bool(
+                st.session_state.get("event_apply_post_exclude_checkbox", True)
+            )
             config["event_apply_comment_exclude"] = bool(
                 st.session_state.get("event_apply_comment_exclude_checkbox", False)
             )
@@ -1058,6 +1353,7 @@ with _ev2:
                 st.session_state.get("event_db_path_input", config.get("event_db_path", ""))
             ).strip()
             save_config(config)
+            _queue_ticket_inputs_materialize_after_save(config)
             st.success("✅ 설정이 저장되었습니다.")
             time.sleep(1)
             st.rerun()
@@ -1121,14 +1417,34 @@ post_condition_enabled = bool(st.session_state.get("event_condition_post_enabled
 comment_start_date = st.session_state.get("event_comment_start_date_input", _comment_default_start)
 comment_end_date = st.session_state.get("event_comment_end_date_input", _comment_default_end)
 comment_search_start_date = st.session_state.get("event_comment_search_start_date_input", _comment_search_default_start)
-comment_search_end_date = st.session_state.get("event_comment_search_end_date_input", _comment_search_default_end)
 post_start_date = st.session_state.get("event_post_start_date_input", _post_default_start)
 post_end_date = st.session_state.get("event_post_end_date_input", _post_default_end)
+comment_chars_per_ticket = _resolve_ticket_weight(
+    "event_comment_chars_per_ticket_input",
+    "event_comment_chars_per_ticket",
+    _comment_chars_per_ticket_default,
+)
+comment_media_ticket_bonus = _resolve_ticket_weight(
+    "event_comment_media_ticket_bonus_input",
+    "event_comment_media_ticket_bonus",
+    _comment_media_ticket_bonus_default,
+)
+post_chars_per_ticket = _resolve_ticket_weight(
+    "event_post_chars_per_ticket_input",
+    "event_post_chars_per_ticket",
+    _post_chars_per_ticket_default,
+)
+post_images_per_ticket = _resolve_ticket_weight(
+    "event_post_images_per_ticket_input",
+    "event_post_images_per_ticket",
+    _post_images_per_ticket_default,
+)
 
 comment_start_dt = datetime.combine(comment_start_date, datetime.min.time())
 comment_end_dt = datetime.combine(comment_end_date, datetime.max.time())
 comment_search_start_dt = datetime.combine(comment_search_start_date, datetime.min.time())
-comment_search_end_dt = datetime.combine(comment_search_end_date, datetime.max.time())
+# 댓글 조건(조건2) 게시글 탐색 종료는 별도 입력 없이 목표 종료일로 고정
+comment_search_end_dt = comment_end_dt
 
 post_start_dt = datetime.combine(post_start_date, datetime.min.time())
 post_end_dt = datetime.combine(post_end_date, datetime.max.time())
@@ -1272,6 +1588,8 @@ with step_col2:
                         "post_end_dt": post_end_dt,
                         "exclude_post_nicks_text": str(exclude_post_nicks_text or ""),
                         "exclude_comment_nicks_text": str(exclude_comment_nicks_text or ""),
+                        "apply_post_exclude": bool(st.session_state.get("event_apply_post_exclude_checkbox", True)),
+                        "apply_comment_exclude": bool(st.session_state.get("event_apply_comment_exclude_checkbox", False)),
                     }
                     st.session_state.event_running = True
                     st.session_state.event_run_pending = True
@@ -1305,6 +1623,8 @@ if st.session_state.event_run_pending and st.session_state.event_running:
     post_end_dt = payload.get("post_end_dt")
     exclude_post_nicks_raw = str(payload.get("exclude_post_nicks_text") or "")
     exclude_comment_nicks_raw = str(payload.get("exclude_comment_nicks_text") or "")
+    apply_post_exclude_runtime = bool(payload.get("apply_post_exclude", True))
+    apply_comment_exclude_runtime = bool(payload.get("apply_comment_exclude", False))
 
     prog = st.progress(max(0.0, min(1.0, float(st.session_state.get("event_progress_ratio", 0.0) or 0.0))))
     _metrics_placeholder = st.empty()
@@ -1395,8 +1715,11 @@ if st.session_state.event_run_pending and st.session_state.event_running:
                     out[kk] = vv
             return out
 
-        exclude_post_set = {_norm_nick(x) for x in exclude_post_nicks_raw.splitlines() if str(x).strip()}
-        apply_comment_exclude_runtime = bool(st.session_state.get("event_apply_comment_exclude_checkbox", False))
+        exclude_post_set = (
+            {_norm_nick(x) for x in exclude_post_nicks_raw.splitlines() if str(x).strip()}
+            if apply_post_exclude_runtime
+            else set()
+        )
         exclude_comment_set = (
             {_norm_nick(x) for x in exclude_comment_nicks_raw.splitlines() if str(x).strip()}
             if apply_comment_exclude_runtime
@@ -1779,9 +2102,10 @@ _badge_post_count = len(
 _badge_comment_count = len(
     [x for x in str(st.session_state.get("event_exclude_comment_nicks_text", "") or "").splitlines() if str(x).strip()]
 )
+_badge_post_enabled = bool(st.session_state.get("event_apply_post_exclude_checkbox", True))
 _badge_comment_enabled = bool(st.session_state.get("event_apply_comment_exclude_checkbox", False))
 st.caption(
-    f"🏷️ 제외 설정 적용 중 · 게시글 제외 별명 {_badge_post_count}명 · "
+    f"🏷️ 제외 설정 적용 중 · 게시글 제외 별명 {'ON' if _badge_post_enabled else 'OFF'}({_badge_post_count}명) · "
     f"댓글 제외 별명 {'ON' if _badge_comment_enabled else 'OFF'}({_badge_comment_count}명)"
 )
 
@@ -1888,7 +2212,7 @@ except Exception as e:
 # -----------------------------------------------------------------------------
 # Post Analysis Section (Condition 2)
 # -----------------------------------------------------------------------------
-st.markdown("### 📝 조건2 게시글 수집·분석 결과")
+st.markdown("### 📝 조건1 게시글 수집·분석 결과")
 try:
     conn_post = sqlite3.connect(EVENT_DB_PATH, timeout=30.0)
     df_post = pd.read_sql_query(
@@ -1910,7 +2234,7 @@ try:
     )
     conn_post.close()
     if df_post.empty:
-        st.info("조건2 게시글 분석 결과가 없습니다.")
+        st.info("조건1 게시글 분석 결과가 없습니다.")
     else:
         st.dataframe(
             df_post,
@@ -1926,11 +2250,11 @@ try:
             },
         )
     if not df_post.empty:
-        st.markdown("#### 🎫 조건2 참여자 티켓수 집계")
+        st.markdown("#### 🎫 조건1 참여자 티켓수 집계")
         _post_sum_indent, _post_sum_body = st.columns([0.05, 0.95])
         with _post_sum_body:
             st.caption(
-                "티켓 산정 규칙: 글자수(제목 포함) 100자당 티켓 1개 / 사진 1장당 티켓 1개"
+                f"티켓 산정 규칙: 글자수(제목 포함) {post_chars_per_ticket}자당 티켓 1개 / 사진 {post_images_per_ticket}장당 티켓 1개"
             )
 
             _df_p = df_post.copy()
@@ -1942,10 +2266,10 @@ try:
             def _text_ticket(chars: int) -> int:
                 if chars <= 0:
                     return 0
-                return max(1, (chars - 1) // 100 + 1)
+                return max(1, (chars - 1) // post_chars_per_ticket + 1)
 
             _df_p["텍스트티켓"] = _df_p["_total_chars"].apply(_text_ticket)
-            _df_p["사진티켓"] = _df_p["post_image_count"]
+            _df_p["사진티켓"] = (_df_p["post_image_count"] // max(1, int(post_images_per_ticket))).astype(int)
             _df_p["티켓합"] = _df_p["텍스트티켓"] + _df_p["사진티켓"]
 
             _post_base = (
@@ -1996,7 +2320,7 @@ try:
 
             _post_sum_bytes = _post_sum.to_csv(index=True, encoding="utf-8-sig").encode("utf-8-sig")
             st.download_button(
-                "⬇️ 조건2 티켓 집계 다운로드",
+                "⬇️ 조건1 티켓 집계 다운로드",
                 data=_post_sum_bytes,
                 file_name=f"event_post_ticket_{datetime.now().strftime('%Y%m%d')}.csv",
                 mime="text/csv",
@@ -2005,7 +2329,7 @@ try:
             )
 
 except Exception as e:
-    st.error(f"조건2 결과 조회 오류: {e}")
+    st.error(f"조건1 결과 조회 오류: {e}")
 
 
 # -----------------------------------------------------------------------------
@@ -2080,12 +2404,12 @@ if comment_condition_enabled:
 # Summary Section
 # -----------------------------------------------------------------------------
 if comment_condition_enabled:
-    st.markdown("### 2. 조건1 참여자 티켓수 집계")
+    st.markdown("### 2. 조건2 참여자 티켓수 집계")
     try:
         _sum_indent_col, _sum_body_col = st.columns([0.05, 0.95])
         with _sum_body_col:
             st.caption(
-                "티켓 산정 규칙: 글자수 100자당 티켓 1개 / 아이콘 또는 사진 있으면 +1개 / 복붙 댓글은 티켓 1개 고정"
+                f"티켓 산정 규칙: 글자수 {comment_chars_per_ticket}자당 티켓 1개 / 아이콘 또는 사진 1장 = +{comment_media_ticket_bonus}티켓 / 복붙 댓글은 티켓 1개 고정"
             )
 
             final_summary_report = st.session_state.get("event_final_summary_report")
@@ -2114,7 +2438,7 @@ if comment_condition_enabled:
 
                         sum_bytes = sum_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
                         st.download_button(
-                            "⬇️ 조건1 티켓 집계 다운로드",
+                            "⬇️ 조건2 티켓 집계 다운로드",
                             data=sum_bytes,
                             file_name=f"event_comment_ticket_{datetime.now().strftime('%Y%m%d')}.csv",
                             mime="text/csv",

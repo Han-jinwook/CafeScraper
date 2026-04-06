@@ -3,13 +3,13 @@ path = "app.py"
 name = "카페 게시글/댓글 크롤러"
 
 [[pages]]
-path = "pages/02_논문_수집.py"
+path = "pages/02_paper_collection.py"
 name = "논문 수집"
 
 [[pages]]
-path = "pages/03_이벤트_댓글_추첨.py"
+path = "pages/03_event_comment_lottery.py"
 name = "이벤트 댓글 추첨"
 
 [[pages]]
-path = "pages/04_자동_댓글러.py"
+path = "pages/04_auto_commenter.py"
 name = "자동 댓글러"

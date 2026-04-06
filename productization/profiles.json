@@ -4,23 +4,23 @@
     "display_name": "[카페 몬스터] 통합본 Master",
     "system_id": "CafeMonster_MasterSuite",
     "version": "V1.0",
-    "entry_script": "카페_게시글_댓글_크롤러.py",
+    "entry_script": "cafe_post_comment_crawler.py",
     "page_title": "[카페 몬스터] 통합본 Master V1.0",
     "pages": [
       {
-        "path": "카페_게시글_댓글_크롤러.py",
+        "path": "cafe_post_comment_crawler.py",
         "name": "카페 추출기 Pro"
       },
       {
-        "path": "pages/02_논문_수집.py",
+        "path": "pages/02_paper_collection.py",
         "name": "논문 수집"
       },
       {
-        "path": "pages/03_이벤트_댓글_추첨.py",
+        "path": "pages/03_event_comment_lottery.py",
         "name": "이벤트 댓글 추첨"
       },
       {
-        "path": "pages/04_자동_댓글러.py",
+        "path": "pages/04_auto_commenter.py",
         "name": "자동 댓글러"
       }
     ]
@@ -30,11 +30,11 @@
     "display_name": "[카페 몬스터] 카페 추출기 Pro",
     "system_id": "CafeMonster_Crawler_Pro",
     "version": "V1.0",
-    "entry_script": "카페_게시글_댓글_크롤러.py",
+    "entry_script": "cafe_post_comment_crawler.py",
     "page_title": "[카페 몬스터] 카페 추출기 Pro V1.0",
     "pages": [
       {
-        "path": "카페_게시글_댓글_크롤러.py",
+        "path": "cafe_post_comment_crawler.py",
         "name": "카페 추출기 Pro"
       }
     ]
@@ -48,7 +48,7 @@
     "page_title": "[카페 몬스터] 이벤트 추첨기 V1.0",
     "pages": [
       {
-        "path": "pages/03_이벤트_댓글_추첨.py",
+        "path": "pages/03_event_comment_lottery.py",
         "name": "이벤트 댓글 추첨"
       }
     ]
@@ -62,7 +62,7 @@
     "page_title": "[카페 몬스터] 스텔스 댓글러 V1.0",
     "pages": [
       {
-        "path": "pages/04_자동_댓글러.py",
+        "path": "pages/04_auto_commenter.py",
         "name": "스텔스 댓글러"
       }
     ]
@@ -76,7 +76,7 @@
     "page_title": "[카페 몬스터] 논문 수집기 V1.0",
     "pages": [
       {
-        "path": "pages/02_논문_수집.py",
+        "path": "pages/02_paper_collection.py",
         "name": "논문 수집"
       }
     ]

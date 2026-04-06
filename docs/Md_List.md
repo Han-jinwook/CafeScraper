@@ -20,8 +20,8 @@ docs/
 ├── plan.md                 # 개발 계획·작업 이력
 ├── Md_List.md              # 이 파일 (문서 인덱스)
 ├── architecture/           # 스키마·알고리즘
-│   ├── 스키마.md
-│   └── 카페크롤러_알고리즘.md
+│   ├── schema.md
+│   └── cafe_crawler_algorithm.md
 └── productization/         # 제품화·브랜드·Stitch
     ├── README.md
     ├── BRAND_GUIDE_3MONSTER.md
@@ -37,8 +37,8 @@ docs/
 | `docs/README.md` | docs 폴더 안내 |
 | `docs/help.md` | 등급 보강 실패 등 운영 트러블슈팅 |
 | `docs/plan.md` | 최근 개발 성과·버그·다음 점검 |
-| `docs/architecture/스키마.md` | SQLite 테이블 구조 |
-| `docs/architecture/카페크롤러_알고리즘.md` | 카페 크롤링 알고리즘 |
+| `docs/architecture/schema.md` | SQLite 테이블 구조 |
+| `docs/architecture/cafe_crawler_algorithm.md` | 카페 크롤링 알고리즘 |
 | `docs/productization/README.md` | 워크스페이스·라이선스 도구 사용법 |
 | `docs/productization/BRAND_GUIDE_3MONSTER.md` | 우산 브랜드 3Monster |
 | `docs/productization/BRAND_GUIDE_CafeMonster.md` | 카페 몬스터 CI/BI |
