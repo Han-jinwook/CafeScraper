@@ -81,6 +81,18 @@ def init_event_db(db_path: str) -> None:
         )
         """
     )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS event_mentor_visits (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nickname TEXT NOT NULL,
+            member_grade TEXT NOT NULL,
+            visit_count INTEGER NOT NULL DEFAULT 0,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(nickname, member_grade)
+        )
+        """
+    )
 
     # 구버전 DB 호환(컬럼 추가)
     try:
@@ -415,6 +427,54 @@ def get_event_posts_count(db_path: str) -> int:
         conn = sqlite3.connect(db_path, timeout=30.0)
         cur = conn.cursor()
         cur.execute("SELECT COUNT(*) FROM event_posts")
+        n = cur.fetchone()[0] or 0
+        conn.close()
+        return int(n)
+    except Exception:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return 0
+
+
+def upsert_event_mentor_visits(db_path: str, rows: Iterable[Dict[str, Any]]) -> int:
+    """멘토(등급별) 방문수 스냅샷. (nickname, member_grade) 기준으로 덮어쓰기."""
+    n = 0
+    conn = sqlite3.connect(db_path, timeout=30.0)
+    cur = conn.cursor()
+    try:
+        for r in rows:
+            nick = str((r or {}).get("nickname") or "").strip()
+            grade = str((r or {}).get("member_grade") or "").strip()
+            if not nick or not grade:
+                continue
+            try:
+                vc = int((r or {}).get("visit_count") or 0)
+            except Exception:
+                vc = 0
+            cur.execute(
+                """
+                INSERT INTO event_mentor_visits (nickname, member_grade, visit_count, updated_at)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(nickname, member_grade) DO UPDATE SET
+                    visit_count = excluded.visit_count,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (nick, grade, vc),
+            )
+            n += 1
+        conn.commit()
+    finally:
+        conn.close()
+    return n
+
+
+def get_event_mentor_visits_count(db_path: str) -> int:
+    try:
+        conn = sqlite3.connect(db_path, timeout=30.0)
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM event_mentor_visits")
         n = cur.fetchone()[0] or 0
         conn.close()
         return int(n)

@@ -14,12 +14,14 @@ from app.products.scraper.crawler import NaverCafeCrawler
 from app.utils.naver_login import auto_login_naver_with_js as _auto_login_naver_with_js
 from app.utils.paths import get_config_path, resolve_event_db_path
 from app.utils.event_db import (
+    get_event_comments_count,
+    get_event_mentor_visits_count,
+    get_event_posts_count,
     init_event_db,
     save_event_comments,
     save_event_post,
     save_event_post_analysis,
-    get_event_comments_count,
-    get_event_posts_count,
+    upsert_event_mentor_visits,
 )
 from app.utils.streamlit_input_history import inject_connect_history_suggestions
 from app.utils.streamlit_brand import render_logo_png
@@ -44,9 +46,10 @@ inject_settings_three_cards_css(key_basename="event_settings_card")
 st.markdown(
     """
     <style>
-    /* 조건(1)(2) 소제목 행: 가벼운 박스 (st.container key 노드) */
+    /* 조건(1)(2)(3) 소제목 행: 가벼운 박스 (st.container key 노드) */
     div[class*="st-key-event_cond_row_post"],
-    div[class*="st-key-event_cond_row_comment"] {
+    div[class*="st-key-event_cond_row_comment"],
+    div[class*="st-key-event_cond_row_mentor"] {
         background: rgba(255, 255, 255, 0.78) !important;
         border-radius: 0.5rem !important;
         padding: 0.38rem 0.7rem 0.42rem 0.7rem !important;
@@ -55,12 +58,14 @@ st.markdown(
         box-sizing: border-box !important;
     }
     div[class*="st-key-event_cond_row_post"] .element-container,
-    div[class*="st-key-event_cond_row_comment"] .element-container {
+    div[class*="st-key-event_cond_row_comment"] .element-container,
+    div[class*="st-key-event_cond_row_mentor"] .element-container {
         margin-bottom: 0 !important;
     }
-    /* Streamlit 체크박스가 Root에 align-items:start + Checkmark에 margin-top을 넣어 박스가 아래로 꺼짐 → 덮어씀 */
+    /* Streamlit 체크박스: 체크 표시를 라벨 앞(왼쪽)으로 — row-reverse 사용 시 오른쪽으로 밀림 */
     div[class*="st-key-event_cond_row_post"] [data-testid="stCheckbox"],
-    div[class*="st-key-event_cond_row_comment"] [data-testid="stCheckbox"] {
+    div[class*="st-key-event_cond_row_comment"] [data-testid="stCheckbox"],
+    div[class*="st-key-event_cond_row_mentor"] [data-testid="stCheckbox"] {
         width: fit-content !important;
         max-width: 100% !important;
         display: flex !important;
@@ -68,27 +73,31 @@ st.markdown(
         min-height: 0 !important;
     }
     div[class*="st-key-event_cond_row_post"] .stCheckbox label[data-baseweb="checkbox"],
-    div[class*="st-key-event_cond_row_comment"] .stCheckbox label[data-baseweb="checkbox"] {
-        flex-direction: row-reverse !important;
+    div[class*="st-key-event_cond_row_comment"] .stCheckbox label[data-baseweb="checkbox"],
+    div[class*="st-key-event_cond_row_mentor"] .stCheckbox label[data-baseweb="checkbox"] {
+        flex-direction: row !important;
         align-items: center !important;
         gap: 0.35rem !important;
         margin: 0 !important;
     }
     div[class*="st-key-event_cond_row_post"] .stCheckbox label[data-baseweb="checkbox"] > span:first-of-type,
-    div[class*="st-key-event_cond_row_comment"] .stCheckbox label[data-baseweb="checkbox"] > span:first-of-type {
+    div[class*="st-key-event_cond_row_comment"] .stCheckbox label[data-baseweb="checkbox"] > span:first-of-type,
+    div[class*="st-key-event_cond_row_mentor"] .stCheckbox label[data-baseweb="checkbox"] > span:first-of-type {
         margin-top: 0 !important;
         margin-bottom: 0 !important;
         align-self: center !important;
     }
     div[class*="st-key-event_cond_row_post"] [data-testid="stCheckbox"] [data-testid="stWidgetLabel"],
-    div[class*="st-key-event_cond_row_comment"] [data-testid="stCheckbox"] [data-testid="stWidgetLabel"] {
+    div[class*="st-key-event_cond_row_comment"] [data-testid="stCheckbox"] [data-testid="stWidgetLabel"],
+    div[class*="st-key-event_cond_row_mentor"] [data-testid="stCheckbox"] [data-testid="stWidgetLabel"] {
         margin: 0 !important;
         padding-top: 0 !important;
         padding-bottom: 0 !important;
         align-self: center !important;
     }
     div[class*="st-key-event_cond_row_post"] .stCheckbox label[data-baseweb="checkbox"] > div:last-child,
-    div[class*="st-key-event_cond_row_comment"] .stCheckbox label[data-baseweb="checkbox"] > div:last-child {
+    div[class*="st-key-event_cond_row_comment"] .stCheckbox label[data-baseweb="checkbox"] > div:last-child,
+    div[class*="st-key-event_cond_row_mentor"] .stCheckbox label[data-baseweb="checkbox"] > div:last-child {
         font-weight: 700 !important;
         line-height: 1.25 !important;
         padding: 0 !important;
@@ -208,9 +217,19 @@ if "event_last_seen_comments" not in st.session_state:
 if "event_last_excluded_comments" not in st.session_state:
     st.session_state.event_last_excluded_comments = 0
 if "event_condition_comment_enabled" not in st.session_state:
-    st.session_state.event_condition_comment_enabled = bool(config.get("event_condition_comment_enabled", True))
+    st.session_state.event_condition_comment_enabled = bool(
+        config.get("event_condition_comment_enabled", False)
+    )
 if "event_condition_post_enabled" not in st.session_state:
-    st.session_state.event_condition_post_enabled = bool(config.get("event_condition_post_enabled", False))
+    st.session_state.event_condition_post_enabled = bool(
+        config.get("event_condition_post_enabled", True)
+    )
+if "event_condition_mentor_enabled" not in st.session_state:
+    st.session_state.event_condition_mentor_enabled = bool(config.get("event_condition_mentor_enabled", False))
+if "event_cond_mentor_enabled_checkbox" not in st.session_state:
+    st.session_state.event_cond_mentor_enabled_checkbox = bool(
+        config.get("event_condition_mentor_enabled", False)
+    )
 
 
 def update_logs(msg: str | None = None):
@@ -557,6 +576,10 @@ if config.get("event_post_end_date"):
         _post_default_end = datetime.strptime(config["event_post_end_date"], "%Y-%m-%d")
     except Exception:
         pass
+
+# 수집 기간(공통): 기존 설정에서 게시글·댓글 기간이 어긋나 있으면 넓은 범위로 맞춤
+_collection_default_start = min(_comment_default_start, _post_default_start)
+_collection_default_end = max(_comment_default_end, _post_default_end)
 
 _comment_chars_per_ticket_default = int(config.get("event_comment_chars_per_ticket", 100) or 100)
 _post_chars_per_ticket_default = int(config.get("event_post_chars_per_ticket", 100) or 100)
@@ -1133,34 +1156,80 @@ with _ev2:
                     value=_apply_comment_exclude,
                     key="event_apply_comment_exclude_checkbox",
                 )
+        with st.expander("📅 수집 기간", expanded=False):
+            st.caption("조건(1) 게시글·조건(2) 댓글 수집에 **동일하게** 적용됩니다.")
+            _coll_s, _coll_e = st.columns(2)
+            with _coll_s:
+                collection_start_date = st.date_input(
+                    "시작일",
+                    _collection_default_start,
+                    key="event_collection_start_date_input",
+                )
+            with _coll_e:
+                collection_end_date = st.date_input(
+                    "종료일",
+                    _collection_default_end,
+                    key="event_collection_end_date_input",
+                )
         with st.expander("🧩 수집 조건", expanded=False):
+            st.caption("조건(1)·(2)·(3)은 **동시에 선택할 수 없습니다.** 실행에는 **하나만** 켜 주세요.")
             if "event_cond_pick_post_checkbox" not in st.session_state:
                 st.session_state.event_cond_pick_post_checkbox = bool(
-                    st.session_state.get("event_condition_post_enabled", False)
+                    st.session_state.get("event_condition_post_enabled", True)
                 )
             if "event_cond_pick_comment_checkbox" not in st.session_state:
                 st.session_state.event_cond_pick_comment_checkbox = bool(
-                    st.session_state.get("event_condition_comment_enabled", True)
+                    st.session_state.get("event_condition_comment_enabled", False)
                 )
-            # 초기 진입 시 둘 다 같으면(둘 다 true/false) 댓글 조건을 기본으로 둠
-            if st.session_state.event_cond_pick_post_checkbox == st.session_state.event_cond_pick_comment_checkbox:
-                st.session_state.event_cond_pick_post_checkbox = False
-                st.session_state.event_cond_pick_comment_checkbox = True
+            # 1·2·3 배타: 2개 이상 켜져 있으면 (1)>(2)>(3) 우선으로 하나만 유지. 모두 꺼지면 (1) ON.
+            _pick_p = bool(st.session_state.get("event_cond_pick_post_checkbox", False))
+            _pick_c = bool(st.session_state.get("event_cond_pick_comment_checkbox", False))
+            _pick_m = bool(st.session_state.get("event_cond_mentor_enabled_checkbox", False))
+            _n_pick = int(_pick_p) + int(_pick_c) + int(_pick_m)
+            if _n_pick > 1:
+                if _pick_p:
+                    st.session_state.event_cond_pick_comment_checkbox = False
+                    st.session_state.event_cond_mentor_enabled_checkbox = False
+                elif _pick_c:
+                    st.session_state.event_cond_pick_post_checkbox = False
+                    st.session_state.event_cond_mentor_enabled_checkbox = False
+                else:
+                    st.session_state.event_cond_pick_post_checkbox = False
+                    st.session_state.event_cond_pick_comment_checkbox = False
+            elif _n_pick == 0:
+                st.session_state.event_cond_pick_post_checkbox = True
+                st.session_state.event_cond_pick_comment_checkbox = False
+                st.session_state.event_cond_mentor_enabled_checkbox = False
 
             def _pick_post_mode():
                 if st.session_state.get("event_cond_pick_post_checkbox", False):
                     st.session_state.event_cond_pick_comment_checkbox = False
-                elif not st.session_state.get("event_cond_pick_comment_checkbox", False):
-                    st.session_state.event_cond_pick_comment_checkbox = True
+                    st.session_state.event_cond_mentor_enabled_checkbox = False
+                elif not st.session_state.get("event_cond_pick_comment_checkbox", False) and not st.session_state.get(
+                    "event_cond_mentor_enabled_checkbox", False
+                ):
+                    st.session_state.event_cond_pick_post_checkbox = True
 
             def _pick_comment_mode():
                 if st.session_state.get("event_cond_pick_comment_checkbox", False):
                     st.session_state.event_cond_pick_post_checkbox = False
-                elif not st.session_state.get("event_cond_pick_post_checkbox", False):
+                    st.session_state.event_cond_mentor_enabled_checkbox = False
+                elif not st.session_state.get("event_cond_pick_post_checkbox", False) and not st.session_state.get(
+                    "event_cond_mentor_enabled_checkbox", False
+                ):
                     st.session_state.event_cond_pick_post_checkbox = True
 
-            cond1_checked = bool(st.session_state.get("event_cond_pick_post_checkbox", False))  # UI 조건1 = 게시글
-            cond2_checked = bool(st.session_state.get("event_cond_pick_comment_checkbox", True))  # UI 조건2 = 댓글
+            def _pick_mentor_mode():
+                if st.session_state.get("event_cond_mentor_enabled_checkbox", False):
+                    st.session_state.event_cond_pick_post_checkbox = False
+                    st.session_state.event_cond_pick_comment_checkbox = False
+                elif not st.session_state.get("event_cond_pick_post_checkbox", False) and not st.session_state.get(
+                    "event_cond_pick_comment_checkbox", False
+                ):
+                    st.session_state.event_cond_pick_post_checkbox = True
+
+            cond1_checked = bool(st.session_state.get("event_cond_pick_post_checkbox", True))
+            cond2_checked = bool(st.session_state.get("event_cond_pick_comment_checkbox", False))
             st.session_state.event_condition_post_enabled = bool(cond1_checked)
             st.session_state.event_condition_comment_enabled = bool(cond2_checked)
 
@@ -1169,23 +1238,8 @@ with _ev2:
                     "**조건(1)** 게시글 수집·분석",
                     key="event_cond_pick_post_checkbox",
                     on_change=_pick_post_mode,
-                    width="content",
                 )
-            _p1, _p2 = st.columns(2)
-            with _p1:
-                post_start_date = st.date_input(
-                    "시작일",
-                    _post_default_start,
-                    key="event_post_start_date_input",
-                    disabled=not cond1_checked,
-                )
-            with _p2:
-                post_end_date = st.date_input(
-                    "종료일",
-                    _post_default_end,
-                    key="event_post_end_date_input",
-                    disabled=not cond1_checked,
-                )
+            st.caption("기간은 상단 **수집 기간**에서 설정합니다.")
             _post_chars_preview = _resolve_ticket_weight(
                 "event_post_chars_per_ticket_input",
                 "event_post_chars_per_ticket",
@@ -1200,7 +1254,6 @@ with _ev2:
             with _p_t1:
                 st.text_input(
                     "게시글 글자수 기준",
-                    value=str(st.session_state.get("event_post_chars_per_ticket_input", "") or ""),
                     placeholder=str(_post_chars_per_ticket_default),
                     key="event_post_chars_per_ticket_input",
                     disabled=not cond1_checked,
@@ -1208,7 +1261,6 @@ with _ev2:
             with _p_t2:
                 st.text_input(
                     "티켓 수",
-                    value=str(st.session_state.get("event_post_images_per_ticket_input", "") or ""),
                     placeholder=str(_post_images_per_ticket_default),
                     key="event_post_images_per_ticket_input",
                     disabled=not cond1_checked,
@@ -1232,25 +1284,8 @@ with _ev2:
                     "**조건(2)** 댓글 수집·분석",
                     key="event_cond_pick_comment_checkbox",
                     on_change=_pick_comment_mode,
-                    width="content",
                 )
-            st.caption("목표 기간(댓글 작성일 기준)")
-            _c1t1, _c1t2 = st.columns(2)
-            with _c1t1:
-                comment_start_date = st.date_input(
-                    "목표 시작일",
-                    _comment_default_start,
-                    key="event_comment_start_date_input",
-                    disabled=not cond2_checked,
-                )
-            with _c1t2:
-                comment_end_date = st.date_input(
-                    "목표 종료일",
-                    _comment_default_end,
-                    key="event_comment_end_date_input",
-                    disabled=not cond2_checked,
-                )
-
+            st.caption("댓글 **목표 기간**(작성일 기준)은 **수집 기간**과 동일합니다.")
             st.caption("게시글 탐색 범위(댓글 목표기간 보완용)")
             comment_search_start_date = st.date_input(
                 "게시글 탐색 시작일",
@@ -1273,7 +1308,6 @@ with _ev2:
             with _c_t1:
                 st.text_input(
                     "댓글 글자수 기준",
-                    value=str(st.session_state.get("event_comment_chars_per_ticket_input", "") or ""),
                     placeholder=str(_comment_chars_per_ticket_default),
                     key="event_comment_chars_per_ticket_input",
                     disabled=not cond2_checked,
@@ -1281,7 +1315,6 @@ with _ev2:
             with _c_t2:
                 st.text_input(
                     "아이콘 or 사진 1장 = ( ) 티켓",
-                    value=str(st.session_state.get("event_comment_media_ticket_bonus_input", "") or ""),
                     placeholder=str(_comment_media_ticket_bonus_default),
                     key="event_comment_media_ticket_bonus_input",
                     disabled=not cond2_checked,
@@ -1297,23 +1330,71 @@ with _ev2:
                 f"[ {_comment_chars_preview} ] 자당 1티켓 · 이미지 1장 {_comment_media_preview}티켓</div>",
                 unsafe_allow_html=True,
             )
+
+            st.markdown("---")
+            with st.container(key="event_cond_row_mentor"):
+                st.checkbox(
+                    "**조건(3)** 등급별 ‘방문수’ 수집",
+                    key="event_cond_mentor_enabled_checkbox",
+                    on_change=_pick_mentor_mode,
+                )
+            mentor_cond_checked = bool(st.session_state.get("event_cond_mentor_enabled_checkbox", False))
+            st.session_state.event_condition_mentor_enabled = mentor_cond_checked
+            st.caption(
+                "카페 **스탭 권한** 계정으로 멤버 관리 화면에 진입해, 선택한 **등급**별 멤버 표에서 별명·방문수를 이벤트 DB에 저장합니다."
+            )
+            st.text_input(
+                "멤버관리 URL (선택)",
+                value=str(config.get("event_mentor_manage_url", "") or ""),
+                placeholder="예: https://cafe.naver.com/ManageWholeMember.nhn?clubid=123456",
+                help="네이버가 자동 이동을 막는 경우, 멤버 관리 URL을 직접 넣으면 그 주소로 바로 이동합니다. 비워두면 카페 URL에서 clubid를 추출해 자동 구성합니다.",
+                key="event_mentor_manage_url_input",
+                disabled=not mentor_cond_checked,
+            )
+            st.text_area(
+                "등급 선택 (줄바꿈·쉼표 구분)",
+                value=str(config.get("event_mentor_grades_text", "상급자\n중급자") or ""),
+                height=88,
+                help="예: 상급자, 중급자 — 네이버 관리 화면 드롭다운에 보이는 문구와 맞추세요. 각 등급마다 표의 ‘다음’이 없어질 때까지 자동으로 넘깁니다.",
+                key="event_mentor_grades_text",
+                disabled=not mentor_cond_checked,
+            )
         st.markdown("<div style='margin-top: 10px;'></div>", unsafe_allow_html=True)
         if st.button("💾 저장", use_container_width=True, key="event_save_settings_btn"):
+            _save_coll_s = st.session_state.get(
+                "event_collection_start_date_input", _collection_default_start
+            )
+            _save_coll_e = st.session_state.get(
+                "event_collection_end_date_input", _collection_default_end
+            )
             config["event_cafe_name"] = str(event_cafe_name or "").strip()
             config["event_cafe_url"] = cafe_url
             config["event_board_url"] = board_url
             config["event_selected_board_urls"] = st.session_state.get("event_selected_board_urls", [])
-            config["event_start_date"] = comment_start_date.strftime("%Y-%m-%d")
-            config["event_end_date"] = comment_end_date.strftime("%Y-%m-%d")
-            config["event_condition_comment_enabled"] = bool(st.session_state.get("event_condition_comment_enabled", True))
-            config["event_comment_start_date"] = comment_start_date.strftime("%Y-%m-%d")
-            config["event_comment_end_date"] = comment_end_date.strftime("%Y-%m-%d")
+            config["event_start_date"] = _save_coll_s.strftime("%Y-%m-%d")
+            config["event_end_date"] = _save_coll_e.strftime("%Y-%m-%d")
+            config["event_condition_comment_enabled"] = bool(
+                st.session_state.get("event_condition_comment_enabled", False)
+            )
+            config["event_comment_start_date"] = _save_coll_s.strftime("%Y-%m-%d")
+            config["event_comment_end_date"] = _save_coll_e.strftime("%Y-%m-%d")
             config["event_comment_search_start_date"] = comment_search_start_date.strftime("%Y-%m-%d")
             # 하위호환: 기존 키는 목표 종료일과 동일 값으로 유지
-            config["event_comment_search_end_date"] = comment_end_date.strftime("%Y-%m-%d")
-            config["event_condition_post_enabled"] = bool(st.session_state.get("event_condition_post_enabled", False))
-            config["event_post_start_date"] = post_start_date.strftime("%Y-%m-%d")
-            config["event_post_end_date"] = post_end_date.strftime("%Y-%m-%d")
+            config["event_comment_search_end_date"] = _save_coll_e.strftime("%Y-%m-%d")
+            config["event_condition_post_enabled"] = bool(
+                st.session_state.get("event_condition_post_enabled", True)
+            )
+            config["event_condition_mentor_enabled"] = bool(
+                st.session_state.get("event_condition_mentor_enabled", False)
+            )
+            config["event_mentor_grades_text"] = str(
+                st.session_state.get("event_mentor_grades_text", "") or ""
+            ).strip()
+            config["event_mentor_manage_url"] = str(
+                st.session_state.get("event_mentor_manage_url_input", "") or ""
+            ).strip()
+            config["event_post_start_date"] = _save_coll_s.strftime("%Y-%m-%d")
+            config["event_post_end_date"] = _save_coll_e.strftime("%Y-%m-%d")
             config["event_comment_chars_per_ticket"] = _resolve_ticket_weight(
                 "event_comment_chars_per_ticket_input",
                 "event_comment_chars_per_ticket",
@@ -1396,9 +1477,11 @@ with _ev3:
                 cur_reset.execute("DELETE FROM event_post_analysis")
                 cur_reset.execute("DELETE FROM event_posts")
                 cur_reset.execute("DELETE FROM event_comments")
+                cur_reset.execute("DELETE FROM event_mentor_visits")
                 cur_reset.execute("DELETE FROM sqlite_sequence WHERE name = 'event_post_analysis'")
                 cur_reset.execute("DELETE FROM sqlite_sequence WHERE name = 'event_posts'")
                 cur_reset.execute("DELETE FROM sqlite_sequence WHERE name = 'event_comments'")
+                cur_reset.execute("DELETE FROM sqlite_sequence WHERE name = 'event_mentor_visits'")
                 conn_reset.commit()
                 conn_reset.close()
                 st.session_state.event_dup_report = None
@@ -1411,14 +1494,21 @@ with _ev3:
                 st.error(f"DB 초기화 실패: {e}")
 
 # 실행용 조건값 정규화
-comment_condition_enabled = bool(st.session_state.get("event_condition_comment_enabled", True))
-post_condition_enabled = bool(st.session_state.get("event_condition_post_enabled", False))
+comment_condition_enabled = bool(st.session_state.get("event_condition_comment_enabled", False))
+post_condition_enabled = bool(st.session_state.get("event_condition_post_enabled", True))
+mentor_condition_enabled = bool(st.session_state.get("event_condition_mentor_enabled", False))
 
-comment_start_date = st.session_state.get("event_comment_start_date_input", _comment_default_start)
-comment_end_date = st.session_state.get("event_comment_end_date_input", _comment_default_end)
+collection_start_date = st.session_state.get(
+    "event_collection_start_date_input", _collection_default_start
+)
+collection_end_date = st.session_state.get(
+    "event_collection_end_date_input", _collection_default_end
+)
+comment_start_date = collection_start_date
+comment_end_date = collection_end_date
 comment_search_start_date = st.session_state.get("event_comment_search_start_date_input", _comment_search_default_start)
-post_start_date = st.session_state.get("event_post_start_date_input", _post_default_start)
-post_end_date = st.session_state.get("event_post_end_date_input", _post_default_end)
+post_start_date = collection_start_date
+post_end_date = collection_end_date
 comment_chars_per_ticket = _resolve_ticket_weight(
     "event_comment_chars_per_ticket_input",
     "event_comment_chars_per_ticket",
@@ -1449,13 +1539,16 @@ comment_search_end_dt = comment_end_dt
 post_start_dt = datetime.combine(post_start_date, datetime.min.time())
 post_end_dt = datetime.combine(post_end_date, datetime.max.time())
 
-# 대시보드 표시 기간(우선순위: 댓글조건 > 게시글조건)
+# 대시보드 표시 기간(우선순위: 댓글조건 > 게시글조건 > 수집 기간만)
 if comment_condition_enabled:
     dashboard_start_date = comment_start_date
     dashboard_end_date = comment_end_date
-else:
+elif post_condition_enabled:
     dashboard_start_date = post_start_date
     dashboard_end_date = post_end_date
+else:
+    dashboard_start_date = collection_start_date
+    dashboard_end_date = collection_end_date
 
 st.markdown("---")
 
@@ -1469,12 +1562,33 @@ _event_crawler_obj = st.session_state.get("event_crawler")
 event_browser_opened = bool(
     _event_crawler_obj is not None and getattr(_event_crawler_obj, "driver", None) is not None
 )
-event_any_condition_enabled = bool(comment_condition_enabled or post_condition_enabled)
+event_any_condition_enabled = bool(
+    comment_condition_enabled or post_condition_enabled or mentor_condition_enabled
+)
+_event_step2_labels: list[str] = []
+if post_condition_enabled:
+    _event_step2_labels.append("게시글 수집·분석")
+if comment_condition_enabled:
+    _event_step2_labels.append("댓글 수집·분석")
+if mentor_condition_enabled:
+    _event_step2_labels.append("등급별 방문수 DB")
+if len(_event_step2_labels) == 1:
+    _event_step2_action_label = _event_step2_labels[0]
+else:
+    _event_step2_action_label = "수집·분석"
+_needs_event_board = bool(comment_condition_enabled or post_condition_enabled)
 _board_url_ok = bool(str(board_url or "").strip())
-event_step2_ready = bool(event_browser_opened and _board_url_ok and event_any_condition_enabled)
+_cafe_url_ok = bool(str(cafe_url or "").strip())
+event_step2_ready = bool(event_browser_opened and event_any_condition_enabled)
+if mentor_condition_enabled:
+    event_step2_ready = event_step2_ready and _cafe_url_ok
+if _needs_event_board:
+    event_step2_ready = event_step2_ready and _board_url_ok
 if event_browser_opened and not event_step2_ready:
     _missing = []
-    if not _board_url_ok:
+    if mentor_condition_enabled and not _cafe_url_ok:
+        _missing.append("카페 URL 미입력")
+    if _needs_event_board and not _board_url_ok:
         _missing.append("게시판 미선택")
     if not event_any_condition_enabled:
         _missing.append("조건 미선택")
@@ -1492,6 +1606,9 @@ with step_col1:
             if not st.session_state.event_crawler:
                 st.session_state.event_crawler = NaverCafeCrawler("", debug_mode=False)
                 st.session_state.event_crawler.set_status_callback(update_logs)
+                st.session_state.event_crawler.set_stop_check_callback(
+                    lambda: bool(st.session_state.get("event_stop_requested", False))
+                )
             st.session_state.event_crawler.start_browser()
             update_logs("✅ 브라우저가 열렸습니다.")
         except Exception as _br_err:
@@ -1550,7 +1667,7 @@ with step_col2:
         )
         with st.container(key="event_step2_running"):
             if st.button(
-                "2단계: 댓글 수집·분석 진행 중 (중단)",
+                f"2단계: {_event_step2_action_label} 진행 중 (중단)",
                 type="secondary",
                 use_container_width=True,
                 key="event_running_btn",
@@ -1559,7 +1676,7 @@ with step_col2:
                 update_logs("🛑 중단 요청을 받았습니다. 현재 처리 단위 완료 후 중단합니다.")
     else:
         if st.button(
-            "2단계: 댓글 수집·분석 시작",
+            f"2단계: {_event_step2_action_label} 시작",
             type="primary",
             use_container_width=True,
             disabled=bool(st.session_state.event_running) or (not event_step2_ready),
@@ -1567,13 +1684,17 @@ with step_col2:
         ):
             if not st.session_state.event_crawler or not st.session_state.event_crawler.driver:
                 st.error("먼저 브라우저를 열어주세요.")
-            elif not str(board_url or "").strip():
-                st.error("먼저 게시판 목록을 가져오고, 게시판을 선택해주세요.")
             elif not event_any_condition_enabled:
-                st.error("수집 조건에서 최소 1개(조건1 또는 조건2)를 체크해주세요.")
+                st.error("수집 조건에서 최소 1개(조건 1·2·3 중 하나)를 체크해주세요.")
+            elif sum([post_condition_enabled, comment_condition_enabled, mentor_condition_enabled]) > 1:
+                st.error("조건(1)·(2)·(3)은 동시에 켤 수 없습니다. 수집 조건에서 **하나만** 선택해 주세요.")
+            elif mentor_condition_enabled and not str(cafe_url or "").strip():
+                st.error("조건(3)을 위해 카페 URL을 입력해주세요.")
+            elif _needs_event_board and (not str(board_url or "").strip()):
+                st.error("조건 1·2를 사용하려면 게시판 목록을 가져와 게시판을 선택해주세요.")
             else:
                 board_urls = [u.strip() for u in str(board_url or "").splitlines() if u.strip()]
-                if not board_urls:
+                if _needs_event_board and not board_urls:
                     st.error("수집할 게시판이 없습니다. 게시판을 먼저 선택해주세요.")
                 else:
                     st.session_state.event_run_payload = {
@@ -1589,7 +1710,15 @@ with step_col2:
                         "exclude_post_nicks_text": str(exclude_post_nicks_text or ""),
                         "exclude_comment_nicks_text": str(exclude_comment_nicks_text or ""),
                         "apply_post_exclude": bool(st.session_state.get("event_apply_post_exclude_checkbox", True)),
-                        "apply_comment_exclude": bool(st.session_state.get("event_apply_comment_exclude_checkbox", False)),
+                        "apply_comment_exclude": bool(
+                            st.session_state.get("event_apply_comment_exclude_checkbox", False)
+                        ),
+                        "mentor_enabled": bool(mentor_condition_enabled),
+                        "mentor_grades_raw": str(st.session_state.get("event_mentor_grades_text", "") or ""),
+                        "cafe_url_mentor": str(
+                            st.session_state.get("event_mentor_manage_url_input", "") or ""
+                        ).strip()
+                        or str(cafe_url or "").strip(),
                     }
                     st.session_state.event_running = True
                     st.session_state.event_run_pending = True
@@ -1625,11 +1754,23 @@ if st.session_state.event_run_pending and st.session_state.event_running:
     exclude_comment_nicks_raw = str(payload.get("exclude_comment_nicks_text") or "")
     apply_post_exclude_runtime = bool(payload.get("apply_post_exclude", True))
     apply_comment_exclude_runtime = bool(payload.get("apply_comment_exclude", False))
+    mentor_enabled_rt = bool(payload.get("mentor_enabled"))
+    mentor_grades_raw = str(payload.get("mentor_grades_raw") or "")
+    cafe_url_mentor = str(payload.get("cafe_url_mentor") or "").strip()
 
     prog = st.progress(max(0.0, min(1.0, float(st.session_state.get("event_progress_ratio", 0.0) or 0.0))))
     _metrics_placeholder = st.empty()
     _detail_placeholder = st.empty()
     _run_start_time = time.time()
+    mentor_rows_saved = 0
+    try:
+        if st.session_state.get("event_crawler"):
+            st.session_state.event_crawler.set_status_callback(update_logs)
+            st.session_state.event_crawler.set_stop_check_callback(
+                lambda: bool(st.session_state.get("event_stop_requested", False))
+            )
+    except Exception:
+        pass
 
     def _fmt_duration(sec: float) -> str:
         sec = max(0, int(sec))
@@ -1641,19 +1782,25 @@ if st.session_state.event_run_pending and st.session_state.event_running:
         h, m = divmod(int(m), 60)
         return f"{h}시간 {int(m)}분"
 
-    def _set_event_progress(ratio: float, msg: str) -> None:
+    def _set_event_progress(ratio: float, msg: str, *, layout: str = "board") -> None:
         rr = max(0.0, min(1.0, float(ratio)))
         st.session_state.event_progress_ratio = rr
         st.session_state.event_progress_label = str(msg or "")
         prog.progress(rr)
         elapsed = time.time() - _run_start_time
-        eta_str = "계산 중..."
-        eta_total_str = ""
-        if rr > 0.02:
-            eta = elapsed / rr * (1.0 - rr)
-            total_est = elapsed + eta
-            eta_str = _fmt_duration(eta)
-            eta_total_str = f" / 총 {_fmt_duration(total_est)}"
+        if layout == "mentor":
+            if rr >= 0.99:
+                eta_str, eta_total_str = "—", ""
+            else:
+                eta_str, eta_total_str = "등급·페이지 수에 따라 상이", ""
+        else:
+            eta_str = "계산 중…"
+            eta_total_str = ""
+            if rr > 0.02:
+                eta = elapsed / rr * (1.0 - rr)
+                total_est = elapsed + eta
+                eta_str = _fmt_duration(eta)
+                eta_total_str = f" / 총 {_fmt_duration(total_est)}"
         _done = int(total_articles_processed)
         _fail = int(failed_articles)
         _seen = int(comments_seen_total)
@@ -1662,9 +1809,18 @@ if st.session_state.event_run_pending and st.session_state.event_running:
 
         with _metrics_placeholder.container():
             _mc1, _mc2, _mc3, _mc4 = st.columns([1, 1, 1, 1.4])
-            _mc1.metric("처리 게시글", f"{_done:,}개", delta=f"실패 {_fail}개" if _fail else None, delta_color="inverse" if _fail else "off")
-            _mc2.metric("댓글 조회", f"{_seen:,}개", delta=f"저장 {_saved:,}개")
-            _mc3.metric("경과 시간", _fmt_duration(elapsed))
+            if layout == "mentor":
+                _mr_n = int(mentor_rows_saved)
+                if rr >= 0.99:
+                    _mc1.metric("등급별 방문수", "완료")
+                else:
+                    _mc1.metric("멤버 표", "등급·페이지 순회 중")
+                _mc2.metric("DB 반영 행", f"{_mr_n:,}건")
+                _mc3.metric("경과 시간", _fmt_duration(elapsed))
+            else:
+                _mc1.metric("처리 게시글", f"{_done:,}개", delta=f"실패 {_fail}개" if _fail else None, delta_color="inverse" if _fail else "off")
+                _mc2.metric("댓글 조회", f"{_seen:,}개", delta=f"저장 {_saved:,}개")
+                _mc3.metric("경과 시간", _fmt_duration(elapsed))
             _mc4.markdown(
                 f"<div style='background:linear-gradient(180deg,#f8fbff 0%,#f3f7fc 100%);"
                 f"border:1px solid #dbe5f2;border-radius:12px;padding:12px 14px;"
@@ -1676,11 +1832,12 @@ if st.session_state.event_run_pending and st.session_state.event_running:
                 unsafe_allow_html=True,
             )
 
+        _tail_avg = ""
+        if layout == "board" and _done > 0:
+            _tail_avg = f" · 평균 {_avg:.1f}초/건"
         _detail_placeholder.markdown(
             f"<div style='font-size:0.95rem;color:#334155;font-weight:600;padding:2px 0 6px 0;'>"
-            f"{msg}"
-            f"{(' · 평균 ' + f'{_avg:.1f}초/건') if _done > 0 else ''}"
-            f"</div>",
+            f"{msg}{_tail_avg}</div>",
             unsafe_allow_html=True,
         )
 
@@ -1730,8 +1887,46 @@ if st.session_state.event_run_pending and st.session_state.event_running:
         adaptive_delay_max = float(SAFE_DELAY_MAX_SEC)
         stable_success_streak = 0
 
-        if (not comment_enabled) and (not post_enabled):
-            raise RuntimeError("조건1/조건2 중 최소 1개를 선택해야 합니다.")
+        if (not comment_enabled) and (not post_enabled) and (not mentor_enabled_rt):
+            raise RuntimeError("조건 1·2·3 중 최소 1개를 선택해야 합니다.")
+        if sum([bool(post_enabled), bool(comment_enabled), bool(mentor_enabled_rt)]) > 1:
+            raise RuntimeError("조건(1)·(2)·(3)은 동시에 실행할 수 없습니다.")
+
+        if mentor_enabled_rt:
+            _set_event_progress(0.02, "조건(3) 등급별 ‘방문수’ 수집 중…", layout="mentor")
+            update_logs("조건(3) 멤버 관리에서 등급별 방문수 수집을 시작합니다.")
+            if not cafe_url_mentor:
+                raise RuntimeError("조건(3): 카페 URL이 비어 있습니다.")
+            _mr = st.session_state.event_crawler.scrape_mentor_visit_counts(
+                cafe_url_mentor,
+                mentor_grades_raw,
+            )
+            _mrows = list(_mr.get("rows") or [])
+            _mstatus = str(_mr.get("status") or "")
+            if _mstatus == "stopped":
+                update_logs("🛑 사용자 요청으로 조건(3) 수집을 중단했습니다.")
+                raise RuntimeError("사용자 중단 요청")
+            if _mstatus != "ok":
+                update_logs(f"등급별 방문수 단계: {_mr.get('message') or '실패'}")
+            else:
+                mentor_rows_saved = upsert_event_mentor_visits(EVENT_DB_PATH, _mrows)
+                update_logs(
+                    f"등급별 방문수: 표 {len(_mrows)}행 수집 → DB 반영 {mentor_rows_saved}건"
+                )
+                if not _mrows:
+                    update_logs(
+                        "등급별 방문수: 읽은 행이 없습니다. 등급 문구·드롭다운·표(별명/방문) 구조를 확인하세요."
+                    )
+            if mentor_enabled_rt and (comment_enabled or post_enabled):
+                _set_event_progress(0.12, "조건(3) 완료 · 게시판 수집 준비…", layout="mentor")
+            if not comment_enabled and not post_enabled:
+                _set_event_progress(1.0, "완료 (조건3만 실행)", layout="mentor")
+
+        if comment_enabled or post_enabled:
+            if not board_urls:
+                raise RuntimeError("조건 1 또는 2를 사용할 때는 게시판이 필요합니다.")
+        else:
+            board_urls = []
 
         def _in_post_window(art: dict) -> bool:
             if not post_enabled:
@@ -2037,14 +2232,19 @@ if st.session_state.event_run_pending and st.session_state.event_running:
                 time.sleep(random.uniform(adaptive_delay_min, adaptive_delay_max))
 
         _total_elapsed = time.time() - _run_start_time
-        done_msg = (
-            f"✅ 완료: 게시판 {len(board_urls):,}개, 게시글 {total_articles_processed:,}개 처리, "
-            f"게시글 제외 {excluded_post_total:,}개, 댓글 조회 {comments_seen_total:,}개, 댓글 제외 {excluded_total:,}개, "
-            f"날짜 미확인 제외 {unknown_date_excluded_total:,}개, "
-            f"기간완화 {date_filter_relaxed_articles:,}개 글, "
-            f"신규 저장 {inserted_total:,}개, 게시글 분석 저장 {post_analysis_saved_total:,}개, 실패 {failed_articles:,}개 "
-            f"(소요 {_fmt_duration(_total_elapsed)})"
-        )
+        _done_parts: list[str] = []
+        if mentor_enabled_rt:
+            _done_parts.append(f"등급별 방문수 DB {mentor_rows_saved}건")
+        if comment_enabled or post_enabled:
+            _done_parts.append(
+                f"게시판 {len(board_urls)}개 · 게시글 {total_articles_processed} · 댓글조회 {comments_seen_total} · "
+                f"댓글저장 {inserted_total} · 게시글분석 {post_analysis_saved_total} · 실패 {failed_articles}"
+            )
+            _done_parts.append(
+                f"(제외: 게시글 {excluded_post_total}, 댓글 {excluded_total}, 날짜미확인 {unknown_date_excluded_total}, "
+                f"기간완화글 {date_filter_relaxed_articles})"
+            )
+        done_msg = "✅ 완료: " + " ".join(_done_parts) + f" — {_fmt_duration(_total_elapsed)}"
         _avg_final = (_total_elapsed / total_articles_processed) if total_articles_processed > 0 else 0
         with _metrics_placeholder.container():
             _fc1, _fc2, _fc3, _fc4 = st.columns(4)
@@ -2078,7 +2278,10 @@ if st.session_state.event_run_pending and st.session_state.event_running:
                 update_logs(f"⚠️ 자동 분석 집계 중 오류: {analysis_e}")
         update_logs(done_msg)
         st.session_state.event_last_run_message = done_msg
-        _set_event_progress(1.0, "완료")
+        _final_prog_layout = (
+            "mentor" if mentor_enabled_rt and not (comment_enabled or post_enabled) else "board"
+        )
+        _set_event_progress(1.0, "완료", layout=_final_prog_layout)
     except Exception as e:
         st.error(f"댓글 수집 실행 중 오류: {e}")
         update_logs(f"❌ 댓글 수집 실행 중 오류: {e}")
@@ -2133,6 +2336,9 @@ try:
     m2.metric("수집된 댓글", f"{int(stats_row['comments_cnt']):,}개")
     m3.metric("참여 인원", f"{int(stats_row['people_cnt']):,}명")
     m4.metric("총 글자수", f"{int(stats_row['chars_cnt']):,}자")
+    st.caption(
+        f"조건(3) 등급별 방문수 DB 행: **{get_event_mentor_visits_count(EVENT_DB_PATH):,}**"
+    )
     _last_processed = int(st.session_state.get("event_last_processed_posts", 0) or 0)
     _last_seen_comments = int(st.session_state.get("event_last_seen_comments", 0) or 0)
     _last_excluded_comments = int(st.session_state.get("event_last_excluded_comments", 0) or 0)
@@ -2448,4 +2654,35 @@ if comment_condition_enabled:
                 st.info("아직 자동 집계 결과가 없습니다. 댓글 수집을 완료하면 자동으로 표시됩니다.")
     except Exception as e:
         st.error(f"집계 오류: {e}")
+
+# -----------------------------------------------------------------------------
+# 조건(3) 등급별 방문수 리포트 (조건2 티켓 집계 아래)
+# -----------------------------------------------------------------------------
+st.markdown("### 조건(3) 등급별 ‘방문수’")
+try:
+    conn_mv = sqlite3.connect(EVENT_DB_PATH, timeout=30.0)
+    df_mv = pd.read_sql_query(
+        """
+        SELECT member_grade AS 등급, nickname AS 별명, visit_count AS 방문수, updated_at AS 갱신시각
+        FROM event_mentor_visits
+        ORDER BY member_grade ASC, visit_count DESC, nickname ASC
+        """,
+        conn_mv,
+    )
+    conn_mv.close()
+    if df_mv.empty:
+        st.info("조건(3)으로 저장된 등급별 방문수가 없습니다. 조건(3) 수집을 실행하면 여기에 표시됩니다.")
+    else:
+        st.dataframe(df_mv, use_container_width=True, hide_index=True)
+        _mv_csv = df_mv.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+        st.download_button(
+            "⬇️ 등급별 방문수 CSV",
+            data=_mv_csv,
+            file_name=f"event_mentor_visits_{datetime.now().strftime('%Y%m%d')}.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key="event_download_mentor_visits_csv",
+        )
+except Exception as _emv:
+    st.error(f"등급별 방문수 조회 오류: {_emv}")
 

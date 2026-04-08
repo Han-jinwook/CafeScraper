@@ -10,7 +10,7 @@ import time
 import pickle
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Any, Dict, List, Optional, Set, Tuple
 from collections import deque
 from urllib.parse import urlparse, parse_qs, parse_qsl, urlencode, urlunparse
 from xml.etree import ElementTree as ET
@@ -21,7 +21,7 @@ import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.action_chains import ActionChains
-from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
 
 
@@ -98,6 +98,9 @@ def _detect_installed_chrome_major_version() -> Optional[int]:
 
 
 class NaverCafeCrawler:
+    # 멤버 방문수 표: '다음'이 없을 때까지 넘김. DOM 오작동 시 무한 루프 방지용(설정 노출 없음).
+    _MENTOR_MEMBER_LIST_PAGE_GUARD = 2000
+
     def __init__(self, chrome_profile_path: str = "", output_dir: str = "outputs", debug_mode: bool = False):
         self.chrome_profile_path = chrome_profile_path
         self.output_dir = Path(output_dir)
@@ -1868,18 +1871,36 @@ class NaverCafeCrawler:
             # 새 창이 뜨는 케이스 방어 (간혹 블로그로 바로 열림)
             try:
                 time.sleep(0.15)
+                # 현재 메인 핸들을 기준으로, 메인이 아닌 새 창만 닫는다.
+                main_handle = None
+                try:
+                    main_handle = self.driver.current_window_handle
+                except Exception:
+                    main_handle = before_handles[0] if before_handles else None
+
                 after_handles = list(self.driver.window_handles)
                 new_handles = [h for h in after_handles if h not in before_handles]
                 if new_handles:
                     # 새 창은 닫고 원래 창으로 복귀
                     for h in new_handles:
                         try:
+                            if main_handle and h == main_handle:
+                                continue
                             self.driver.switch_to.window(h)
                             self.driver.close()
                         except:
                             pass
-                    if before_handles:
-                        self.driver.switch_to.window(before_handles[0])
+                    # 원래 창(가능하면 main_handle)으로 복귀
+                    try:
+                        remaining = list(self.driver.window_handles)
+                        if main_handle and main_handle in remaining:
+                            self.driver.switch_to.window(main_handle)
+                        elif before_handles and before_handles[0] in remaining:
+                            self.driver.switch_to.window(before_handles[0])
+                        elif remaining:
+                            self.driver.switch_to.window(remaining[0])
+                    except Exception:
+                        pass
             except:
                 pass
 
@@ -2001,21 +2022,50 @@ class NaverCafeCrawler:
 
     def _switch_to_cafe_iframe(self) -> bool:
         try:
+            # 창이 이미 닫힌 상태면 더 진행하지 않음 (no such window 방지)
+            try:
+                _handles = list(self.driver.window_handles) if self.driver else []
+                if not _handles:
+                    return False
+            except Exception:
+                return False
+
             self.driver.switch_to.default_content()
             current_url = self.driver.current_url
-            
-            # 관리자 페이지(ManageMember)는 무조건 iframe 전환 시도해야 함 (구형 방식)
+
+            # 관리자 페이지(ManageMember): cafe_main 외 id·src 조합 대응, 없으면 최상위 문서에서 표 탐색
             if "ManageMember" in current_url:
+                for i, (by, loc) in enumerate(
+                    (
+                        (By.ID, "cafe_main"),
+                        (By.NAME, "cafe_main"),
+                        (By.CSS_SELECTOR, "iframe#cafe_main"),
+                        (By.ID, "mainFrame"),
+                    )
+                ):
+                    wait_time = 6 if i == 0 else 3
+                    try:
+                        iframe = WebDriverWait(self.driver, wait_time).until(
+                            EC.presence_of_element_located((by, loc))
+                        )
+                        self.driver.switch_to.frame(iframe)
+                        if self.debug_mode:
+                            self._update_status(f"[디버그] iframe 전환 성공 (ManageMember, {by}={loc})")
+                        return True
+                    except Exception:
+                        continue
                 try:
-                    wait = WebDriverWait(self.driver, 5)
-                    iframe = wait.until(EC.presence_of_element_located((By.ID, "cafe_main")))
-                    self.driver.switch_to.frame(iframe)
-                    if self.debug_mode:
-                        self._update_status(f"[디버그] ✅ 관리자 페이지 iframe 전환 성공")
-                    return True
-                except:
-                    # iframe이 없을 수도 있음 (새 창 등)
+                    for fr in self.driver.find_elements(By.TAG_NAME, "iframe"):
+                        src = (fr.get_attribute("src") or "")
+                        if "Member" in src or "member" in src.lower() or "Manage" in src:
+                            self.driver.switch_to.frame(fr)
+                            if self.debug_mode:
+                                self._update_status("[디버그] iframe 전환 성공 (ManageMember, src 매칭)")
+                            return True
+                except Exception:
                     pass
+                if self.debug_mode:
+                    self._update_status("[디버그] ManageMember: iframe 미발견 — 최상위 문서에서 계속")
 
             # SPA 형식은 iframe 없음 (이미 URL 정규화했으므로 여기는 안 올 것)
             if "/ca-fe/" in current_url or "/f-e/" in current_url:
@@ -2039,6 +2089,635 @@ class NaverCafeCrawler:
             if self.debug_mode:
                 self._update_status(f"[디버그] ❌ iframe 전환 실패: {e}")
             return False
+
+    @staticmethod
+    def _is_service_unavailable_like_page(driver) -> bool:
+        """네이버 일시 장애/차단류 안내 페이지 감지."""
+        try:
+            try:
+                u = str(getattr(driver, "current_url", "") or "").lower()
+                if any(k in u for k in ("serviceerror", "error.nhn", "error", "blocked")):
+                    return True
+            except Exception:
+                pass
+            try:
+                body_text = str(
+                    driver.execute_script(
+                        "return (document.body && (document.body.innerText || '').slice(0, 2000)) || '';"
+                    )
+                    or ""
+                )
+            except Exception:
+                body_text = ""
+            keys = [
+                "잠시 후 다시 확인해주세요",
+                "지금 이 서비스와 연결할 수 없습니다",
+                "일시적으로",
+                "서비스 점검",
+                "접속이 원활하지",
+            ]
+            return any(k in body_text for k in keys)
+        except Exception:
+            return False
+
+    @staticmethod
+    def parse_mentor_grade_tokens(raw: str) -> List[str]:
+        out: List[str] = []
+        for part in re.split(r"[\n,，;]+", str(raw or "")):
+            s = str(part or "").strip()
+            if s:
+                out.append(s)
+        return out
+
+    @staticmethod
+    def _extract_club_id_from_url_string(url: str) -> Optional[str]:
+        """ArticleList / f-e·ca-fe / MyCafe 등 입력 URL에서 숫자 club id만 추출."""
+        s = str(url or "").strip()
+        if not s:
+            return None
+        for pat in (
+            r"(?i)clubid=(\d+)",
+            r"(?i)search\.clubid=(\d+)",
+            r"/cafes/(\d+)",
+        ):
+            m = re.search(pat, s)
+            if m:
+                return m.group(1)
+        return None
+
+    def go_to_member_management(self, cafe_url: str = "") -> Dict[str, Any]:
+        """
+        멤버 관리(ManageMember) PC 페이지로 이동. (스탭 권한 필요)
+        """
+        if not self.driver:
+            return {"status": "fail", "message": "브라우저가 실행되지 않았습니다."}
+        try:
+            try:
+                self.driver.switch_to.default_content()
+            except Exception:
+                pass
+
+            cafe_url_s = str(cafe_url or "").strip()
+            # 사용자가 관리 페이지 URL을 직접 준 경우(ManageWholeMember/ManageMember 등) 그대로 사용
+            if cafe_url_s and ("Manage" in cafe_url_s or "manage" in cafe_url_s.lower()):
+                manage_url_direct = cafe_url_s
+                # clubid도 있으면 캐시해둠(다른 동작에 재사용)
+                clubid_direct = self._extract_club_id_from_url_string(manage_url_direct)
+                if clubid_direct:
+                    self._last_known_club_id = str(clubid_direct)
+                max_attempts = 3
+                for attempt in range(1, max_attempts + 1):
+                    try:
+                        self.driver.get(manage_url_direct)
+                        time.sleep(2.0 + random.uniform(0.2, 0.8))
+                    except Exception as e:
+                        if attempt >= max_attempts:
+                            return {"status": "fail", "message": f"관리 URL 이동 실패: {e}"}
+                        time.sleep(2.0 + random.uniform(0.8, 1.6))
+                        continue
+
+                    if self._is_service_unavailable_like_page(self.driver):
+                        self._update_status(
+                            f"⚠️ 네이버 안내 페이지 감지(잠시 후 다시 확인) — {attempt}/{max_attempts} 재시도"
+                        )
+                        if attempt >= max_attempts:
+                            return {
+                                "status": "fail",
+                                "message": (
+                                    "관리 URL에서 '잠시 후 다시 확인' 안내 페이지가 반복 감지되었습니다. "
+                                    "일시 장애/트래픽 제한/봇 탐지 가능성이 큽니다. "
+                                    "잠시(5~15분) 대기 후 재시도하거나, 브라우저에서 수동 새로고침 후 정상 진입되는지 먼저 확인해 주세요."
+                                ),
+                            }
+                        try:
+                            self.driver.refresh()
+                        except Exception:
+                            pass
+                        time.sleep(2.5 + random.uniform(1.0, 2.2))
+                        continue
+
+                    return {
+                        "status": "success",
+                        "message": "관리 URL 이동 완료",
+                        "clubid": str(clubid_direct or ""),
+                        "url": manage_url_direct,
+                    }
+
+                return {"status": "fail", "message": "관리 URL 이동 실패(재시도 후)"}
+
+            # 입력 카페 URL이 있으면 항상 우선(브라우저가 다른 카페/게시글에 있어도 동일하게 동작)
+            clubid: Optional[str] = self._extract_club_id_from_url_string(cafe_url_s)
+            if not clubid:
+                clubid = self._extract_club_id_from_url_string(self.driver.current_url)
+            if not clubid and getattr(self, "_last_known_club_id", None):
+                clubid = str(self._last_known_club_id)
+
+            if not clubid:
+                fallback_url = cafe_url_s
+                if not fallback_url:
+                    fallback_url = "https://cafe.naver.com/ArticleList.nhn"
+                if fallback_url not in self.driver.current_url:
+                    self.driver.get(fallback_url)
+                    time.sleep(2.2)
+                try:
+                    self._switch_to_cafe_iframe()
+                except Exception:
+                    pass
+                clubid = self._extract_club_id_from_url_string(self.driver.current_url)
+                if not clubid:
+                    try:
+                        clubid = self.driver.execute_script(
+                            "return (typeof g_sClubId !== 'undefined' && g_sClubId) "
+                            "? String(g_sClubId) : "
+                            "(document.querySelector('input[name=\"clubid\"]')||{}).value || null;"
+                        )
+                    except Exception:
+                        clubid = None
+                    if clubid:
+                        clubid = str(clubid).strip() or None
+                if not clubid:
+                    try:
+                        page = self.driver.page_source or ""
+                        m3 = re.search(r"(?i)clubid[=:\"'](\d+)", page)
+                        if m3:
+                            clubid = m3.group(1)
+                    except Exception:
+                        pass
+
+            if not clubid:
+                return {
+                    "status": "fail",
+                    "message": "카페 clubid를 찾을 수 없습니다. 카페 메뉴/소개 URL(숫자 포함)을 입력했는지 확인해 주세요.",
+                }
+
+            self._last_known_club_id = str(clubid)
+            # 기본은 ManageWholeMember(전체 멤버)로 진입 시도 → 실패 시 ManageMember
+            manage_url = f"https://cafe.naver.com/ManageWholeMember.nhn?clubid={clubid}"
+            # 네이버 일시 장애/차단 페이지가 뜨는 케이스가 있어, 짧게 재시도 후 실패 처리
+            max_attempts = 3
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    self.driver.get(manage_url)
+                    time.sleep(2.0 + random.uniform(0.2, 0.8))
+                except Exception as e:
+                    if attempt >= max_attempts:
+                        # fallback: ManageMember
+                        try:
+                            manage_url2 = f"https://cafe.naver.com/ManageMember.nhn?clubid={clubid}"
+                            self.driver.get(manage_url2)
+                            time.sleep(2.0 + random.uniform(0.2, 0.8))
+                            if self._is_service_unavailable_like_page(self.driver):
+                                return {"status": "fail", "message": "네이버 안내 페이지(잠시 후 다시 확인)로 인해 멤버관리 진입이 차단되었습니다."}
+                            return {"status": "success", "message": "이동 완료(ManageMember)", "clubid": str(clubid)}
+                        except Exception:
+                            return {"status": "fail", "message": f"멤버관리 이동 실패: {e}"}
+                    time.sleep(2.0 + random.uniform(0.8, 1.6))
+                    continue
+
+                if self._is_service_unavailable_like_page(self.driver):
+                    self._update_status(
+                        f"⚠️ 네이버 안내 페이지 감지(잠시 후 다시 확인) — {attempt}/{max_attempts} 재시도"
+                    )
+                    if attempt >= max_attempts:
+                        return {
+                            "status": "fail",
+                            "message": (
+                                "네이버에서 '잠시 후 다시 확인' 안내 페이지가 반복 감지되었습니다. "
+                                "일시 장애/트래픽 제한/봇 탐지 가능성이 큽니다. "
+                                "잠시(5~15분) 대기 후 재시도하거나, 브라우저에서 수동으로 새로고침 후 정상 진입되는지 먼저 확인해 주세요."
+                            ),
+                        }
+                    try:
+                        self.driver.refresh()
+                    except Exception:
+                        pass
+                    time.sleep(2.5 + random.uniform(1.0, 2.2))
+                    continue
+
+                return {"status": "success", "message": "이동 완료(ManageWholeMember)", "clubid": str(clubid)}
+
+            return {"status": "fail", "message": "멤버관리 이동 실패(재시도 후)"}
+        except Exception as e:
+            return {"status": "fail", "message": f"이동 실패: {e}"}
+
+    def _try_select_member_grade_filter(self, grade_label: str) -> bool:
+        """멤버 관리 화면에서 등급(상급자/중급자 등) 필터 선택."""
+        label = str(grade_label or "").strip()
+        if not label or not self.driver:
+            return False
+        try:
+            self.driver.switch_to.default_content()
+        except Exception:
+            pass
+        self._switch_to_cafe_iframe()
+        time.sleep(0.35)
+
+        # 1) <select> 우선순위 선택:
+        # - "전체 멤버"가 있는 필터 셀렉트를 최우선
+        # - "(으)로 변경" 배치 변경용 셀렉트는 제외
+        best_select = None
+        best_score = -999
+        for sel_el in self.driver.find_elements(By.CSS_SELECTOR, "select"):
+            try:
+                sel = Select(sel_el)
+                option_texts = [str((o.text or "")).strip() for o in sel.options]
+                if not option_texts:
+                    continue
+                if not any((label == t) or (label in t) or (t in label) for t in option_texts if t):
+                    continue
+                near_text = ""
+                try:
+                    near_text = str(
+                        self.driver.execute_script(
+                            "var e=arguments[0];"
+                            "var p=e.parentElement;"
+                            "var gp=p?p.parentElement:null;"
+                            "return ((p&&p.innerText)||'')+' '+((gp&&gp.innerText)||'');",
+                            sel_el,
+                        )
+                        or ""
+                    )
+                except Exception:
+                    near_text = ""
+
+                score = 0
+                if any("전체 멤버" in t for t in option_texts):
+                    score += 40
+                if any("등급" in t for t in option_texts):
+                    score += 20
+                if "변경" in near_text and "(으)로" in near_text:
+                    score -= 100
+                if "정렬" in near_text or "30명" in near_text:
+                    score -= 20
+                if len(option_texts) >= 5:
+                    score += 5
+                if score > best_score:
+                    best_score = score
+                    best_select = sel_el
+            except Exception:
+                continue
+
+        if best_select is not None:
+            try:
+                sel = Select(best_select)
+                picked = None
+                for opt in sel.options:
+                    ot = (opt.text or "").strip()
+                    if not ot:
+                        continue
+                    if label == ot:
+                        picked = ot
+                        break
+                    if (label in ot) or (ot in label):
+                        picked = ot
+                if picked:
+                    sel.select_by_visible_text(picked)
+                    time.sleep(0.7)
+                    self._update_status(f"✅ 등급 필터 적용: '{picked}'")
+                    return True
+            except Exception:
+                pass
+
+        # 2) 클릭형 드롭다운: 보이는 옵션 중 텍스트 매칭
+        try:
+            candidates = self.driver.find_elements(
+                By.XPATH,
+                "//option[contains(normalize-space(.),%s)]"
+                % self._xpath_literal_contains_arg(label),
+            )
+            for c in candidates:
+                try:
+                    if c.is_displayed():
+                        c.click()
+                        time.sleep(0.5)
+                        return True
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        # 3) li / span / a 등 넓게 클릭 시도
+        try:
+            tmp = label.replace("'", "")
+            broad = self.driver.find_elements(
+                By.XPATH,
+                "//*[self::li or self::a or self::span][contains(normalize-space(.),%s)]"
+                % self._xpath_literal_contains_arg(tmp),
+            )
+            for el in broad:
+                try:
+                    if el.is_displayed() and len((el.text or "").strip()) <= 12:
+                        el.click()
+                        time.sleep(0.55)
+                        return True
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        return False
+
+    @staticmethod
+    def _xpath_literal_contains_arg(s: str) -> str:
+        """contains() 두 번째 인자용 XPath 문자열 리터럴."""
+        if "'" not in s:
+            return "'" + s + "'"
+        parts = s.split("'")
+        chunks: List[str] = []
+        for i, p in enumerate(parts):
+            chunks.append("'" + p + "'")
+            if i < len(parts) - 1:
+                chunks.append('"\'"')
+        return "concat(" + ", ".join(chunks) + ")"
+
+    def _click_manage_member_next_page(self) -> bool:
+        if not self.driver:
+            return False
+        # 1) "다음" 링크 우선
+        xpaths = [
+            "//a[normalize-space()='다음']",
+            "//a[contains(normalize-space(),'다음')]",
+            "//a[contains(normalize-space(),'Next')]",
+            "//a[contains(@class,'next')]",
+        ]
+        for xp in xpaths:
+            try:
+                for b in self.driver.find_elements(By.XPATH, xp):
+                    try:
+                        if b.is_displayed() and b.is_enabled():
+                            b.click()
+                            time.sleep(1.6)
+                            return True
+                    except Exception:
+                        continue
+            except Exception:
+                continue
+
+        # 2) 숫자 페이지네이션(1,2,3...) 지원
+        try:
+            current_num: Optional[int] = None
+            current_candidates = self.driver.find_elements(
+                By.XPATH,
+                (
+                    "//*[self::strong or self::span or self::a]"
+                    "[contains(@class,'on') or contains(@class,'cur') or contains(@class,'selected')]"
+                    "[normalize-space(text())!='']"
+                ),
+            )
+            for el in current_candidates:
+                try:
+                    t = (el.text or "").strip()
+                    if t.isdigit():
+                        current_num = int(t)
+                        break
+                except Exception:
+                    continue
+
+            if current_num is None:
+                # 클래스 힌트가 없으면 현재 페이지를 1로 간주하고 2를 시도
+                current_num = 1
+
+            next_num = str(current_num + 1)
+            # paginator 영역으로 보이는 곳에서만 우선 클릭 시도
+            num_candidates = self.driver.find_elements(
+                By.XPATH,
+                (
+                    "//a[normalize-space(text())=%s and "
+                    "(ancestor::*[contains(@class,'paginate') or contains(@class,'page') or contains(@class,'paging')] "
+                    "or ancestor::div or ancestor::td)]"
+                ) % self._xpath_literal_contains_arg(next_num),
+            )
+            for a in num_candidates:
+                try:
+                    if a.is_displayed() and a.is_enabled():
+                        try:
+                            a.click()
+                        except Exception:
+                            self.driver.execute_script("arguments[0].click();", a)
+                        time.sleep(1.6)
+                        return True
+                except Exception:
+                    continue
+
+            # 위에서 못 찾으면, 보이는 숫자 링크 중 가장 작은 다음 번호 클릭
+            all_num_links = self.driver.find_elements(By.XPATH, "//a[normalize-space(text())!='']")
+            next_link = None
+            next_link_num = 10**9
+            for a in all_num_links:
+                try:
+                    if not a.is_displayed():
+                        continue
+                    t = (a.text or "").strip()
+                    if not t.isdigit():
+                        continue
+                    n = int(t)
+                    if current_num < n < next_link_num:
+                        next_link_num = n
+                        next_link = a
+                except Exception:
+                    continue
+            if next_link is not None:
+                try:
+                    next_link.click()
+                except Exception:
+                    self.driver.execute_script("arguments[0].click();", next_link)
+                time.sleep(1.6)
+                return True
+        except Exception:
+            pass
+        return False
+
+    def _scrape_manage_member_table_visits(self, *, max_pages: int, grade_label: str = "") -> List[Dict[str, Any]]:
+        """현재 멤버 관리 표에서 별명·방문수 후보 열을 읽는다. max_pages는 안전 상한(이후 '다음' 없으면 종료)."""
+        rows_out: List[Dict[str, Any]] = []
+        if not self.driver:
+            return rows_out
+        seen: Set[Tuple[str, str]] = set()
+        _grade = str(grade_label or "").strip() or "미지정"
+
+        for page in range(1, max(1, int(max_pages)) + 1):
+            if self._should_stop():
+                self._update_status("🛑 사용자 요청으로 등급별 방문수 수집을 중단합니다.")
+                break
+            self._switch_to_cafe_iframe()
+            tables = self.driver.find_elements(By.CSS_SELECTOR, "table")
+            best_tb = None
+            best_n = 0
+            for tb in tables:
+                try:
+                    trs = tb.find_elements(By.CSS_SELECTOR, "tbody tr")
+                    n = len(trs)
+                    if n > best_n:
+                        best_n = n
+                        best_tb = tb
+                except Exception:
+                    continue
+
+            if not best_tb or best_n < 1:
+                break
+
+            nick_idx: Optional[int] = None
+            visit_idx: Optional[int] = None
+            try:
+                ths = best_tb.find_elements(By.CSS_SELECTOR, "thead tr th")
+                if not ths:
+                    first_row = best_tb.find_element(By.CSS_SELECTOR, "tr")
+                    ths = first_row.find_elements(By.CSS_SELECTOR, "th")
+                hdr = [(h.text or "").strip() for h in ths]
+                for i, ht in enumerate(hdr):
+                    ht_norm = re.sub(r"\s+", "", ht)
+                    if nick_idx is None and any(k in ht for k in ("별명", "닉네임", "멤버")):
+                        nick_idx = i
+                    # 방문수 컬럼만 우선 매칭 (최종방문일 오인 방지)
+                    if visit_idx is None and ("방문수" in ht_norm):
+                        visit_idx = i
+                if visit_idx is None:
+                    for i, ht in enumerate(hdr):
+                        ht_norm = re.sub(r"\s+", "", ht)
+                        if ("방문" in ht_norm) and ("최종" not in ht_norm) and ("일" not in ht_norm):
+                            visit_idx = i
+                            break
+            except Exception:
+                pass
+            if nick_idx is None:
+                nick_idx = 1
+            if visit_idx is None:
+                # 헤더를 못 읽으면 기본값을 오른쪽(방문수 쪽)으로 두어 날짜 오인 가능성 축소
+                visit_idx = min(5, max(0, len(best_tb.find_elements(By.CSS_SELECTOR, "thead tr th")) - 1))
+
+            data_trs = best_tb.find_elements(By.CSS_SELECTOR, "tbody tr")
+            page_added = 0
+            for tr in data_trs:
+                try:
+                    tds = tr.find_elements(By.CSS_SELECTOR, "td")
+                    if not tds:
+                        continue
+                    cells = [(td.text or "").strip() for td in tds]
+                    joined_head = " ".join(cells[:4])
+                    if "별명" in joined_head and "아이디" in joined_head:
+                        continue
+                    nick = cells[nick_idx] if nick_idx < len(cells) else ""
+                    if not nick:
+                        continue
+                    # "별명(id)" 형태에서 id 괄호 부분 제거
+                    nick = re.split(r"\s*[\(\（].*$", nick)[0].strip()
+                    if not nick:
+                        continue
+                    visit_raw = ""
+                    if 0 <= visit_idx < len(cells):
+                        visit_raw = cells[visit_idx]
+                    if not re.sub(r"[^\d]", "", visit_raw):
+                        for c in reversed(cells):
+                            if re.fullmatch(r"[\d,\s]+", (c or "").strip() or ""):
+                                visit_raw = c
+                                break
+                    visit_val = int(re.sub(r"[^\d]", "", visit_raw) or "0")
+                    key = (nick, str(visit_val))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    rows_out.append({"nickname": nick, "visit_count": visit_val})
+                    page_added += 1
+                except Exception:
+                    continue
+
+            self._update_status(f"📋 멤버 표 [{_grade}] {page}페이지: {page_added}행 (누적 {len(rows_out)})")
+            if page >= max_pages:
+                self._update_status("⏹️ 멤버 표 페이지 상한(안전장치) 도달 — 수집을 멈춥니다.")
+                break
+            if not self._click_manage_member_next_page():
+                break
+
+        return rows_out
+
+    def scrape_mentor_visit_counts(
+        self,
+        cafe_url: str,
+        grades_raw: str,
+    ) -> Dict[str, Any]:
+        """
+        멤버 관리 > 등급별 필터(사용자 입력) 후 별명·방문수 수집.
+        등급별로 표의 '다음'이 없을 때까지 페이지를 넘긴다(비정상 루프 방지 상한만 내부 적용).
+        """
+        grades = self.parse_mentor_grade_tokens(grades_raw)
+        if not grades:
+            return {"status": "fail", "message": "등급을 1개 이상 입력해주세요.", "rows": []}
+
+        nav = self.go_to_member_management(cafe_url)
+        if nav.get("status") != "success":
+            return {"status": "fail", "message": str(nav.get("message") or "멤버관리 이동 실패"), "rows": []}
+
+        time.sleep(1.0)
+        self._switch_to_cafe_iframe()
+
+        all_rows: List[Dict[str, Any]] = []
+        failed_filter_grades: List[str] = []
+        succeeded_filter_grades: List[str] = []
+        for g in grades:
+            if self._should_stop():
+                return {
+                    "status": "stopped",
+                    "message": "사용자 요청으로 중단되었습니다.",
+                    "rows": all_rows,
+                }
+            g = str(g).strip()
+            self._update_status(f"🎯 등급별 방문수: 등급 '{g}' 필터 적용 시도")
+            if not self._try_select_member_grade_filter(g):
+                self._update_status(
+                    f"⚠️ 등급 '{g}' — 필터 위젯을 찾지 못했습니다. "
+                    f"개발자도구로 드롭다운 셀렉터를 확인해 알려주세요."
+                )
+                failed_filter_grades.append(g)
+                continue
+            succeeded_filter_grades.append(g)
+            time.sleep(0.9)
+            self._update_status(f"▶ 등급 '{g}' 페이지 순회 시작")
+            part = self._scrape_manage_member_table_visits(
+                max_pages=int(self._MENTOR_MEMBER_LIST_PAGE_GUARD),
+                grade_label=g,
+            )
+            self._update_status(f"✅ 등급 '{g}' 페이지 순회 종료: {len(part)}행")
+            for r in part:
+                row = dict(r)
+                row["member_grade"] = g
+                all_rows.append(row)
+
+        if not all_rows:
+            if not succeeded_filter_grades:
+                return {
+                    "status": "fail",
+                    "message": (
+                        "등급 필터 UI를 한 번도 선택하지 못했습니다. "
+                        "멤버 관리 페이지 DOM 변경, iframe 미전환, 또는 입력 등급 문구가 옵션과 정확히 맞지 않을 수 있습니다. "
+                        f"(시도: {', '.join(grades)})"
+                    ),
+                    "rows": [],
+                }
+            if failed_filter_grades:
+                return {
+                    "status": "fail",
+                    "message": (
+                        f"일부 등급은 필터됐으나 수집 행이 0입니다. "
+                        f"성공 필터: {', '.join(succeeded_filter_grades)} / "
+                        f"실패 필터: {', '.join(failed_filter_grades)} — "
+                        "표(별명·방문 열)·스탭 권한·빈 목록 여부를 확인하세요."
+                    ),
+                    "rows": [],
+                }
+            return {
+                "status": "fail",
+                "message": (
+                    "등급 필터는 적용됐지만 멤버 표에서 데이터 행을 읽지 못했습니다. "
+                    "표 구조 변경(헤더 키워드)·최대 페이지 상한·로그인/권한을 확인하세요."
+                ),
+                "rows": [],
+            }
+
+        return {
+            "status": "ok",
+            "message": f"등급 {len(grades)}종 · 행 {len(all_rows)}",
+            "rows": all_rows,
+        }
 
     def _random_delay(self, min_sec: float = 2.0, max_sec: float = 5.0):
         time.sleep(random.uniform(min_sec, max_sec))
@@ -2216,7 +2895,7 @@ class NaverCafeCrawler:
         self.stop_check_callback = callback
 
     def _should_stop(self):
-        if self.status_callback and hasattr(self, 'stop_check_callback') and self.stop_check_callback:
+        if hasattr(self, 'stop_check_callback') and self.stop_check_callback:
             return self.stop_check_callback()
         return False
 
