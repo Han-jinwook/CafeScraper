@@ -7,12 +7,18 @@ import re
 import time
 import random
 import json
+import fnmatch
 from pathlib import Path
 from selenium.webdriver.common.by import By
 
 from app.products.scraper.crawler import NaverCafeCrawler
 from app.utils.naver_login import auto_login_naver_with_js as _auto_login_naver_with_js
 from app.utils.paths import get_config_path, resolve_event_db_path
+from app.utils.event_nick_presets import (
+    delete_event_nick_preset,
+    load_event_nick_presets,
+    upsert_event_nick_preset,
+)
 from app.utils.event_db import (
     get_event_comments_count,
     get_event_mentor_visits_count,
@@ -222,10 +228,12 @@ if "event_condition_comment_enabled" not in st.session_state:
     )
 if "event_condition_post_enabled" not in st.session_state:
     st.session_state.event_condition_post_enabled = bool(
-        config.get("event_condition_post_enabled", True)
+        config.get("event_condition_post_enabled", False)
     )
 if "event_condition_mentor_enabled" not in st.session_state:
-    st.session_state.event_condition_mentor_enabled = bool(config.get("event_condition_mentor_enabled", False))
+    st.session_state.event_condition_mentor_enabled = bool(
+        config.get("event_condition_mentor_enabled", False)
+    )
 if "event_cond_mentor_enabled_checkbox" not in st.session_state:
     st.session_state.event_cond_mentor_enabled_checkbox = bool(
         config.get("event_condition_mentor_enabled", False)
@@ -234,8 +242,248 @@ if "event_cond_mentor_enabled_checkbox" not in st.session_state:
 
 def update_logs(msg: str | None = None):
     if msg:
+        if str(msg).startswith("__MENTOR_PROGRESS_"):
+            return
         ts = datetime.now().strftime("%H:%M:%S")
-        st.session_state.event_logs.append(f"[{ts}] {msg}")
+        line = f"[{ts}] {msg}"
+        st.session_state.event_logs.append(line)
+        # 백그라운드 실행 시에도 실시간 추적할 수 있도록 터미널에 동일 로그를 남긴다.
+        try:
+            print(line, flush=True)
+        except Exception:
+            pass
+
+
+def _fmt_event_duration(sec: float) -> str:
+    sec = max(0, int(sec))
+    if sec < 60:
+        return f"{sec}초"
+    m, s = divmod(sec, 60)
+    if m < 60:
+        return f"{int(m)}분 {s}초"
+    h, m = divmod(int(m), 60)
+    return f"{h}시간 {int(m)}분"
+
+
+def _build_export_filename(result_label: str, *, include_period: bool = True) -> str:
+    """다운로드 파일명: 카페명4자 + 결과종류 + 기간 + 생성시각."""
+    cafe_name_raw = str(
+        st.session_state.get("event_cafe_name_input")
+        or config.get("event_cafe_name")
+        or config.get("cafe_name")
+        or "카페이벤트"
+    ).strip()
+    cafe_name4 = re.sub(r"\s+", "", cafe_name_raw)[:4] or "카페이벤트"
+    cafe_name4 = re.sub(r"[\\/:*?\"<>|]", "_", cafe_name4)
+
+    parts = [cafe_name4, str(result_label or "결과").strip() or "결과"]
+    if include_period:
+        _s = st.session_state.get("event_collection_start_date_input", _collection_default_start)
+        _e = st.session_state.get("event_collection_end_date_input", _collection_default_end)
+        try:
+            s_txt = _s.strftime("%Y-%m-%d")
+        except Exception:
+            s_txt = str(_s)
+        try:
+            e_txt = _e.strftime("%Y-%m-%d")
+        except Exception:
+            e_txt = str(_e)
+        parts.append(f"{s_txt}~{e_txt}")
+    parts.append(datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
+    filename = "_".join(parts) + ".csv"
+    return re.sub(r"[\\/:*?\"<>|]", "_", filename)
+
+
+def _post_nick_filter_mode_from_config(cfg: dict) -> str:
+    m = str(cfg.get("event_post_nick_filter") or "").strip().lower()
+    if m in ("exclude", "include", "off"):
+        return m
+    if bool(cfg.get("event_apply_post_exclude", True)):
+        return "exclude"
+    if bool(cfg.get("event_apply_post_include", False)):
+        return "include"
+    return "off"
+
+
+def _comment_nick_filter_mode_from_config(cfg: dict) -> str:
+    m = str(cfg.get("event_comment_nick_filter") or "").strip().lower()
+    if m in ("exclude", "include", "off"):
+        return m
+    if bool(cfg.get("event_apply_comment_exclude", False)):
+        return "exclude"
+    if bool(cfg.get("event_apply_comment_include", False)):
+        return "include"
+    return "off"
+
+
+def _nick_filter_mode_from_session(*, prefix: str) -> str:
+    """prefix 예: event_post_filter → 키 event_post_filter_exclude_cb / _include_cb"""
+    ex = bool(st.session_state.get(f"{prefix}_exclude_cb", False))
+    inc = bool(st.session_state.get(f"{prefix}_include_cb", False))
+    if inc:
+        return "include"
+    if ex:
+        return "exclude"
+    return "off"
+
+
+def _fmt_nick_filter_badge(mode: str) -> str:
+    if mode == "exclude":
+        return "제외"
+    if mode == "include":
+        return "포함"
+    return "OFF"
+
+
+def _parse_post_board_bonus_rules(raw_text: str) -> list[tuple[str, int]]:
+    """
+    조건1 게시판 가산 티켓 규칙 파서.
+    입력 예:
+    - 초급자치유일기 2
+    - 초급자치유일기 / 2
+    - 초급자치유일기,2
+    """
+    out: list[tuple[str, int]] = []
+    for ln in str(raw_text or "").splitlines():
+        s = str(ln or "").strip()
+        if (not s) or s.startswith("#"):
+            continue
+        m = re.match(r"^(.*?)\s*(?:/|,|\s)\s*([+-]?\d+)\s*$", s)
+        if not m:
+            continue
+        board_raw = str(m.group(1) or "").strip()
+        if not board_raw:
+            continue
+        try:
+            bonus = int(m.group(2))
+        except Exception:
+            continue
+        if bonus <= 0:
+            continue
+        key = re.sub(r"\s+", "", board_raw).strip().lower()
+        if key:
+            out.append((key, bonus))
+    return out
+
+
+def _resolve_post_board_bonus(board_name: str, rules: list[tuple[str, int]]) -> int:
+    """
+    게시판명 가산 티켓 계산.
+    - '*' / '?' 와일드카드 지원 (fnmatch)
+    - 규칙은 위에서부터 순서대로 첫 매칭을 사용
+    """
+    key = re.sub(r"\s+", "", str(board_name or "")).strip().lower()
+    if not key or not rules:
+        return 0
+    for pattern, bonus in rules:
+        p = str(pattern or "").strip().lower()
+        if not p:
+            continue
+        if any(ch in p for ch in ("*", "?", "[")):
+            if fnmatch.fnmatch(key, p):
+                return int(bonus)
+        elif key == p:
+            return int(bonus)
+    return 0
+
+
+def _reset_mentor_async_workspace() -> None:
+    for k in (
+        "_mentor_async_launched",
+        "_mentor_async_payload_snapshot",
+        "_mentor_progress_q",
+        "_mentor_stop_ev",
+        "_mentor_async_thread",
+        "_mentor_async_live_rows",
+        "_mentor_async_start_ts",
+        "_mentor_async_phase",
+    ):
+        st.session_state.pop(k, None)
+
+
+def _finalize_mentor_only_run(
+    *,
+    err: str | None,
+    res: dict | None,
+    t0: float,
+    event_db_path: str,
+) -> None:
+    if err:
+        st.session_state.event_last_run_message = f"⚠️ 실행 중 오류: {err}"
+        update_logs(f"❌ 조건(3) 오류: {err}")
+    elif res is None:
+        st.session_state.event_last_run_message = "⚠️ 조건(3) 결과 없음"
+    else:
+        _mrows = list(res.get("rows") or [])
+        _mstatus = str(res.get("status") or "")
+        if _mstatus == "stopped":
+            update_logs("🛑 사용자 요청으로 조건(3) 수집을 중단했습니다.")
+            st.session_state.event_last_run_message = (
+                f"🛑 조건(3) 중단 — {_fmt_event_duration(time.time() - t0)}"
+            )
+        elif _mstatus != "ok":
+            update_logs(f"등급별 방문수 단계: {res.get('message') or '실패'}")
+            st.session_state.event_last_run_message = f"조건(3): {res.get('message') or '실패'}"
+        else:
+            _saved = upsert_event_mentor_visits(event_db_path, _mrows)
+            update_logs(
+                f"등급별 방문수: 표 {len(_mrows)}행 수집 → DB 반영 {_saved}건"
+            )
+            if not _mrows:
+                update_logs(
+                    "등급별 방문수: 읽은 행이 없습니다. 등급 문구·드롭다운·표(별명/방문) 구조를 확인하세요."
+                )
+            st.session_state.event_last_run_message = (
+                f"✅ 완료: 등급별 방문수 DB {_saved}건 — {_fmt_event_duration(time.time() - t0)}"
+            )
+    st.session_state.event_progress_ratio = 1.0
+    st.session_state.event_progress_label = "완료 (조건3만 실행)"
+    _reset_mentor_async_workspace()
+    st.session_state.event_run_pending = False
+    st.session_state.event_running = False
+    st.session_state.event_run_payload = None
+    st.session_state.event_stop_requested = False
+
+
+def _run_mentor_only_on_main_thread(payload: dict, *, event_db_path: str) -> None:
+    """
+    조건(3)만 실행: WebDriver는 브라우저를 연 스레드(여기서는 Streamlit 스크립트 스레드)에서만 쓰는 것이 안전합니다.
+    다른 스레드에서 driver를 호출하면 Windows 등에서 응답이 없어질 수 있어, 여기서는 동기 실행합니다.
+    """
+    t0 = time.time()
+    cafe_url = str(payload.get("cafe_url_mentor") or "").strip()
+    grades_raw = str(payload.get("mentor_grades_raw") or "")
+    cr = st.session_state.get("event_crawler")
+    if not cr or not getattr(cr, "driver", None):
+        _finalize_mentor_only_run(
+            err="먼저 1단계에서 브라우저를 여세요.",
+            res=None,
+            t0=t0,
+            event_db_path=event_db_path,
+        )
+        st.rerun()
+        return
+    update_logs("조건(3) 등급별 방문수 수집을 시작합니다.")
+    err = None
+    res = None
+    try:
+        cr.set_status_callback(update_logs)
+        cr.set_stop_check_callback(lambda: bool(st.session_state.get("event_stop_requested", False)))
+        res = cr.scrape_mentor_visit_counts(cafe_url, grades_raw)
+    except Exception as e:
+        err = str(e)
+        res = None
+    finally:
+        try:
+            cr.set_stop_check_callback(None)
+        except Exception:
+            pass
+        try:
+            cr.set_status_callback(update_logs)
+        except Exception:
+            pass
+    _finalize_mentor_only_run(err=err, res=res, t0=t0, event_db_path=event_db_path)
+    st.rerun()
 
 
 def _build_dup_report(db_path: str) -> dict:
@@ -328,6 +576,7 @@ def _queue_ticket_inputs_materialize_after_save(cfg: dict) -> None:
         "event_post_images_per_ticket_input": str(max(1, int(cfg["event_post_images_per_ticket"]))),
         "event_comment_chars_per_ticket_input": str(max(1, int(cfg["event_comment_chars_per_ticket"]))),
         "event_comment_media_ticket_bonus_input": str(max(1, int(cfg["event_comment_media_ticket_bonus"]))),
+        "event_comment_max_tickets_per_comment_input": str(max(1, int(cfg.get("event_comment_max_tickets_per_comment", 5) or 5))),
     }
 
 
@@ -341,6 +590,11 @@ def _build_final_summary_report(db_path: str) -> dict:
         "event_comment_media_ticket_bonus_input",
         "event_comment_media_ticket_bonus",
         1,
+    )
+    comment_max_tickets_per_comment = _resolve_ticket_weight(
+        "event_comment_max_tickets_per_comment_input",
+        "event_comment_max_tickets_per_comment",
+        5,
     )
 
     conn3 = sqlite3.connect(db_path, timeout=30.0)
@@ -382,6 +636,9 @@ def _build_final_summary_report(db_path: str) -> dict:
         (df_sum_raw["emoji_count"] > 0) | (df_sum_raw["inline_image_count"] > 0)
     ).astype(int) * int(comment_media_ticket_bonus)
     df_sum_raw["ticket_per_comment"] = df_sum_raw["text_ticket"] + df_sum_raw["image_ticket"]
+    df_sum_raw["ticket_per_comment"] = df_sum_raw["ticket_per_comment"].clip(
+        upper=int(comment_max_tickets_per_comment)
+    )
 
     # 중복/복붙 보정: 같은 별명+같은 내용 그룹에서 첫 댓글(원문) 제외 나머지는 글자수 10 기준(=티켓 1)
     df_sum_raw["dup_idx"] = df_sum_raw.groupby(["nickname", "comment_content"]).cumcount()
@@ -400,11 +657,12 @@ def _build_final_summary_report(db_path: str) -> dict:
         .rename(columns={"nickname": "별명"})
     )
 
-    max_ticket = int(df_sum_raw["ticket_per_comment"].max()) if not df_sum_raw.empty else 1
+    # 조건1과 동일하게 티켓N 분포 칼럼은 "텍스트 티켓" 최대값 기준으로만 생성
+    max_ticket = int(df_sum_raw["text_ticket"].max()) if not df_sum_raw.empty else 1
     for tv in range(1, max_ticket + 1):
         col_name = f"티켓{tv}"
         ticket_counts = (
-            df_sum_raw[df_sum_raw["ticket_per_comment"] == tv]
+            df_sum_raw[df_sum_raw["text_ticket"] == tv]
             .groupby("nickname")["id"].count()
             .rename(col_name)
         )
@@ -415,14 +673,45 @@ def _build_final_summary_report(db_path: str) -> dict:
 
     ticket_cols = [c for c in base_agg.columns if c.startswith("티켓") and c != "총티켓수"]
     ordered = ["별명", "총티켓수", "댓글수"] + sorted(ticket_cols, key=lambda x: int(x.replace("티켓", ""))) + ["글자티켓", "이미지티켓"]
-    sum_df = base_agg[[c for c in ordered if c in base_agg.columns]].sort_values(
-        ["총티켓수", "댓글수"], ascending=[False, False]
-    )
+
+    sum_df = base_agg[[c for c in ordered if c in base_agg.columns]].copy()
+
+    # 댓글 별명 필터가 "포함(include)"일 때는 사용자가 입력한 별명 순서를 집계표 정렬 우선순위로 사용
+    comment_filter_mode = _nick_filter_mode_from_session(prefix="event_comment_filter")
+    include_raw = str(st.session_state.get("event_exclude_comment_nicks_text", "") or "")
+
+    def _norm_nick_for_order(v: str) -> str:
+        return "".join(str(v or "").strip().lower().split())
+
+    include_order_map: dict[str, int] = {}
+    if comment_filter_mode == "include":
+        for raw_line in include_raw.splitlines():
+            nick = str(raw_line or "").strip()
+            if not nick:
+                continue
+            nk = _norm_nick_for_order(nick)
+            if nk and nk not in include_order_map:
+                include_order_map[nk] = len(include_order_map)
+
+    if include_order_map:
+        _fallback_rank = len(include_order_map) + 100000
+        sum_df["__nick_order"] = sum_df["별명"].apply(
+            lambda x: include_order_map.get(_norm_nick_for_order(str(x)), _fallback_rank)
+        )
+        sum_df = sum_df.sort_values(
+            ["__nick_order", "총티켓수", "댓글수", "별명"],
+            ascending=[True, False, False, True],
+        ).drop(columns=["__nick_order"])
+    else:
+        sum_df = sum_df.sort_values(
+            ["총티켓수", "댓글수"], ascending=[False, False]
+        )
     return {
         "status": "data",
         "df": sum_df,
         "comment_chars_per_ticket": comment_chars_per_ticket,
         "comment_media_ticket_bonus": comment_media_ticket_bonus,
+        "comment_max_tickets_per_comment": comment_max_tickets_per_comment,
     }
 
 
@@ -461,6 +750,11 @@ def _get_event_ticket_option_signature() -> str:
         "event_comment_media_ticket_bonus",
         1,
     )
+    _comment_max_tickets = _resolve_ticket_weight(
+        "event_comment_max_tickets_per_comment_input",
+        "event_comment_max_tickets_per_comment",
+        5,
+    )
     _post_images_per_ticket = _resolve_ticket_weight(
         "event_post_images_per_ticket_input",
         "event_post_images_per_ticket",
@@ -468,7 +762,8 @@ def _get_event_ticket_option_signature() -> str:
     )
     return (
         f"comment_chars:{_comment_chars}|post_chars:{_post_chars}"
-        f"|comment_media_bonus:{_comment_media_bonus}|post_images_per_ticket:{_post_images_per_ticket}"
+        f"|comment_media_bonus:{_comment_media_bonus}|comment_max_tickets:{_comment_max_tickets}"
+        f"|post_images_per_ticket:{_post_images_per_ticket}"
     )
 
 
@@ -563,6 +858,12 @@ if config.get("event_comment_search_start_date"):
         _comment_search_default_start = datetime.strptime(config["event_comment_search_start_date"], "%Y-%m-%d")
     except Exception:
         pass
+_comment_search_default_end = _comment_default_end
+if config.get("event_comment_search_end_date"):
+    try:
+        _comment_search_default_end = datetime.strptime(config["event_comment_search_end_date"], "%Y-%m-%d")
+    except Exception:
+        pass
 
 _post_default_start = _default_start
 _post_default_end = _default_end
@@ -583,12 +884,15 @@ _collection_default_end = max(_comment_default_end, _post_default_end)
 
 _comment_chars_per_ticket_default = int(config.get("event_comment_chars_per_ticket", 100) or 100)
 _post_chars_per_ticket_default = int(config.get("event_post_chars_per_ticket", 100) or 100)
+_post_board_bonus_default_text = str(config.get("event_post_board_ticket_bonus_text", "") or "")
 _comment_chars_per_ticket_default = max(1, _comment_chars_per_ticket_default)
 _post_chars_per_ticket_default = max(1, _post_chars_per_ticket_default)
 _comment_media_ticket_bonus_default = int(config.get("event_comment_media_ticket_bonus", 1) or 1)
 _post_images_per_ticket_default = int(config.get("event_post_images_per_ticket", 1) or 1)
+_comment_max_tickets_per_comment_default = int(config.get("event_comment_max_tickets_per_comment", 5) or 5)
 _comment_media_ticket_bonus_default = max(1, _comment_media_ticket_bonus_default)
 _post_images_per_ticket_default = max(1, _post_images_per_ticket_default)
+_comment_max_tickets_per_comment_default = max(1, _comment_max_tickets_per_comment_default)
 _pending_ticket_vals = st.session_state.pop(_EVENT_PENDING_TICKET_INPUT_MATERIALIZE, None)
 if _pending_ticket_vals is not None:
     for _pt_key, _pt_val in _pending_ticket_vals.items():
@@ -597,6 +901,10 @@ _init_ticket_text_input_from_config("event_comment_chars_per_ticket_input", "eve
 _init_ticket_text_input_from_config("event_post_chars_per_ticket_input", "event_post_chars_per_ticket")
 _init_ticket_text_input_from_config("event_comment_media_ticket_bonus_input", "event_comment_media_ticket_bonus")
 _init_ticket_text_input_from_config("event_post_images_per_ticket_input", "event_post_images_per_ticket")
+_init_ticket_text_input_from_config(
+    "event_comment_max_tickets_per_comment_input",
+    "event_comment_max_tickets_per_comment",
+)
 
 st.markdown("#### ⚙️ 수집 설정")
 _ev1, _ev2, _ev3 = st.columns([1, 1, 1], gap="medium")
@@ -1090,18 +1398,31 @@ with _ev2:
             )
             or ""
         )
-        _apply_comment_exclude = bool(
-            st.session_state.get(
-                "event_apply_comment_exclude_checkbox",
-                config.get("event_apply_comment_exclude", False),
-            )
-        )
-        _apply_post_exclude = bool(
-            st.session_state.get(
-                "event_apply_post_exclude_checkbox",
-                config.get("event_apply_post_exclude", True),
-            )
-        )
+        if "event_post_filter_exclude_cb" not in st.session_state:
+            _p0 = _post_nick_filter_mode_from_config(config)
+            st.session_state["event_post_filter_exclude_cb"] = _p0 == "exclude"
+            st.session_state["event_post_filter_include_cb"] = _p0 == "include"
+        if "event_comment_filter_exclude_cb" not in st.session_state:
+            _c0 = _comment_nick_filter_mode_from_config(config)
+            st.session_state["event_comment_filter_exclude_cb"] = _c0 == "exclude"
+            st.session_state["event_comment_filter_include_cb"] = _c0 == "include"
+
+        def _on_post_exclude_change():
+            if st.session_state.get("event_post_filter_exclude_cb"):
+                st.session_state["event_post_filter_include_cb"] = False
+
+        def _on_post_include_change():
+            if st.session_state.get("event_post_filter_include_cb"):
+                st.session_state["event_post_filter_exclude_cb"] = False
+
+        def _on_comment_exclude_change():
+            if st.session_state.get("event_comment_filter_exclude_cb"):
+                st.session_state["event_comment_filter_include_cb"] = False
+
+        def _on_comment_include_change():
+            if st.session_state.get("event_comment_filter_include_cb"):
+                st.session_state["event_comment_filter_exclude_cb"] = False
+
         def _parse_level_map(raw_text: str) -> dict[str, str]:
             out: dict[str, str] = {}
             for ln in str(raw_text or "").splitlines():
@@ -1122,41 +1443,112 @@ with _ev2:
         _exclude_post_count = len([x for x in _exclude_post_src.splitlines() if str(x).strip()])
         _exclude_comment_count = len([x for x in _exclude_comment_src.splitlines() if str(x).strip()])
         with st.expander(
-            f"🚫 제외 설정 (게시글 {_exclude_post_count}명 · 댓글 {_exclude_comment_count}명)",
+            f"⚖️ 제외/포함 설정 (게시글 {_exclude_post_count}명 · 댓글 {_exclude_comment_count}명)",
             expanded=False,
         ):
             _post_left, _post_right = st.columns([4.9, 1.3], gap="medium")
             with _post_left:
                 exclude_post_nicks_text = st.text_area(
-                    "게시글 제외 별명 (줄바꿈 구분)",
+                    "게시글 별명 (줄바꿈 구분)",
                     value=config.get("event_exclude_post_nicks", "마법사멀린"),
                     height=170,
-                    help="줄바꿈으로 별명을 구분합니다. 게시글 제외 적용 체크가 ON일 때만 이 목록을 실행에 반영하며, OFF면 저장만 됩니다.",
+                    help="줄바꿈으로 별명을 구분합니다. 오른쪽에서 「제외」는 목록에 있는 작성자 글을 빼고, 「포함」은 목록에 있는 작성자 글만 남깁니다. 둘 다 끄면 이 칸은 실행에 쓰이지 않습니다.",
                     key="event_exclude_post_nicks_text",
                 )
             with _post_right:
-                apply_post_exclude = st.checkbox(
-                    "적용",
-                    value=_apply_post_exclude,
-                    key="event_apply_post_exclude_checkbox",
+                st.checkbox(
+                    "제외",
+                    key="event_post_filter_exclude_cb",
+                    on_change=_on_post_exclude_change,
                 )
+                st.checkbox(
+                    "포함",
+                    key="event_post_filter_include_cb",
+                    on_change=_on_post_include_change,
+                )
+            _nick_pr = load_event_nick_presets()
 
             _comment_left, _comment_right = st.columns([4.9, 1.3], gap="medium")
             with _comment_left:
                 exclude_comment_nicks_text = st.text_area(
-                    "댓글 제외 별명 (줄바꿈 구분)",
+                    "댓글 별명 (줄바꿈 구분)",
                     value=config.get("event_exclude_comment_nicks", config.get("event_exclude_nicks", "마법사멀린\n해나라")),
                     height=220,
-                    help="줄바꿈으로 별명을 구분합니다. 댓글 제외 적용 체크가 ON일 때만 이 목록을 실행에 반영하며, OFF면 저장만 됩니다.",
+                    help="줄바꿈으로 별명을 구분합니다. 「제외」는 목록 별명 댓글을 빼고, 「포함」은 목록에 있는 사람 댓글만 집계합니다.",
                     key="event_exclude_comment_nicks_text",
                 )
             with _comment_right:
-                apply_comment_exclude = st.checkbox(
-                    "적용",
-                    value=_apply_comment_exclude,
-                    key="event_apply_comment_exclude_checkbox",
+                st.checkbox(
+                    "제외",
+                    key="event_comment_filter_exclude_cb",
+                    on_change=_on_comment_exclude_change,
                 )
-        with st.expander("📅 수집 기간", expanded=False):
+                st.checkbox(
+                    "포함",
+                    key="event_comment_filter_include_cb",
+                    on_change=_on_comment_include_change,
+                )
+
+            _comment_presets = _nick_pr.get("comment") or []
+            _comment_sel_opts = ["— 선택 —"] + [
+                str(r.get("name") or "").strip() for r in _comment_presets if str(r.get("name") or "").strip()
+            ]
+            _crh1, _crh2, _crh3, _crh4, _crh5 = st.columns([1.65, 1.35, 0.52, 0.52, 0.52])
+            with _crh1:
+                st.selectbox(
+                    "댓글 · 저장된 목록",
+                    options=_comment_sel_opts,
+                    key="event_comment_nick_preset_sel",
+                    help="목록을 고른 뒤 「적용」으로 위 입력칸에 불러옵니다.",
+                )
+            with _crh2:
+                st.text_input(
+                    "저장 시 이름",
+                    key="event_comment_nick_preset_name_input",
+                    placeholder="비우면 날짜·시간으로 저장",
+                )
+            with _crh3:
+                if st.button("적용", key="event_comment_nick_preset_apply_btn", use_container_width=True):
+                    _csel = str(st.session_state.get("event_comment_nick_preset_sel") or "").strip()
+                    if _csel and _csel != "— 선택 —":
+                        for r in _comment_presets:
+                            if str(r.get("name") or "").strip() == _csel:
+                                st.session_state["event_exclude_comment_nicks_text"] = str(r.get("text") or "")
+                                break
+                        st.rerun()
+            with _crh4:
+                if st.button("저장", key="event_comment_nick_preset_save_btn", use_container_width=True):
+                    _cnm = str(st.session_state.get("event_comment_nick_preset_name_input") or "").strip()
+                    upsert_event_nick_preset(
+                        "comment",
+                        _cnm,
+                        str(st.session_state.get("event_exclude_comment_nicks_text") or ""),
+                    )
+                    st.rerun()
+            with _crh5:
+                if st.button("삭제", key="event_comment_nick_preset_del_btn", use_container_width=True):
+                    _csel = str(st.session_state.get("event_comment_nick_preset_sel") or "").strip()
+                    if _csel and _csel != "— 선택 —":
+                        delete_event_nick_preset("comment", _csel)
+                    st.rerun()
+        _hdr_coll_s = st.session_state.get("event_collection_start_date_input", _collection_default_start)
+        _hdr_coll_e = st.session_state.get("event_collection_end_date_input", _collection_default_end)
+        if "event_collection_period_expanded" not in st.session_state:
+            st.session_state.event_collection_period_expanded = False
+        def _keep_collection_period_expanded() -> None:
+            st.session_state.event_collection_period_expanded = True
+        try:
+            _hdr_coll_s_txt = _hdr_coll_s.strftime("%Y/%m/%d")
+        except Exception:
+            _hdr_coll_s_txt = str(_hdr_coll_s)
+        try:
+            _hdr_coll_e_txt = _hdr_coll_e.strftime("%Y/%m/%d")
+        except Exception:
+            _hdr_coll_e_txt = str(_hdr_coll_e)
+        with st.expander(
+            f"📅 수집 기간 ({_hdr_coll_s_txt}~{_hdr_coll_e_txt})",
+            expanded=bool(st.session_state.get("event_collection_period_expanded", False)),
+        ):
             st.caption("조건(1) 게시글·조건(2) 댓글 수집에 **동일하게** 적용됩니다.")
             _coll_s, _coll_e = st.columns(2)
             with _coll_s:
@@ -1164,82 +1556,67 @@ with _ev2:
                     "시작일",
                     _collection_default_start,
                     key="event_collection_start_date_input",
+                    on_change=_keep_collection_period_expanded,
                 )
             with _coll_e:
                 collection_end_date = st.date_input(
                     "종료일",
                     _collection_default_end,
                     key="event_collection_end_date_input",
+                    on_change=_keep_collection_period_expanded,
                 )
-        with st.expander("🧩 수집 조건", expanded=False):
-            st.caption("조건(1)·(2)·(3)은 **동시에 선택할 수 없습니다.** 실행에는 **하나만** 켜 주세요.")
-            if "event_cond_pick_post_checkbox" not in st.session_state:
-                st.session_state.event_cond_pick_post_checkbox = bool(
-                    st.session_state.get("event_condition_post_enabled", True)
-                )
-            if "event_cond_pick_comment_checkbox" not in st.session_state:
-                st.session_state.event_cond_pick_comment_checkbox = bool(
-                    st.session_state.get("event_condition_comment_enabled", False)
-                )
-            # 1·2·3 배타: 2개 이상 켜져 있으면 (1)>(2)>(3) 우선으로 하나만 유지. 모두 꺼지면 (1) ON.
-            _pick_p = bool(st.session_state.get("event_cond_pick_post_checkbox", False))
-            _pick_c = bool(st.session_state.get("event_cond_pick_comment_checkbox", False))
-            _pick_m = bool(st.session_state.get("event_cond_mentor_enabled_checkbox", False))
-            _n_pick = int(_pick_p) + int(_pick_c) + int(_pick_m)
-            if _n_pick > 1:
-                if _pick_p:
-                    st.session_state.event_cond_pick_comment_checkbox = False
-                    st.session_state.event_cond_mentor_enabled_checkbox = False
-                elif _pick_c:
-                    st.session_state.event_cond_pick_post_checkbox = False
-                    st.session_state.event_cond_mentor_enabled_checkbox = False
-                else:
-                    st.session_state.event_cond_pick_post_checkbox = False
-                    st.session_state.event_cond_pick_comment_checkbox = False
-            elif _n_pick == 0:
-                st.session_state.event_cond_pick_post_checkbox = True
+        st.markdown("#### 🧩 수집 조건")
+        if "event_cond_pick_post_checkbox" not in st.session_state:
+            st.session_state.event_cond_pick_post_checkbox = bool(
+                st.session_state.get("event_condition_post_enabled", False)
+            )
+        if "event_cond_pick_comment_checkbox" not in st.session_state:
+            st.session_state.event_cond_pick_comment_checkbox = bool(
+                st.session_state.get("event_condition_comment_enabled", False)
+            )
+        # 1·2·3 배타: 2개 이상 켜져 있으면 (1)>(2)>(3) 우선으로 하나만 유지. 모두 꺼지면 (1) ON.
+        _pick_p = bool(st.session_state.get("event_cond_pick_post_checkbox", False))
+        _pick_c = bool(st.session_state.get("event_cond_pick_comment_checkbox", False))
+        _pick_m = bool(st.session_state.get("event_cond_mentor_enabled_checkbox", False))
+        _n_pick = int(_pick_p) + int(_pick_c) + int(_pick_m)
+        if _n_pick > 1:
+            if _pick_p:
+                st.session_state.event_cond_pick_comment_checkbox = False
+                st.session_state.event_cond_mentor_enabled_checkbox = False
+            elif _pick_c:
+                st.session_state.event_cond_pick_post_checkbox = False
+                st.session_state.event_cond_mentor_enabled_checkbox = False
+            else:
+                st.session_state.event_cond_pick_post_checkbox = False
+                st.session_state.event_cond_pick_comment_checkbox = False
+
+        def _pick_post_mode():
+            if st.session_state.get("event_cond_pick_post_checkbox", False):
                 st.session_state.event_cond_pick_comment_checkbox = False
                 st.session_state.event_cond_mentor_enabled_checkbox = False
 
-            def _pick_post_mode():
-                if st.session_state.get("event_cond_pick_post_checkbox", False):
-                    st.session_state.event_cond_pick_comment_checkbox = False
-                    st.session_state.event_cond_mentor_enabled_checkbox = False
-                elif not st.session_state.get("event_cond_pick_comment_checkbox", False) and not st.session_state.get(
-                    "event_cond_mentor_enabled_checkbox", False
-                ):
-                    st.session_state.event_cond_pick_post_checkbox = True
+        def _pick_comment_mode():
+            if st.session_state.get("event_cond_pick_comment_checkbox", False):
+                st.session_state.event_cond_pick_post_checkbox = False
+                st.session_state.event_cond_mentor_enabled_checkbox = False
 
-            def _pick_comment_mode():
-                if st.session_state.get("event_cond_pick_comment_checkbox", False):
-                    st.session_state.event_cond_pick_post_checkbox = False
-                    st.session_state.event_cond_mentor_enabled_checkbox = False
-                elif not st.session_state.get("event_cond_pick_post_checkbox", False) and not st.session_state.get(
-                    "event_cond_mentor_enabled_checkbox", False
-                ):
-                    st.session_state.event_cond_pick_post_checkbox = True
+        def _pick_mentor_mode():
+            if st.session_state.get("event_cond_mentor_enabled_checkbox", False):
+                st.session_state.event_cond_pick_post_checkbox = False
+                st.session_state.event_cond_pick_comment_checkbox = False
 
-            def _pick_mentor_mode():
-                if st.session_state.get("event_cond_mentor_enabled_checkbox", False):
-                    st.session_state.event_cond_pick_post_checkbox = False
-                    st.session_state.event_cond_pick_comment_checkbox = False
-                elif not st.session_state.get("event_cond_pick_post_checkbox", False) and not st.session_state.get(
-                    "event_cond_pick_comment_checkbox", False
-                ):
-                    st.session_state.event_cond_pick_post_checkbox = True
+        cond1_checked = bool(st.session_state.get("event_cond_pick_post_checkbox", False))
+        cond2_checked = bool(st.session_state.get("event_cond_pick_comment_checkbox", False))
+        st.session_state.event_condition_post_enabled = bool(cond1_checked)
+        st.session_state.event_condition_comment_enabled = bool(cond2_checked)
 
-            cond1_checked = bool(st.session_state.get("event_cond_pick_post_checkbox", True))
-            cond2_checked = bool(st.session_state.get("event_cond_pick_comment_checkbox", False))
-            st.session_state.event_condition_post_enabled = bool(cond1_checked)
-            st.session_state.event_condition_comment_enabled = bool(cond2_checked)
-
-            with st.container(key="event_cond_row_post"):
-                st.checkbox(
-                    "**조건(1)** 게시글 수집·분석",
-                    key="event_cond_pick_post_checkbox",
-                    on_change=_pick_post_mode,
-                )
-            st.caption("기간은 상단 **수집 기간**에서 설정합니다.")
+        with st.container(key="event_cond_row_post"):
+            st.checkbox(
+                "**조건(1)** 게시글 수집·분석",
+                key="event_cond_pick_post_checkbox",
+                on_change=_pick_post_mode,
+            )
+        if cond1_checked:
             _post_chars_preview = _resolve_ticket_weight(
                 "event_post_chars_per_ticket_input",
                 "event_post_chars_per_ticket",
@@ -1265,10 +1642,16 @@ with _ev2:
                     key="event_post_images_per_ticket_input",
                     disabled=not cond1_checked,
                 )
-            if cond1_checked:
-                _post_rule_panel = "background:rgba(37,99,235,0.08);color:#1e3a8a;"
-            else:
-                _post_rule_panel = "background:rgba(100,116,139,0.06);color:#475569;"
+            st.text_area(
+                "티켓 가산 (게시판명 / 가산 티켓 수)",
+                value=_post_board_bonus_default_text,
+                height=72,
+                key="event_post_board_ticket_bonus_text",
+                disabled=not cond1_checked,
+                help="예: 초급자치유일기 2, *일기 2, *후기 1 (한 줄에 하나씩 입력, * ? 와일드카드 지원)",
+            )
+            st.caption("와일드카드(* ?) 사용 가능, ex (`*후기 2`), (`*일기/3`)")
+            _post_rule_panel = "background:rgba(37,99,235,0.08);color:#1e3a8a;"
             st.markdown(
                 f"<div style='margin:0.35rem 0 0.5rem;padding:0.45rem 0.6rem;border-radius:0.4rem;"
                 f"{_post_rule_panel}"
@@ -1277,23 +1660,34 @@ with _ev2:
                 unsafe_allow_html=True,
             )
 
-            st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
-            st.markdown("---")
-            with st.container(key="event_cond_row_comment"):
-                st.checkbox(
-                    "**조건(2)** 댓글 수집·분석",
-                    key="event_cond_pick_comment_checkbox",
-                    on_change=_pick_comment_mode,
-                )
-            st.caption("댓글 **목표 기간**(작성일 기준)은 **수집 기간**과 동일합니다.")
-            st.caption("게시글 탐색 범위(댓글 목표기간 보완용)")
-            comment_search_start_date = st.date_input(
-                "게시글 탐색 시작일",
-                _comment_search_default_start,
-                key="event_comment_search_start_date_input",
-                disabled=not cond2_checked,
+        st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)
+        with st.container(key="event_cond_row_comment"):
+            st.checkbox(
+                "**조건(2)** 댓글 수집·분석",
+                key="event_cond_pick_comment_checkbox",
+                on_change=_pick_comment_mode,
             )
-            st.caption("탐색 종료 기준은 목표 종료일과 동일하게 자동 적용됩니다.")
+        if cond2_checked:
+            st.caption(
+                "게시글 **탐색** 기간 — **목록에서 어떤 날짜 범위의 글**을 가져올지입니다. "
+                "목표 댓글 기간보다 넓게 잡으면 그 안의 댓글만 저장됩니다."
+            )
+            # 사용자 실수 방지: 조건(2)의 게시글 탐색 종료일은 수집기간 종료일과 항상 동일하게 고정
+            st.session_state["event_comment_search_end_date_input"] = collection_end_date
+            _cs_s, _cs_e = st.columns(2)
+            with _cs_s:
+                comment_search_start_date = st.date_input(
+                    "게시글 탐색 시작일",
+                    _comment_search_default_start,
+                    key="event_comment_search_start_date_input",
+                    disabled=not cond2_checked,
+                )
+            with _cs_e:
+                comment_search_end_date = st.date_input(
+                    "게시글 탐색 종료일",
+                    key="event_comment_search_end_date_input",
+                    disabled=True,
+                )
             _comment_chars_preview = _resolve_ticket_weight(
                 "event_comment_chars_per_ticket_input",
                 "event_comment_chars_per_ticket",
@@ -1303,6 +1697,11 @@ with _ev2:
                 "event_comment_media_ticket_bonus_input",
                 "event_comment_media_ticket_bonus",
                 _comment_media_ticket_bonus_default,
+            )
+            _comment_max_tickets_preview = _resolve_ticket_weight(
+                "event_comment_max_tickets_per_comment_input",
+                "event_comment_max_tickets_per_comment",
+                _comment_max_tickets_per_comment_default,
             )
             _c_t1, _c_t2 = st.columns(2)
             with _c_t1:
@@ -1319,27 +1718,34 @@ with _ev2:
                     key="event_comment_media_ticket_bonus_input",
                     disabled=not cond2_checked,
                 )
-            if cond2_checked:
-                _comment_rule_panel = "background:rgba(37,99,235,0.08);color:#1e3a8a;"
-            else:
-                _comment_rule_panel = "background:rgba(100,116,139,0.06);color:#475569;"
+            _c_t3 = st.columns(1)[0]
+            with _c_t3:
+                st.text_input(
+                    "한 댓글당 최대 티켓 수",
+                    placeholder=str(_comment_max_tickets_per_comment_default),
+                    key="event_comment_max_tickets_per_comment_input",
+                    disabled=not cond2_checked,
+                )
+            _comment_rule_panel = "background:rgba(37,99,235,0.08);color:#1e3a8a;"
             st.markdown(
                 f"<div style='margin:0.35rem 0 0.5rem;padding:0.45rem 0.6rem;border-radius:0.4rem;"
                 f"{_comment_rule_panel}"
                 f"font-weight:600;font-size:0.96rem;letter-spacing:-0.02em;line-height:1.35;'>"
-                f"[ {_comment_chars_preview} ] 자당 1티켓 · 이미지 1장 {_comment_media_preview}티켓</div>",
+                f"[ {_comment_chars_preview} ] 자당 1티켓 · 이미지 1장 {_comment_media_preview}티켓 · "
+                f"댓글당 최대 {_comment_max_tickets_preview}티켓</div>",
                 unsafe_allow_html=True,
             )
 
-            st.markdown("---")
-            with st.container(key="event_cond_row_mentor"):
-                st.checkbox(
-                    "**조건(3)** 등급별 ‘방문수’ 수집",
-                    key="event_cond_mentor_enabled_checkbox",
-                    on_change=_pick_mentor_mode,
-                )
-            mentor_cond_checked = bool(st.session_state.get("event_cond_mentor_enabled_checkbox", False))
-            st.session_state.event_condition_mentor_enabled = mentor_cond_checked
+        st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)
+        with st.container(key="event_cond_row_mentor"):
+            st.checkbox(
+                "**조건(3)** 등급별 ‘방문수’ 수집",
+                key="event_cond_mentor_enabled_checkbox",
+                on_change=_pick_mentor_mode,
+            )
+        mentor_cond_checked = bool(st.session_state.get("event_cond_mentor_enabled_checkbox", False))
+        st.session_state.event_condition_mentor_enabled = mentor_cond_checked
+        if mentor_cond_checked:
             st.caption(
                 "카페 **스탭 권한** 계정으로 멤버 관리 화면에 진입해, 선택한 **등급**별 멤버 표에서 별명·방문수를 이벤트 DB에 저장합니다."
             )
@@ -1367,6 +1773,12 @@ with _ev2:
             _save_coll_e = st.session_state.get(
                 "event_collection_end_date_input", _collection_default_end
             )
+            _save_comment_search_s = st.session_state.get(
+                "event_comment_search_start_date_input", _save_coll_s
+            )
+            if isinstance(_save_comment_search_s, datetime):
+                _save_comment_search_s = _save_comment_search_s.date()
+            _save_comment_search_e = _save_coll_e
             config["event_cafe_name"] = str(event_cafe_name or "").strip()
             config["event_cafe_url"] = cafe_url
             config["event_board_url"] = board_url
@@ -1378,9 +1790,8 @@ with _ev2:
             )
             config["event_comment_start_date"] = _save_coll_s.strftime("%Y-%m-%d")
             config["event_comment_end_date"] = _save_coll_e.strftime("%Y-%m-%d")
-            config["event_comment_search_start_date"] = comment_search_start_date.strftime("%Y-%m-%d")
-            # 하위호환: 기존 키는 목표 종료일과 동일 값으로 유지
-            config["event_comment_search_end_date"] = _save_coll_e.strftime("%Y-%m-%d")
+            config["event_comment_search_start_date"] = _save_comment_search_s.strftime("%Y-%m-%d")
+            config["event_comment_search_end_date"] = _save_comment_search_e.strftime("%Y-%m-%d")
             config["event_condition_post_enabled"] = bool(
                 st.session_state.get("event_condition_post_enabled", True)
             )
@@ -1410,6 +1821,11 @@ with _ev2:
                 "event_comment_media_ticket_bonus",
                 _comment_media_ticket_bonus_default,
             )
+            config["event_comment_max_tickets_per_comment"] = _resolve_ticket_weight(
+                "event_comment_max_tickets_per_comment_input",
+                "event_comment_max_tickets_per_comment",
+                _comment_max_tickets_per_comment_default,
+            )
             config["event_post_images_per_ticket"] = _resolve_ticket_weight(
                 "event_post_images_per_ticket_input",
                 "event_post_images_per_ticket",
@@ -1418,12 +1834,17 @@ with _ev2:
             config["event_max_posts"] = 0
             config["event_exclude_post_nicks"] = exclude_post_nicks_text
             config["event_exclude_comment_nicks"] = exclude_comment_nicks_text
-            config["event_apply_post_exclude"] = bool(
-                st.session_state.get("event_apply_post_exclude_checkbox", True)
+            config["event_post_board_ticket_bonus_text"] = str(
+                st.session_state.get("event_post_board_ticket_bonus_text", "") or ""
             )
-            config["event_apply_comment_exclude"] = bool(
-                st.session_state.get("event_apply_comment_exclude_checkbox", False)
-            )
+            _s_post_fm = _nick_filter_mode_from_session(prefix="event_post_filter")
+            _s_comment_fm = _nick_filter_mode_from_session(prefix="event_comment_filter")
+            config["event_post_nick_filter"] = _s_post_fm
+            config["event_comment_nick_filter"] = _s_comment_fm
+            config["event_apply_post_exclude"] = _s_post_fm == "exclude"
+            config["event_apply_post_include"] = _s_post_fm == "include"
+            config["event_apply_comment_exclude"] = _s_comment_fm == "exclude"
+            config["event_apply_comment_include"] = _s_comment_fm == "include"
             # 하위호환: 기존 키에도 댓글 제외값 동기화
             config["event_exclude_nicks"] = exclude_comment_nicks_text
             config["event_auto_login_enabled"] = bool(event_auto_login_enabled)
@@ -1448,13 +1869,10 @@ with _ev3:
             placeholder=r"D:\CafeScraper\data\event_comments.db",
             key="event_db_path_input",
         )
-        st.caption(f"활성 DB 파일: `{os.path.basename(EVENT_DB_PATH)}`")
-        _ec1, _ec2 = st.columns(2)
-        _ec1.metric(
-            "저장 게시글/댓글",
-            f"{get_event_posts_count(EVENT_DB_PATH):,}개 / {get_event_comments_count(EVENT_DB_PATH):,}건",
-        )
-        _ec2.metric("파일", "있음" if os.path.exists(EVENT_DB_PATH) else "없음")
+        _ec1, _ec2, _ec3 = st.columns(3)
+        _ec1.metric("저장 게시글", f"{get_event_posts_count(EVENT_DB_PATH):,}개")
+        _ec2.metric("수집 댓글", f"{get_event_comments_count(EVENT_DB_PATH):,}건")
+        _ec3.metric("등급별 방문수", f"{get_event_mentor_visits_count(EVENT_DB_PATH):,}행")
         st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
         st.warning("초기화하지 않으면 데이터가 계속 누적됩니다. 기존 작업 결과가 필요하면 먼저 CSV/리포트를 다운로드한 뒤 초기화를 진행하세요.")
         if st.button("🗑️ 이벤트 DB 초기화", type="primary", use_container_width=True, key="reset_event_db_btn"):
@@ -1495,7 +1913,7 @@ with _ev3:
 
 # 실행용 조건값 정규화
 comment_condition_enabled = bool(st.session_state.get("event_condition_comment_enabled", False))
-post_condition_enabled = bool(st.session_state.get("event_condition_post_enabled", True))
+post_condition_enabled = bool(st.session_state.get("event_condition_post_enabled", False))
 mentor_condition_enabled = bool(st.session_state.get("event_condition_mentor_enabled", False))
 
 collection_start_date = st.session_state.get(
@@ -1506,7 +1924,17 @@ collection_end_date = st.session_state.get(
 )
 comment_start_date = collection_start_date
 comment_end_date = collection_end_date
-comment_search_start_date = st.session_state.get("event_comment_search_start_date_input", _comment_search_default_start)
+comment_search_start_date = st.session_state.get(
+    "event_comment_search_start_date_input", _comment_search_default_start
+)
+comment_search_end_date = collection_end_date
+# date/datetime 혼용 방지: 비교 전 날짜 타입으로 정규화
+if isinstance(comment_search_start_date, datetime):
+    comment_search_start_date = comment_search_start_date.date()
+if isinstance(comment_search_end_date, datetime):
+    comment_search_end_date = comment_search_end_date.date()
+if comment_search_end_date < comment_search_start_date:
+    comment_search_end_date = comment_search_start_date
 post_start_date = collection_start_date
 post_end_date = collection_end_date
 comment_chars_per_ticket = _resolve_ticket_weight(
@@ -1518,6 +1946,11 @@ comment_media_ticket_bonus = _resolve_ticket_weight(
     "event_comment_media_ticket_bonus_input",
     "event_comment_media_ticket_bonus",
     _comment_media_ticket_bonus_default,
+)
+comment_max_tickets_per_comment = _resolve_ticket_weight(
+    "event_comment_max_tickets_per_comment_input",
+    "event_comment_max_tickets_per_comment",
+    _comment_max_tickets_per_comment_default,
 )
 post_chars_per_ticket = _resolve_ticket_weight(
     "event_post_chars_per_ticket_input",
@@ -1533,8 +1966,7 @@ post_images_per_ticket = _resolve_ticket_weight(
 comment_start_dt = datetime.combine(comment_start_date, datetime.min.time())
 comment_end_dt = datetime.combine(comment_end_date, datetime.max.time())
 comment_search_start_dt = datetime.combine(comment_search_start_date, datetime.min.time())
-# 댓글 조건(조건2) 게시글 탐색 종료는 별도 입력 없이 목표 종료일로 고정
-comment_search_end_dt = comment_end_dt
+comment_search_end_dt = datetime.combine(comment_search_end_date, datetime.max.time())
 
 post_start_dt = datetime.combine(post_start_date, datetime.min.time())
 post_end_dt = datetime.combine(post_end_date, datetime.max.time())
@@ -1556,7 +1988,10 @@ st.markdown("---")
 # Control Panel
 # -----------------------------------------------------------------------------
 st.markdown("### 🚀 실행 제어")
-st.caption("1단계에서 로그인 브라우저를 준비하고, 2단계에서 선택한 수집 조건을 실행합니다.")
+st.caption(
+    "1단계에서 브라우저를 연 뒤 2단계를 실행합니다. "
+    "조건(3)만 켠 경우 실제 작업은 크롬 **멤버 관리** 창에서 돌아가며, 이 앱의 지표는 **완료 후** 갱신됩니다."
+)
 step_col1, step_col_login, step_col2 = st.columns([2.5, 1.1, 2.5])
 _event_crawler_obj = st.session_state.get("event_crawler")
 event_browser_opened = bool(
@@ -1697,28 +2132,31 @@ with step_col2:
                 if _needs_event_board and not board_urls:
                     st.error("수집할 게시판이 없습니다. 게시판을 먼저 선택해주세요.")
                 else:
+                    if mentor_condition_enabled and not post_condition_enabled and not comment_condition_enabled:
+                        _reset_mentor_async_workspace()
                     st.session_state.event_run_payload = {
-                        "board_urls": board_urls,
-                        "comment_enabled": bool(comment_condition_enabled),
-                        "comment_target_start_dt": comment_start_dt,
-                        "comment_target_end_dt": comment_end_dt,
-                        "comment_search_start_dt": comment_search_start_dt,
-                        "comment_search_end_dt": comment_search_end_dt,
-                        "post_enabled": bool(post_condition_enabled),
-                        "post_start_dt": post_start_dt,
-                        "post_end_dt": post_end_dt,
-                        "exclude_post_nicks_text": str(exclude_post_nicks_text or ""),
-                        "exclude_comment_nicks_text": str(exclude_comment_nicks_text or ""),
-                        "apply_post_exclude": bool(st.session_state.get("event_apply_post_exclude_checkbox", True)),
-                        "apply_comment_exclude": bool(
-                            st.session_state.get("event_apply_comment_exclude_checkbox", False)
-                        ),
-                        "mentor_enabled": bool(mentor_condition_enabled),
-                        "mentor_grades_raw": str(st.session_state.get("event_mentor_grades_text", "") or ""),
-                        "cafe_url_mentor": str(
-                            st.session_state.get("event_mentor_manage_url_input", "") or ""
-                        ).strip()
-                        or str(cafe_url or "").strip(),
+                            "board_urls": board_urls,
+                            "comment_enabled": bool(comment_condition_enabled),
+                            "comment_target_start_dt": comment_start_dt,
+                            "comment_target_end_dt": comment_end_dt,
+                            "comment_search_start_dt": comment_search_start_dt,
+                            "comment_search_end_dt": comment_search_end_dt,
+                            "post_enabled": bool(post_condition_enabled),
+                            "post_start_dt": post_start_dt,
+                            "post_end_dt": post_end_dt,
+                            "exclude_post_nicks_text": str(exclude_post_nicks_text or ""),
+                            "exclude_comment_nicks_text": str(exclude_comment_nicks_text or ""),
+                            "post_nick_filter": _nick_filter_mode_from_session(prefix="event_post_filter"),
+                            "comment_nick_filter": _nick_filter_mode_from_session(prefix="event_comment_filter"),
+                            "apply_post_exclude": _nick_filter_mode_from_session(prefix="event_post_filter") == "exclude",
+                            "apply_comment_exclude": _nick_filter_mode_from_session(prefix="event_comment_filter")
+                            == "exclude",
+                            "mentor_enabled": bool(mentor_condition_enabled),
+                            "mentor_grades_raw": str(st.session_state.get("event_mentor_grades_text", "") or ""),
+                            "cafe_url_mentor": str(
+                                st.session_state.get("event_mentor_manage_url_input", "") or ""
+                            ).strip()
+                            or str(cafe_url or "").strip(),
                     }
                     st.session_state.event_running = True
                     st.session_state.event_run_pending = True
@@ -1752,426 +2190,426 @@ if st.session_state.event_run_pending and st.session_state.event_running:
     post_end_dt = payload.get("post_end_dt")
     exclude_post_nicks_raw = str(payload.get("exclude_post_nicks_text") or "")
     exclude_comment_nicks_raw = str(payload.get("exclude_comment_nicks_text") or "")
-    apply_post_exclude_runtime = bool(payload.get("apply_post_exclude", True))
-    apply_comment_exclude_runtime = bool(payload.get("apply_comment_exclude", False))
+    post_nick_filter_rt = str(payload.get("post_nick_filter") or "").strip().lower()
+    if post_nick_filter_rt not in ("exclude", "include", "off"):
+        if bool(payload.get("apply_post_exclude", True)):
+            post_nick_filter_rt = "exclude"
+        elif bool(payload.get("apply_post_include", False)):
+            post_nick_filter_rt = "include"
+        else:
+            post_nick_filter_rt = "off"
+    comment_nick_filter_rt = str(payload.get("comment_nick_filter") or "").strip().lower()
+    if comment_nick_filter_rt not in ("exclude", "include", "off"):
+        if bool(payload.get("apply_comment_exclude", False)):
+            comment_nick_filter_rt = "exclude"
+        elif bool(payload.get("apply_comment_include", False)):
+            comment_nick_filter_rt = "include"
+        else:
+            comment_nick_filter_rt = "off"
     mentor_enabled_rt = bool(payload.get("mentor_enabled"))
     mentor_grades_raw = str(payload.get("mentor_grades_raw") or "")
     cafe_url_mentor = str(payload.get("cafe_url_mentor") or "").strip()
+    _mentor_only_rt = bool(mentor_enabled_rt and not comment_enabled and not post_enabled)
+    if _mentor_only_rt:
+        st.info(
+            "⏳ **조건(3) 실행 중** — 이 앱은 수집이 끝날 때까지 멈춘 것처럼 보일 수 있습니다. "
+            "진행 여부는 **크롬 멤버 관리** 탭(등급 필터·표·다음 페이지)을 보시면 됩니다."
+        )
+        _run_mentor_only_on_main_thread(payload, event_db_path=EVENT_DB_PATH)
 
-    prog = st.progress(max(0.0, min(1.0, float(st.session_state.get("event_progress_ratio", 0.0) or 0.0))))
-    _metrics_placeholder = st.empty()
-    _detail_placeholder = st.empty()
-    _run_start_time = time.time()
-    mentor_rows_saved = 0
-    try:
-        if st.session_state.get("event_crawler"):
-            st.session_state.event_crawler.set_status_callback(update_logs)
-            st.session_state.event_crawler.set_stop_check_callback(
-                lambda: bool(st.session_state.get("event_stop_requested", False))
-            )
-    except Exception:
-        pass
+    if not _mentor_only_rt:
+        prog = st.progress(max(0.0, min(1.0, float(st.session_state.get("event_progress_ratio", 0.0) or 0.0))))
+        _metrics_placeholder = st.empty()
+        _detail_placeholder = st.empty()
+        _run_start_time = time.time()
+        mentor_rows_saved = 0
+        try:
+            if st.session_state.get("event_crawler"):
+                st.session_state.event_crawler.set_status_callback(update_logs)
+                st.session_state.event_crawler.set_stop_check_callback(
+                    lambda: bool(st.session_state.get("event_stop_requested", False))
+                )
+        except Exception:
+            pass
 
-    def _fmt_duration(sec: float) -> str:
-        sec = max(0, int(sec))
-        if sec < 60:
-            return f"{sec}초"
-        m, s = divmod(sec, 60)
-        if m < 60:
-            return f"{int(m)}분 {s}초"
-        h, m = divmod(int(m), 60)
-        return f"{h}시간 {int(m)}분"
+        def _fmt_duration(sec: float) -> str:
+            sec = max(0, int(sec))
+            if sec < 60:
+                return f"{sec}초"
+            m, s = divmod(sec, 60)
+            if m < 60:
+                return f"{int(m)}분 {s}초"
+            h, m = divmod(int(m), 60)
+            return f"{h}시간 {int(m)}분"
 
-    def _set_event_progress(ratio: float, msg: str, *, layout: str = "board") -> None:
-        rr = max(0.0, min(1.0, float(ratio)))
-        st.session_state.event_progress_ratio = rr
-        st.session_state.event_progress_label = str(msg or "")
-        prog.progress(rr)
-        elapsed = time.time() - _run_start_time
-        if layout == "mentor":
-            if rr >= 0.99:
-                eta_str, eta_total_str = "—", ""
-            else:
-                eta_str, eta_total_str = "등급·페이지 수에 따라 상이", ""
-        else:
-            eta_str = "계산 중…"
-            eta_total_str = ""
-            if rr > 0.02:
-                eta = elapsed / rr * (1.0 - rr)
-                total_est = elapsed + eta
-                eta_str = _fmt_duration(eta)
-                eta_total_str = f" / 총 {_fmt_duration(total_est)}"
-        _done = int(total_articles_processed)
-        _fail = int(failed_articles)
-        _seen = int(comments_seen_total)
-        _saved = int(inserted_total)
-        _avg = (elapsed / _done) if _done > 0 else 0
-
-        with _metrics_placeholder.container():
-            _mc1, _mc2, _mc3, _mc4 = st.columns([1, 1, 1, 1.4])
+        def _set_event_progress(ratio: float, msg: str, *, layout: str = "board") -> None:
+            rr = max(0.0, min(1.0, float(ratio)))
+            st.session_state.event_progress_ratio = rr
+            st.session_state.event_progress_label = str(msg or "")
+            prog.progress(rr)
+            elapsed = time.time() - _run_start_time
             if layout == "mentor":
-                _mr_n = int(mentor_rows_saved)
                 if rr >= 0.99:
-                    _mc1.metric("등급별 방문수", "완료")
+                    eta_str, eta_total_str = "—", ""
                 else:
-                    _mc1.metric("멤버 표", "등급·페이지 순회 중")
-                _mc2.metric("DB 반영 행", f"{_mr_n:,}건")
-                _mc3.metric("경과 시간", _fmt_duration(elapsed))
+                    eta_str, eta_total_str = "등급·페이지 수에 따라 상이", ""
             else:
-                _mc1.metric("처리 게시글", f"{_done:,}개", delta=f"실패 {_fail}개" if _fail else None, delta_color="inverse" if _fail else "off")
-                _mc2.metric("댓글 조회", f"{_seen:,}개", delta=f"저장 {_saved:,}개")
-                _mc3.metric("경과 시간", _fmt_duration(elapsed))
-            _mc4.markdown(
-                f"<div style='background:linear-gradient(180deg,#f8fbff 0%,#f3f7fc 100%);"
-                f"border:1px solid #dbe5f2;border-radius:12px;padding:12px 14px;"
-                f"box-shadow:0 2px 8px rgba(15,23,42,0.04);min-height:90px;"
-                f"display:flex;flex-direction:column;justify-content:center;'>"
-                f"<div style='font-size:0.86rem;color:#64748b;font-weight:700;'>예상 남은 시간</div>"
-                f"<div style='font-size:1.25rem;line-height:1.35;color:#0f172a;font-weight:800;'>"
-                f"{eta_str}{eta_total_str}</div></div>",
+                eta_str = "계산 중…"
+                eta_total_str = ""
+                if rr > 0.02:
+                    eta = elapsed / rr * (1.0 - rr)
+                    total_est = elapsed + eta
+                    eta_str = _fmt_duration(eta)
+                    eta_total_str = f" / 총 {_fmt_duration(total_est)}"
+            _done = int(total_articles_processed)
+            _fail = int(failed_articles)
+            _seen = int(comments_seen_total)
+            _saved = int(inserted_total)
+            _post_saved = int(post_analysis_saved_total)
+            _avg = (elapsed / _done) if _done > 0 else 0
+
+            with _metrics_placeholder.container():
+                _mc1, _mc2, _mc3, _mc4 = st.columns([1, 1, 1, 1.4])
+                if layout == "mentor":
+                    _mr_n = int(mentor_rows_saved)
+                    if rr >= 0.99:
+                        _mc1.metric("등급별 방문수", "완료")
+                    else:
+                        _mc1.metric("멤버 표", "등급·페이지 순회 중")
+                    _mc2.metric("DB 반영 행", f"{_mr_n:,}건")
+                    _mc3.metric("경과 시간", _fmt_duration(elapsed))
+                else:
+                    _mc1.metric("처리 게시글", f"{_done:,}개", delta=f"실패 {_fail}개" if _fail else None, delta_color="inverse" if _fail else "off")
+                    if post_enabled and not comment_enabled:
+                        _mc2.metric("게시글 수집", f"{_post_saved:,}개", delta="조건1 결과 저장")
+                    else:
+                        _mc2.metric("댓글 조회", f"{_seen:,}개", delta=f"저장 {_saved:,}개")
+                    _mc3.metric("경과 시간", _fmt_duration(elapsed))
+                _mc4.markdown(
+                    f"<div style='background:linear-gradient(180deg,#f8fbff 0%,#f3f7fc 100%);"
+                    f"border:1px solid #dbe5f2;border-radius:12px;padding:12px 14px;"
+                    f"box-shadow:0 2px 8px rgba(15,23,42,0.04);min-height:90px;"
+                    f"display:flex;flex-direction:column;justify-content:center;'>"
+                    f"<div style='font-size:0.86rem;color:#64748b;font-weight:700;'>예상 남은 시간</div>"
+                    f"<div style='font-size:1.25rem;line-height:1.35;color:#0f172a;font-weight:800;'>"
+                    f"{eta_str}{eta_total_str}</div></div>",
+                    unsafe_allow_html=True,
+                )
+
+            _tail_avg = ""
+            if layout == "board" and _done > 0:
+                _tail_avg = f" · 평균 {_avg:.1f}초/건"
+            _detail_placeholder.markdown(
+                f"<div style='font-size:0.95rem;color:#334155;font-weight:600;padding:2px 0 6px 0;'>"
+                f"{msg}{_tail_avg}</div>",
                 unsafe_allow_html=True,
             )
 
-        _tail_avg = ""
-        if layout == "board" and _done > 0:
-            _tail_avg = f" · 평균 {_avg:.1f}초/건"
-        _detail_placeholder.markdown(
-            f"<div style='font-size:0.95rem;color:#334155;font-weight:600;padding:2px 0 6px 0;'>"
-            f"{msg}{_tail_avg}</div>",
-            unsafe_allow_html=True,
-        )
+        try:
+            update_logs("🔍 선택한 조건 실행 시작...")
+            inserted_total = 0
+            comments_seen_total = 0
+            excluded_total = 0
+            excluded_post_total = 0
+            unknown_date_excluded_total = 0
+            date_filter_relaxed_articles = 0
+            failed_articles = 0
+            total_articles_processed = 0
+            post_analysis_saved_total = 0
+            def _norm_nick(v: str) -> str:
+                return "".join(str(v or "").strip().lower().split())
+            def _parse_level_map(raw_text: str) -> dict[str, str]:
+                out: dict[str, str] = {}
+                for ln in str(raw_text or "").splitlines():
+                    s = str(ln or "").strip()
+                    if (not s) or s.startswith("#"):
+                        continue
+                    if "=" in s:
+                        k, v = s.split("=", 1)
+                    elif ":" in s:
+                        k, v = s.split(":", 1)
+                    else:
+                        continue
+                    kk = str(k or "").strip().lower()
+                    vv = str(v or "").strip()
+                    if kk and vv:
+                        out[kk] = vv
+                return out
 
-    try:
-        update_logs("🔍 선택한 조건 실행 시작...")
-        inserted_total = 0
-        comments_seen_total = 0
-        excluded_total = 0
-        excluded_post_total = 0
-        unknown_date_excluded_total = 0
-        date_filter_relaxed_articles = 0
-        failed_articles = 0
-        total_articles_processed = 0
-        post_analysis_saved_total = 0
-        def _norm_nick(v: str) -> str:
-            return "".join(str(v or "").strip().lower().split())
-        def _parse_level_map(raw_text: str) -> dict[str, str]:
-            out: dict[str, str] = {}
-            for ln in str(raw_text or "").splitlines():
-                s = str(ln or "").strip()
-                if (not s) or s.startswith("#"):
-                    continue
-                if "=" in s:
-                    k, v = s.split("=", 1)
-                elif ":" in s:
-                    k, v = s.split(":", 1)
-                else:
-                    continue
-                kk = str(k or "").strip().lower()
-                vv = str(v or "").strip()
-                if kk and vv:
-                    out[kk] = vv
-            return out
-
-        exclude_post_set = (
-            {_norm_nick(x) for x in exclude_post_nicks_raw.splitlines() if str(x).strip()}
-            if apply_post_exclude_runtime
-            else set()
-        )
-        exclude_comment_set = (
-            {_norm_nick(x) for x in exclude_comment_nicks_raw.splitlines() if str(x).strip()}
-            if apply_comment_exclude_runtime
-            else set()
-        )
-        comment_level_name_map = _parse_level_map(DEFAULT_COMMENT_LEVEL_MAP_TEXT)
-        adaptive_delay_min = float(SAFE_DELAY_MIN_SEC)
-        adaptive_delay_max = float(SAFE_DELAY_MAX_SEC)
-        stable_success_streak = 0
-
-        if (not comment_enabled) and (not post_enabled) and (not mentor_enabled_rt):
-            raise RuntimeError("조건 1·2·3 중 최소 1개를 선택해야 합니다.")
-        if sum([bool(post_enabled), bool(comment_enabled), bool(mentor_enabled_rt)]) > 1:
-            raise RuntimeError("조건(1)·(2)·(3)은 동시에 실행할 수 없습니다.")
-
-        if mentor_enabled_rt:
-            _set_event_progress(0.02, "조건(3) 등급별 ‘방문수’ 수집 중…", layout="mentor")
-            update_logs("조건(3) 멤버 관리에서 등급별 방문수 수집을 시작합니다.")
-            if not cafe_url_mentor:
-                raise RuntimeError("조건(3): 카페 URL이 비어 있습니다.")
-            _mr = st.session_state.event_crawler.scrape_mentor_visit_counts(
-                cafe_url_mentor,
-                mentor_grades_raw,
-            )
-            _mrows = list(_mr.get("rows") or [])
-            _mstatus = str(_mr.get("status") or "")
-            if _mstatus == "stopped":
-                update_logs("🛑 사용자 요청으로 조건(3) 수집을 중단했습니다.")
-                raise RuntimeError("사용자 중단 요청")
-            if _mstatus != "ok":
-                update_logs(f"등급별 방문수 단계: {_mr.get('message') or '실패'}")
-            else:
-                mentor_rows_saved = upsert_event_mentor_visits(EVENT_DB_PATH, _mrows)
+            post_nick_set = {_norm_nick(x) for x in exclude_post_nicks_raw.splitlines() if str(x).strip()}
+            comment_nick_set = {_norm_nick(x) for x in exclude_comment_nicks_raw.splitlines() if str(x).strip()}
+            post_nick_on = post_nick_filter_rt in ("exclude", "include") and bool(post_nick_set)
+            comment_nick_on = comment_nick_filter_rt in ("exclude", "include") and bool(comment_nick_set)
+            # 조건(2) 댓글 수집 단독 실행에서는 게시글 작성자 필터를 적용하지 않는다.
+            # (사용자 기대: 탐색 기간 내 게시글 전체를 훑고 댓글만 조건으로 거르기)
+            if comment_enabled and (not post_enabled) and post_nick_on:
                 update_logs(
-                    f"등급별 방문수: 표 {len(_mrows)}행 수집 → DB 반영 {mentor_rows_saved}건"
+                    "ℹ️ 조건(2) 단독 실행: 게시글 작성자 필터는 자동 비활성화하고, 댓글 필터만 적용합니다."
                 )
-                if not _mrows:
+                post_nick_on = False
+            comment_level_name_map = _parse_level_map(DEFAULT_COMMENT_LEVEL_MAP_TEXT)
+            adaptive_delay_min = float(SAFE_DELAY_MIN_SEC)
+            adaptive_delay_max = float(SAFE_DELAY_MAX_SEC)
+            stable_success_streak = 0
+
+            if (not comment_enabled) and (not post_enabled) and (not mentor_enabled_rt):
+                raise RuntimeError("조건 1·2·3 중 최소 1개를 선택해야 합니다.")
+            if sum([bool(post_enabled), bool(comment_enabled), bool(mentor_enabled_rt)]) > 1:
+                raise RuntimeError("조건(1)·(2)·(3)은 동시에 실행할 수 없습니다.")
+
+            if mentor_enabled_rt:
+                _set_event_progress(0.02, "조건(3) 등급별 ‘방문수’ 수집 중…", layout="mentor")
+                update_logs("조건(3) 멤버 관리에서 등급별 방문수 수집을 시작합니다.")
+                if not cafe_url_mentor:
+                    raise RuntimeError("조건(3): 카페 URL이 비어 있습니다.")
+                _mr = st.session_state.event_crawler.scrape_mentor_visit_counts(
+                    cafe_url_mentor,
+                    mentor_grades_raw,
+                )
+                _mrows = list(_mr.get("rows") or [])
+                _mstatus = str(_mr.get("status") or "")
+                if _mstatus == "stopped":
+                    update_logs("🛑 사용자 요청으로 조건(3) 수집을 중단했습니다.")
+                    raise RuntimeError("사용자 중단 요청")
+                if _mstatus != "ok":
+                    update_logs(f"등급별 방문수 단계: {_mr.get('message') or '실패'}")
+                else:
+                    mentor_rows_saved = upsert_event_mentor_visits(EVENT_DB_PATH, _mrows)
                     update_logs(
-                        "등급별 방문수: 읽은 행이 없습니다. 등급 문구·드롭다운·표(별명/방문) 구조를 확인하세요."
+                        f"등급별 방문수: 표 {len(_mrows)}행 수집 → DB 반영 {mentor_rows_saved}건"
                     )
-            if mentor_enabled_rt and (comment_enabled or post_enabled):
-                _set_event_progress(0.12, "조건(3) 완료 · 게시판 수집 준비…", layout="mentor")
-            if not comment_enabled and not post_enabled:
-                _set_event_progress(1.0, "완료 (조건3만 실행)", layout="mentor")
+                    if not _mrows:
+                        update_logs(
+                            "등급별 방문수: 읽은 행이 없습니다. 등급 문구·드롭다운·표(별명/방문) 구조를 확인하세요."
+                        )
+                if mentor_enabled_rt and (comment_enabled or post_enabled):
+                    _set_event_progress(0.12, "조건(3) 완료 · 게시판 수집 준비…", layout="mentor")
+                if not comment_enabled and not post_enabled:
+                    _set_event_progress(1.0, "완료 (조건3만 실행)", layout="mentor")
 
-        if comment_enabled or post_enabled:
-            if not board_urls:
-                raise RuntimeError("조건 1 또는 2를 사용할 때는 게시판이 필요합니다.")
-        else:
-            board_urls = []
-
-        def _in_post_window(art: dict) -> bool:
-            if not post_enabled:
-                return False
-            try:
-                d = datetime.strptime(str(art.get("date") or ""), "%Y-%m-%d")
-                return bool(post_start_dt <= d <= post_end_dt)
-            except Exception:
-                return False
-
-        def _parse_comment_date(val: str) -> datetime | None:
-            s = str(val or "").strip()
-            if not s:
-                return None
-            try:
-                return datetime.strptime(s[:10], "%Y-%m-%d")
-            except Exception:
-                pass
-            try:
-                return datetime.strptime(s, "%Y.%m.%d")
-            except Exception:
-                pass
-            # YYYY.MM.DD HH:MM[:SS]
-            m = re.search(r"(\d{4})[./-](\d{1,2})[./-](\d{1,2})", s)
-            if m:
-                try:
-                    return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)))
-                except Exception:
-                    pass
-            # MM.DD (연도 생략)
-            m2 = re.search(r"\b(\d{1,2})[./-](\d{1,2})\b", s)
-            if m2:
-                try:
-                    now = datetime.now()
-                    mm, dd = int(m2.group(1)), int(m2.group(2))
-                    yy = now.year - 1 if (mm, dd) > (now.month, now.day) else now.year
-                    return datetime(yy, mm, dd)
-                except Exception:
-                    pass
-            # 상대 표기
-            if "오늘" in s or "방금" in s:
-                return datetime.now()
-            if "어제" in s:
-                return datetime.now() - timedelta(days=1)
-            m3 = re.search(r"(\d+)\s*일\s*전", s)
-            if m3:
-                try:
-                    return datetime.now() - timedelta(days=int(m3.group(1)))
-                except Exception:
-                    pass
-            m4 = re.search(r"(\d+)\s*시간\s*전", s)
-            if m4:
-                try:
-                    return datetime.now() - timedelta(hours=int(m4.group(1)))
-                except Exception:
-                    pass
-            m5 = re.search(r"(\d+)\s*분\s*전", s)
-            if m5:
-                try:
-                    return datetime.now() - timedelta(minutes=int(m5.group(1)))
-                except Exception:
-                    pass
-            return None
-
-        for b_idx, board_url_each in enumerate(board_urls, start=1):
-            if st.session_state.get("event_stop_requested", False):
-                update_logs("🛑 사용자 요청으로 실행을 중단합니다.")
-                break
-            _set_event_progress((b_idx - 1) / max(1, len(board_urls)), f"게시판 {b_idx}/{len(board_urls)} 목록 수집 중...")
-            update_logs(f"📌 게시판 {b_idx}/{len(board_urls)} 목록 수집: {board_url_each}")
-            result = st.session_state.event_crawler.scrape_board_list(
-                board_url_each,
-                (comment_search_start_dt if comment_enabled else post_start_dt),
-                (comment_search_end_dt if comment_enabled else post_end_dt),
-                exclude_boards=[],
-            )
-            if isinstance(result, tuple) and len(result) == 2:
-                articles, _is_finished = result
+            if comment_enabled or post_enabled:
+                if not board_urls:
+                    raise RuntimeError("조건 1 또는 2를 사용할 때는 게시판이 필요합니다.")
             else:
-                articles, _is_finished = result, False
-            if not articles:
-                update_logs(f"⚠️ 게시판 {b_idx}/{len(board_urls)}에서 기간 내 게시글을 찾지 못했습니다.")
-                _set_event_progress(b_idx / max(1, len(board_urls)), f"게시판 {b_idx}/{len(board_urls)} 완료(대상 없음)")
-                continue
+                board_urls = []
 
-            update_logs(f"✅ 게시판 {b_idx}/{len(board_urls)} 대상 게시글 {len(articles):,}개 확보. 댓글 수집 시작...")
-            for i, art in enumerate(articles):
+            def _in_post_window(art: dict) -> bool:
+                if not post_enabled:
+                    return False
+                try:
+                    d = datetime.strptime(str(art.get("date") or ""), "%Y-%m-%d")
+                    return bool(post_start_dt <= d <= post_end_dt)
+                except Exception:
+                    return False
+
+            def _parse_comment_date(val: str) -> datetime | None:
+                s = str(val or "").strip()
+                if not s:
+                    return None
+                try:
+                    return datetime.strptime(s[:10], "%Y-%m-%d")
+                except Exception:
+                    pass
+                try:
+                    return datetime.strptime(s, "%Y.%m.%d")
+                except Exception:
+                    pass
+                # YYYY.MM.DD HH:MM[:SS]
+                m = re.search(r"(\d{4})[./-](\d{1,2})[./-](\d{1,2})", s)
+                if m:
+                    try:
+                        return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+                    except Exception:
+                        pass
+                # MM.DD (연도 생략)
+                m2 = re.search(r"\b(\d{1,2})[./-](\d{1,2})\b", s)
+                if m2:
+                    try:
+                        now = datetime.now()
+                        mm, dd = int(m2.group(1)), int(m2.group(2))
+                        yy = now.year - 1 if (mm, dd) > (now.month, now.day) else now.year
+                        return datetime(yy, mm, dd)
+                    except Exception:
+                        pass
+                # 상대 표기
+                if "오늘" in s or "방금" in s:
+                    return datetime.now()
+                if "어제" in s:
+                    return datetime.now() - timedelta(days=1)
+                m3 = re.search(r"(\d+)\s*일\s*전", s)
+                if m3:
+                    try:
+                        return datetime.now() - timedelta(days=int(m3.group(1)))
+                    except Exception:
+                        pass
+                m4 = re.search(r"(\d+)\s*시간\s*전", s)
+                if m4:
+                    try:
+                        return datetime.now() - timedelta(hours=int(m4.group(1)))
+                    except Exception:
+                        pass
+                m5 = re.search(r"(\d+)\s*분\s*전", s)
+                if m5:
+                    try:
+                        return datetime.now() - timedelta(minutes=int(m5.group(1)))
+                    except Exception:
+                        pass
+                return None
+
+            for b_idx, board_url_each in enumerate(board_urls, start=1):
                 if st.session_state.get("event_stop_requested", False):
                     update_logs("🛑 사용자 요청으로 실행을 중단합니다.")
                     break
-                board_prog = (i + 1) / len(articles)
-                total_prog = ((b_idx - 1) + board_prog) / max(1, len(board_urls))
-                _set_event_progress(total_prog, f"진행률 {int(total_prog * 100)}% · 게시판 {b_idx}/{len(board_urls)}")
-                total_articles_processed += 1
-                list_author_nick = str(art.get("nickname") or "unknown").strip() or "unknown"
+                _set_event_progress((b_idx - 1) / max(1, len(board_urls)), f"게시판 {b_idx}/{len(board_urls)} 목록 수집 중...")
+                update_logs(f"📌 게시판 {b_idx}/{len(board_urls)} 목록 수집: {board_url_each}")
+                _brd_s = comment_search_start_dt if comment_enabled else post_start_dt
+                _brd_e = comment_search_end_dt if comment_enabled else post_end_dt
+                update_logs(
+                    f"[DBG_RANGE] board={b_idx}/{len(board_urls)} start={_brd_s.strftime('%Y-%m-%d')} end={_brd_e.strftime('%Y-%m-%d')}"
+                )
+                articles = []
+                _page_cursor = 1
+                _board_batch = 50
+                _board_page_cap = 8000
+                _board_guard = 0
+                _is_finished = False
+                while _page_cursor <= _board_page_cap and _board_guard < 400:
+                    _board_guard += 1
+                    result = st.session_state.event_crawler.scrape_board_list(
+                        board_url_each,
+                        _brd_s,
+                        _brd_e,
+                        exclude_boards=[],
+                        start_page=_page_cursor,
+                        max_pages=_board_batch,
+                    )
+                    if isinstance(result, tuple) and len(result) == 2:
+                        _batch, _is_finished = result
+                    else:
+                        _batch, _is_finished = (result or []), True
+                    _batch = _batch or []
+                    articles.extend(_batch)
+                    update_logs(
+                        f"[DBG_BATCH] cursor={_page_cursor} fetched={len(_batch)} total={len(articles)} finished={_is_finished}"
+                    )
+                    if _is_finished:
+                        break
+                    _eff_pg = int(
+                        getattr(st.session_state.event_crawler, "last_effective_start_page", _page_cursor)
+                        or _page_cursor
+                    )
+                    _page_cursor = _eff_pg + _board_batch
+                    if _batch:
+                        update_logs(
+                            f"📎 게시판 목록 추가 배치 · 누적 {len(articles):,}건 · 다음 시작 페이지 {_page_cursor}"
+                        )
+                if not articles:
+                    update_logs(f"⚠️ 게시판 {b_idx}/{len(board_urls)}에서 기간 내 게시글을 찾지 못했습니다.")
+                    _set_event_progress(b_idx / max(1, len(board_urls)), f"게시판 {b_idx}/{len(board_urls)} 완료(대상 없음)")
+                    continue
 
-                # 게시글 제외별명: 목록 작성자 + (불명확 시) 상세 작성자까지 확인
-                post_author_nick = str(art.get("nickname") or "")
-                post_author_norm = _norm_nick(post_author_nick)
-                detail_for_author = None
-                if exclude_post_set:
-                    if post_author_norm and post_author_norm in exclude_post_set:
-                        excluded_post_total += 1
-                        update_logs(f"⏭️ 게시글 제외(작성자): {(art.get('title') or '')[:30]}...")
-                        continue
-                    if (not post_author_norm) or (post_author_norm == "unknown"):
-                        try:
-                            detail_for_author = st.session_state.event_crawler.scrape_article_detail(
-                                art.get("url") or "",
-                                art.get("member_id") or "unknown",
-                                admin_nicks=[],
-                                comment_mode="none",
-                            )
-                            detail_author = str((detail_for_author or {}).get("nickname") or "")
-                            detail_author_norm = _norm_nick(detail_author)
-                            if detail_author_norm and detail_author_norm in exclude_post_set:
+                try:
+                    _date_counts: dict[str, int] = {}
+                    for _a in articles:
+                        _d = str(_a.get("date") or "").strip()
+                        if not _d:
+                            _d = "unknown"
+                        _date_counts[_d] = _date_counts.get(_d, 0) + 1
+                    _date_keys = sorted([k for k in _date_counts.keys() if k != "unknown"], reverse=True)
+                    _sample = ", ".join([f"{k}:{_date_counts[k]}" for k in _date_keys[:6]])
+                    if "unknown" in _date_counts:
+                        _sample = (_sample + ", " if _sample else "") + f"unknown:{_date_counts['unknown']}"
+                    update_logs(
+                        f"🧪 목록 날짜 분포(상위): {_sample if _sample else '없음'}"
+                    )
+                    update_logs(f"[DBG_DATE_DIST] {_sample if _sample else 'none'}")
+                except Exception:
+                    pass
+
+                update_logs(f"✅ 게시판 {b_idx}/{len(board_urls)} 대상 게시글 {len(articles):,}개 확보. 댓글 수집 시작...")
+                for i, art in enumerate(articles):
+                    if st.session_state.get("event_stop_requested", False):
+                        update_logs("🛑 사용자 요청으로 실행을 중단합니다.")
+                        break
+                    board_prog = (i + 1) / len(articles)
+                    total_prog = ((b_idx - 1) + board_prog) / max(1, len(board_urls))
+                    _set_event_progress(total_prog, f"진행률 {int(total_prog * 100)}% · 게시판 {b_idx}/{len(board_urls)}")
+                    total_articles_processed += 1
+                    list_author_nick = str(art.get("nickname") or "unknown").strip() or "unknown"
+
+                    # 게시글 별명 필터: 제외(목록 작성자면 스킵) / 포함(목록 외 작성자면 스킵)
+                    post_author_nick = str(art.get("nickname") or "")
+                    post_author_norm = _norm_nick(post_author_nick)
+                    detail_for_author = None
+                    if post_nick_on:
+                        if post_nick_filter_rt == "exclude":
+                            if post_author_norm and post_author_norm in post_nick_set:
                                 excluded_post_total += 1
-                                update_logs(f"⏭️ 게시글 제외(상세작성자): {(art.get('title') or '')[:30]}...")
+                                update_logs(f"⏭️ 게시글 스킵(제외 목록·작성자): {(art.get('title') or '')[:30]}...")
                                 continue
+                            if (not post_author_norm) or (post_author_norm == "unknown"):
+                                try:
+                                    detail_for_author = st.session_state.event_crawler.scrape_article_detail(
+                                        art.get("url") or "",
+                                        art.get("member_id") or "unknown",
+                                        admin_nicks=[],
+                                        comment_mode="none",
+                                    )
+                                    detail_author = str((detail_for_author or {}).get("nickname") or "")
+                                    detail_author_norm = _norm_nick(detail_author)
+                                    if detail_author_norm and detail_author_norm in post_nick_set:
+                                        excluded_post_total += 1
+                                        update_logs(
+                                            f"⏭️ 게시글 스킵(제외 목록·상세작성자): {(art.get('title') or '')[:30]}..."
+                                        )
+                                        continue
+                                except Exception:
+                                    pass
+                        else:
+                            if (
+                                post_author_norm
+                                and post_author_norm not in ("", "unknown")
+                                and post_author_norm not in post_nick_set
+                            ):
+                                excluded_post_total += 1
+                                update_logs(f"⏭️ 게시글 스킵(포함 목록 외·작성자): {(art.get('title') or '')[:30]}...")
+                                continue
+                            if (not post_author_norm) or (post_author_norm == "unknown"):
+                                try:
+                                    detail_for_author = st.session_state.event_crawler.scrape_article_detail(
+                                        art.get("url") or "",
+                                        art.get("member_id") or "unknown",
+                                        admin_nicks=[],
+                                        comment_mode="none",
+                                    )
+                                    detail_author = str((detail_for_author or {}).get("nickname") or "")
+                                    detail_author_norm = _norm_nick(detail_author)
+                                    if detail_author_norm and detail_author_norm not in post_nick_set:
+                                        excluded_post_total += 1
+                                        update_logs(
+                                            f"⏭️ 게시글 스킵(포함 목록 외·상세작성자): {(art.get('title') or '')[:30]}..."
+                                        )
+                                        continue
+                                except Exception:
+                                    pass
+
+                    # 목록 작성자 별명이 unknown/공백이면 상세에서 1회 보정
+                    resolved_author_nick = list_author_nick
+                    if _norm_nick(resolved_author_nick) in ("", "unknown"):
+                        try:
+                            if detail_for_author is None:
+                                detail_for_author = st.session_state.event_crawler.scrape_article_detail(
+                                    art.get("url") or "",
+                                    art.get("member_id") or "unknown",
+                                    admin_nicks=[],
+                                    comment_mode="none",
+                                )
+                            detail_author_nick = str((detail_for_author or {}).get("nickname") or "").strip()
+                            if detail_author_nick:
+                                resolved_author_nick = detail_author_nick
                         except Exception:
                             pass
-
-                # 목록 작성자 별명이 unknown/공백이면 상세에서 1회 보정
-                resolved_author_nick = list_author_nick
-                if _norm_nick(resolved_author_nick) in ("", "unknown"):
-                    try:
-                        if detail_for_author is None:
-                            detail_for_author = st.session_state.event_crawler.scrape_article_detail(
-                                art.get("url") or "",
-                                art.get("member_id") or "unknown",
-                                admin_nicks=[],
-                                comment_mode="none",
-                            )
-                        detail_author_nick = str((detail_for_author or {}).get("nickname") or "").strip()
-                        if detail_author_nick:
-                            resolved_author_nick = detail_author_nick
-                    except Exception:
-                        pass
-                if not comment_enabled:
-                    save_event_post(
-                        EVENT_DB_PATH,
-                        art,
-                        comments_seen=0,
-                        comments_saved=0,
-                        comments_excluded=0,
-                        author_nickname=resolved_author_nick,
-                    )
-
-                title = (art.get("title") or "")[:30]
-                update_logs(f"💬 ({i+1}/{len(articles)}) '{title}...' 댓글 조회 중")
-                try:
-                    if comment_enabled:
-                        art_url = art.get("url") or ""
-                        comments = st.session_state.event_crawler.get_all_comments_for_article(art_url)
-                        raw_comments_count = len(comments)
-                        list_comment_hint = int(art.get("list_comment_count") or 0)
-                        dbg = getattr(st.session_state.event_crawler, "last_comment_fetch_debug", {}) or {}
-                        update_logs(
-                            f"🔍 댓글 수집 상세: post_id={art.get('post_id')} "
-                            f"목록표시={list_comment_hint} 실수집={raw_comments_count} "
-                            f"API={int(dbg.get('api_count') or 0)} DOM={int(dbg.get('dom_count') or 0)} "
-                            f"병합={int(dbg.get('merged_count') or 0)} source={str(dbg.get('source') or '')} "
-                            f"url={art_url[:80]}"
-                        )
-                        if list_comment_hint > 0 and raw_comments_count < list_comment_hint:
-                            update_logs(
-                                f"🧪 댓글 누락 의심: 목록표시 {list_comment_hint}개 > 수집 {raw_comments_count}개"
-                            )
-                        target_window_comments = []
-
-                        filtered = []
-                        unknown_date_samples = 0
-                        parsed_rows = []
-                        known_date_count = 0
-                        for c in comments:
-                            raw_dt = str(c.get("date") or "")
-                            cdt = _parse_comment_date(raw_dt)
-                            parsed_rows.append((c, cdt, raw_dt))
-                            if cdt is not None:
-                                known_date_count += 1
-
-                        # 실운영 대응: 날짜가 전부 비어오면 기간 필터를 완화해 전량 누락을 막는다.
-                        relax_date_filter = bool(len(parsed_rows) > 0 and known_date_count == 0)
-                        if relax_date_filter:
-                            date_filter_relaxed_articles += 1
-                            update_logs(
-                                f"⚠️ 댓글 날짜를 전부 파싱하지 못해 기간 필터를 완화합니다. "
-                                f"(게시글 '{title}...', 댓글 {len(parsed_rows):,}개)"
-                            )
-
-                        for c, cdt, raw_dt in parsed_rows:
-                            if cdt is None:
-                                if not relax_date_filter:
-                                    unknown_date_excluded_total += 1
-                                    if unknown_date_samples < 2:
-                                        update_logs(
-                                            f"🧪 날짜 파싱 실패 샘플: date='{raw_dt[:50]}' "
-                                            f"comment_id='{str(c.get('comment_id') or '')[:30]}'"
-                                        )
-                                        unknown_date_samples += 1
-                                    continue
-                            else:
-                                if not (comment_target_start_dt <= cdt <= comment_target_end_dt):
-                                    continue
-
-                            target_window_comments.append(c)
-                            nn = str(c.get("nickname") or "").strip()
-                            if nn and _norm_nick(nn) in exclude_comment_set:
-                                excluded_total += 1
-                                continue
-                            lv_code = str(c.get("level_code") or "").strip().lower()
-                            lv_name_raw = str(c.get("level") or "").strip()
-                            lv_name = str(comment_level_name_map.get(lv_code, lv_name_raw) or lv_name_raw).strip()
-                            c["level_code"] = lv_code
-                            c["level"] = lv_name
-                            filtered.append(c)
-
-                        comments_seen_total += raw_comments_count
-
-                        ins = save_event_comments(EVENT_DB_PATH, art, filtered)
-                        excluded_now = len(target_window_comments) - len(filtered)
-                        inserted_total += ins
-                        save_event_post(
-                            EVENT_DB_PATH,
-                            art,
-                            comments_seen=len(target_window_comments),
-                            comments_saved=ins,
-                            comments_excluded=excluded_now,
-                            author_nickname=resolved_author_nick,
-                        )
-
-                        stable_success_streak += 1
-                        if stable_success_streak >= 5:
-                            adaptive_delay_min = max(SAFE_DELAY_MIN_SEC, adaptive_delay_min - 0.4)
-                            adaptive_delay_max = max(SAFE_DELAY_MAX_SEC, adaptive_delay_max - 0.6)
-                            stable_success_streak = 0
-
-                        ignored_by_unique = max(0, len(filtered) - ins)
-                        update_logs(
-                            f"✅ 댓글 전체 {raw_comments_count:,}개 중 목표기간 {len(target_window_comments):,}개 / "
-                            f"제외 {excluded_now:,}개 / 중복무시 {ignored_by_unique:,}개 / "
-                            f"신규 저장 {ins:,}개 (누적 신규 {inserted_total:,})"
-                        )
-                    else:
-                        # 댓글 조건 미선택일 때도 게시글 메타는 보존
+                    if not comment_enabled:
                         save_event_post(
                             EVENT_DB_PATH,
                             art,
@@ -2181,117 +2619,249 @@ if st.session_state.event_run_pending and st.session_state.event_running:
                             author_nickname=resolved_author_nick,
                         )
 
-                    if _in_post_window(art):
-                        detail = detail_for_author
-                        if detail is None:
-                            detail = st.session_state.event_crawler.scrape_article_detail(
-                                art.get("url") or "",
-                                art.get("member_id") or "unknown",
-                                admin_nicks=[],
-                                comment_mode="none",
+                    title = (art.get("title") or "")[:30]
+                    update_logs(f"💬 ({i+1}/{len(articles)}) '{title}...' 댓글 조회 중")
+                    try:
+                        if comment_enabled:
+                            art_url = art.get("url") or ""
+                            comments = st.session_state.event_crawler.get_all_comments_for_article(art_url)
+                            raw_comments_count = len(comments)
+                            list_comment_hint = int(art.get("list_comment_count") or 0)
+                            dbg = getattr(st.session_state.event_crawler, "last_comment_fetch_debug", {}) or {}
+                            update_logs(
+                                f"🔍 댓글 수집 상세: post_id={art.get('post_id')} "
+                                f"목록표시={list_comment_hint} 실수집={raw_comments_count} "
+                                f"API={int(dbg.get('api_count') or 0)} DOM={int(dbg.get('dom_count') or 0)} "
+                                f"병합={int(dbg.get('merged_count') or 0)} source={str(dbg.get('source') or '')} "
+                                f"url={art_url[:80]}"
                             )
-                        # 상세 작성자 기준으로도 최종 제외 확인
-                        detail_author_norm = _norm_nick(str((detail or {}).get("nickname") or ""))
-                        if detail_author_norm and detail_author_norm in exclude_post_set:
-                            excluded_post_total += 1
-                            update_logs(f"⏭️ 게시글 제외(상세작성자): {(art.get('title') or '')[:30]}...")
-                            continue
-                        save_event_post_analysis(
-                            EVENT_DB_PATH,
-                            art,
-                            author_nickname=str(detail.get("nickname") or art.get("nickname") or "unknown"),
-                            post_char_count=int(detail.get("post_char_count") or 0),
-                            post_image_count=int(detail.get("post_image_count") or 0),
+                            if list_comment_hint > 0 and raw_comments_count < list_comment_hint:
+                                update_logs(
+                                    f"🧪 댓글 누락 의심: 목록표시 {list_comment_hint}개 > 수집 {raw_comments_count}개"
+                                )
+                            target_window_comments = []
+
+                            filtered = []
+                            unknown_date_samples = 0
+                            parsed_rows = []
+                            known_date_count = 0
+                            for c in comments:
+                                raw_dt = str(c.get("date") or "")
+                                cdt = _parse_comment_date(raw_dt)
+                                parsed_rows.append((c, cdt, raw_dt))
+                                if cdt is not None:
+                                    known_date_count += 1
+
+                            # 실운영 대응: 날짜가 전부 비어오면 기간 필터를 완화해 전량 누락을 막는다.
+                            relax_date_filter = bool(len(parsed_rows) > 0 and known_date_count == 0)
+                            if relax_date_filter:
+                                date_filter_relaxed_articles += 1
+                                update_logs(
+                                    f"⚠️ 댓글 날짜를 전부 파싱하지 못해 기간 필터를 완화합니다. "
+                                    f"(게시글 '{title}...', 댓글 {len(parsed_rows):,}개)"
+                                )
+
+                            for c, cdt, raw_dt in parsed_rows:
+                                if cdt is None:
+                                    if not relax_date_filter:
+                                        unknown_date_excluded_total += 1
+                                        if unknown_date_samples < 2:
+                                            update_logs(
+                                                f"🧪 날짜 파싱 실패 샘플: date='{raw_dt[:50]}' "
+                                                f"comment_id='{str(c.get('comment_id') or '')[:30]}'"
+                                            )
+                                            unknown_date_samples += 1
+                                        continue
+                                else:
+                                    if not (comment_target_start_dt <= cdt <= comment_target_end_dt):
+                                        continue
+
+                                target_window_comments.append(c)
+                                nn = str(c.get("nickname") or "").strip()
+                                nn_norm = _norm_nick(nn)
+                                if comment_nick_on:
+                                    if comment_nick_filter_rt == "exclude":
+                                        if nn_norm and nn_norm in comment_nick_set:
+                                            excluded_total += 1
+                                            continue
+                                    else:
+                                        if (not nn_norm) or nn_norm not in comment_nick_set:
+                                            excluded_total += 1
+                                            continue
+                                lv_code = str(c.get("level_code") or "").strip().lower()
+                                lv_name_raw = str(c.get("level") or "").strip()
+                                lv_name = str(comment_level_name_map.get(lv_code, lv_name_raw) or lv_name_raw).strip()
+                                c["level_code"] = lv_code
+                                c["level"] = lv_name
+                                filtered.append(c)
+
+                            comments_seen_total += raw_comments_count
+
+                            ins = save_event_comments(EVENT_DB_PATH, art, filtered)
+                            excluded_now = len(target_window_comments) - len(filtered)
+                            inserted_total += ins
+                            save_event_post(
+                                EVENT_DB_PATH,
+                                art,
+                                comments_seen=len(target_window_comments),
+                                comments_saved=ins,
+                                comments_excluded=excluded_now,
+                                author_nickname=resolved_author_nick,
+                            )
+
+                            stable_success_streak += 1
+                            if stable_success_streak >= 5:
+                                adaptive_delay_min = max(SAFE_DELAY_MIN_SEC, adaptive_delay_min - 0.4)
+                                adaptive_delay_max = max(SAFE_DELAY_MAX_SEC, adaptive_delay_max - 0.6)
+                                stable_success_streak = 0
+
+                            ignored_by_unique = max(0, len(filtered) - ins)
+                            update_logs(
+                                f"✅ 댓글 전체 {raw_comments_count:,}개 중 목표기간 {len(target_window_comments):,}개 / "
+                                f"제외 {excluded_now:,}개 / 중복무시 {ignored_by_unique:,}개 / "
+                                f"신규 저장 {ins:,}개 (누적 신규 {inserted_total:,})"
+                            )
+                        else:
+                            # 댓글 조건 미선택일 때도 게시글 메타는 보존
+                            save_event_post(
+                                EVENT_DB_PATH,
+                                art,
+                                comments_seen=0,
+                                comments_saved=0,
+                                comments_excluded=0,
+                                author_nickname=resolved_author_nick,
+                            )
+
+                        if _in_post_window(art):
+                            detail = detail_for_author
+                            if detail is None:
+                                detail = st.session_state.event_crawler.scrape_article_detail(
+                                    art.get("url") or "",
+                                    art.get("member_id") or "unknown",
+                                    admin_nicks=[],
+                                    comment_mode="none",
+                                )
+                            # 상세 작성자 기준 별명 필터
+                            detail_author_norm = _norm_nick(str((detail or {}).get("nickname") or ""))
+                            if post_nick_on:
+                                if post_nick_filter_rt == "exclude":
+                                    if detail_author_norm and detail_author_norm in post_nick_set:
+                                        excluded_post_total += 1
+                                        update_logs(
+                                            f"⏭️ 게시글 스킵(제외 목록·상세작성자): {(art.get('title') or '')[:30]}..."
+                                        )
+                                        continue
+                                else:
+                                    if detail_author_norm and detail_author_norm not in post_nick_set:
+                                        excluded_post_total += 1
+                                        update_logs(
+                                            f"⏭️ 게시글 스킵(포함 목록 외·상세작성자): {(art.get('title') or '')[:30]}..."
+                                        )
+                                        continue
+                            save_event_post_analysis(
+                                EVENT_DB_PATH,
+                                art,
+                                author_nickname=str(detail.get("nickname") or art.get("nickname") or "unknown"),
+                                post_char_count=int(detail.get("post_char_count") or 0),
+                                post_image_count=int(detail.get("post_image_count") or 0),
+                            )
+                            save_event_post(
+                                EVENT_DB_PATH,
+                                art,
+                                comments_seen=0 if not comment_enabled else len(comments),
+                                comments_saved=0 if not comment_enabled else ins,
+                                comments_excluded=0 if not comment_enabled else excluded_now,
+                                author_nickname=str(detail.get("nickname") or art.get("nickname") or "unknown"),
+                                post_char_count=int(detail.get("post_char_count") or 0),
+                                post_image_count=int(detail.get("post_image_count") or 0),
+                            )
+                            post_analysis_saved_total += 1
+                    except Exception as e:
+                        failed_articles += 1
+                        stable_success_streak = 0
+                        adaptive_delay_min = min(BACKOFF_MAX_MIN_SEC, adaptive_delay_min + BACKOFF_STEP_MIN_SEC)
+                        adaptive_delay_max = min(BACKOFF_MAX_MAX_SEC, adaptive_delay_max + BACKOFF_STEP_MAX_SEC)
+                        import traceback as _tb
+                        _err_detail = _tb.format_exc()
+                        update_logs(
+                            f"⚠️ 댓글 조회/저장 실패: {title}... ({e}) "
+                            f"→ 대기 {adaptive_delay_min:.1f}~{adaptive_delay_max:.1f}초로 상향"
                         )
-                        save_event_post(
-                            EVENT_DB_PATH,
-                            art,
-                            comments_seen=0 if not comment_enabled else len(comments),
-                            comments_saved=0 if not comment_enabled else ins,
-                            comments_excluded=0 if not comment_enabled else excluded_now,
-                            author_nickname=str(detail.get("nickname") or art.get("nickname") or "unknown"),
-                            post_char_count=int(detail.get("post_char_count") or 0),
-                            post_image_count=int(detail.get("post_image_count") or 0),
-                        )
-                        post_analysis_saved_total += 1
-                except Exception as e:
-                    failed_articles += 1
-                    stable_success_streak = 0
-                    adaptive_delay_min = min(BACKOFF_MAX_MIN_SEC, adaptive_delay_min + BACKOFF_STEP_MIN_SEC)
-                    adaptive_delay_max = min(BACKOFF_MAX_MAX_SEC, adaptive_delay_max + BACKOFF_STEP_MAX_SEC)
-                    import traceback as _tb
-                    _err_detail = _tb.format_exc()
-                    update_logs(
-                        f"⚠️ 댓글 조회/저장 실패: {title}... ({e}) "
-                        f"→ 대기 {adaptive_delay_min:.1f}~{adaptive_delay_max:.1f}초로 상향"
+                        update_logs(f"🔍 실패 상세: {_err_detail[-300:]}")
+
+                    if adaptive_delay_max < adaptive_delay_min:
+                        adaptive_delay_min, adaptive_delay_max = adaptive_delay_max, adaptive_delay_min
+                    time.sleep(random.uniform(adaptive_delay_min, adaptive_delay_max))
+
+            _total_elapsed = time.time() - _run_start_time
+            _done_parts: list[str] = []
+            if mentor_enabled_rt:
+                _done_parts.append(f"등급별 방문수 DB {mentor_rows_saved}건")
+            if comment_enabled or post_enabled:
+                if post_enabled and not comment_enabled:
+                    _done_parts.append(
+                        f"게시글 처리 {total_articles_processed} · 게시글수집 {post_analysis_saved_total} · 실패 {failed_articles}"
                     )
-                    update_logs(f"🔍 실패 상세: {_err_detail[-300:]}")
-
-                if adaptive_delay_max < adaptive_delay_min:
-                    adaptive_delay_min, adaptive_delay_max = adaptive_delay_max, adaptive_delay_min
-                time.sleep(random.uniform(adaptive_delay_min, adaptive_delay_max))
-
-        _total_elapsed = time.time() - _run_start_time
-        _done_parts: list[str] = []
-        if mentor_enabled_rt:
-            _done_parts.append(f"등급별 방문수 DB {mentor_rows_saved}건")
-        if comment_enabled or post_enabled:
-            _done_parts.append(
-                f"게시판 {len(board_urls)}개 · 게시글 {total_articles_processed} · 댓글조회 {comments_seen_total} · "
-                f"댓글저장 {inserted_total} · 게시글분석 {post_analysis_saved_total} · 실패 {failed_articles}"
+                else:
+                    _done_parts.append(
+                        f"게시글 {total_articles_processed} · 댓글조회 {comments_seen_total} · "
+                        f"댓글저장 {inserted_total} · 게시글분석 {post_analysis_saved_total} · 실패 {failed_articles}"
+                    )
+                _done_parts.append(
+                    f"(별명필터 스킵: 게시글 {excluded_post_total}, 댓글 {excluded_total}, 날짜미확인 {unknown_date_excluded_total}, "
+                    f"기간완화글 {date_filter_relaxed_articles})"
+                )
+            done_msg = "✅ 완료: " + " ".join(_done_parts) + f" — {_fmt_duration(_total_elapsed)}"
+            _avg_final = (_total_elapsed / total_articles_processed) if total_articles_processed > 0 else 0
+            with _metrics_placeholder.container():
+                _fc1, _fc2, _fc3, _fc4 = st.columns(4)
+                _fc1.metric("처리 게시글", f"{total_articles_processed:,}개", delta=f"실패 {failed_articles}개" if failed_articles else "전부 성공", delta_color="inverse" if failed_articles else "normal")
+                if post_enabled and not comment_enabled:
+                    _fc2.metric("게시글 수집", f"{post_analysis_saved_total:,}개", delta="조건1 결과 저장")
+                else:
+                    _fc2.metric("댓글 조회", f"{comments_seen_total:,}개", delta=f"저장 {inserted_total:,}개")
+                _fc3.metric("소요 시간", _fmt_duration(_total_elapsed))
+                _fc4.metric("평균 처리", f"{_avg_final:.1f}초/건" if _avg_final else "-")
+            _detail_placeholder.markdown(
+                f"<div style='font-size:0.95rem;color:#16a34a;font-weight:700;padding:2px 0 6px 0;'>✅ 수집 완료</div>",
+                unsafe_allow_html=True,
             )
-            _done_parts.append(
-                f"(제외: 게시글 {excluded_post_total}, 댓글 {excluded_total}, 날짜미확인 {unknown_date_excluded_total}, "
-                f"기간완화글 {date_filter_relaxed_articles})"
-            )
-        done_msg = "✅ 완료: " + " ".join(_done_parts) + f" — {_fmt_duration(_total_elapsed)}"
-        _avg_final = (_total_elapsed / total_articles_processed) if total_articles_processed > 0 else 0
-        with _metrics_placeholder.container():
-            _fc1, _fc2, _fc3, _fc4 = st.columns(4)
-            _fc1.metric("처리 게시글", f"{total_articles_processed:,}개", delta=f"실패 {failed_articles}개" if failed_articles else "전부 성공", delta_color="inverse" if failed_articles else "normal")
-            _fc2.metric("댓글 조회", f"{comments_seen_total:,}개", delta=f"저장 {inserted_total:,}개")
-            _fc3.metric("소요 시간", _fmt_duration(_total_elapsed))
-            _fc4.metric("평균 처리", f"{_avg_final:.1f}초/건" if _avg_final else "-")
-        _detail_placeholder.markdown(
-            f"<div style='font-size:0.95rem;color:#16a34a;font-weight:700;padding:2px 0 6px 0;'>✅ 수집 완료</div>",
-            unsafe_allow_html=True,
-        )
-        # 디버그 로그를 파일로 저장
-        try:
-            _log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "logs")
-            os.makedirs(_log_dir, exist_ok=True)
-            _log_file = os.path.join(_log_dir, f"event_run_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
-            with open(_log_file, "w", encoding="utf-8") as _lf:
-                _lf.write("\n".join(st.session_state.get("event_logs", [])))
-            update_logs(f"📄 실행 로그 저장: {_log_file}")
-        except Exception:
-            pass
-        st.session_state.event_last_processed_posts = int(total_articles_processed)
-        st.session_state.event_last_seen_comments = int(comments_seen_total)
-        st.session_state.event_last_excluded_comments = int(excluded_total)
-        if comment_enabled:
+            # 디버그 로그를 파일로 저장
             try:
-                _ensure_event_analysis_reports(force=True)
-                st.session_state.event_dup_collapsed = False
-                update_logs("🧠 수집 완료 후 분석 1/2 자동 집계를 완료했습니다.")
-            except Exception as analysis_e:
-                update_logs(f"⚠️ 자동 분석 집계 중 오류: {analysis_e}")
-        update_logs(done_msg)
-        st.session_state.event_last_run_message = done_msg
-        _final_prog_layout = (
-            "mentor" if mentor_enabled_rt and not (comment_enabled or post_enabled) else "board"
-        )
-        _set_event_progress(1.0, "완료", layout=_final_prog_layout)
-    except Exception as e:
-        st.error(f"댓글 수집 실행 중 오류: {e}")
-        update_logs(f"❌ 댓글 수집 실행 중 오류: {e}")
-        st.session_state.event_last_run_message = f"⚠️ 실행 중 오류: {e}"
-    finally:
-        st.session_state.event_run_pending = False
-        st.session_state.event_running = False
-        st.session_state.event_run_payload = None
-        st.session_state.event_stop_requested = False
-        st.rerun()
+                _log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "logs")
+                os.makedirs(_log_dir, exist_ok=True)
+                _log_file = os.path.join(_log_dir, f"event_run_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+                with open(_log_file, "w", encoding="utf-8") as _lf:
+                    _lf.write("\n".join(st.session_state.get("event_logs", [])))
+                update_logs(f"📄 실행 로그 저장: {_log_file}")
+            except Exception:
+                pass
+            st.session_state.event_last_processed_posts = int(total_articles_processed)
+            st.session_state.event_last_seen_comments = int(comments_seen_total)
+            st.session_state.event_last_excluded_comments = int(excluded_total)
+            if comment_enabled:
+                try:
+                    _ensure_event_analysis_reports(force=True)
+                    st.session_state.event_dup_collapsed = False
+                    update_logs("🧠 수집 완료 후 분석 1/2 자동 집계를 완료했습니다.")
+                except Exception as analysis_e:
+                    update_logs(f"⚠️ 자동 분석 집계 중 오류: {analysis_e}")
+            update_logs(done_msg)
+            st.session_state.event_last_run_message = done_msg
+            _final_prog_layout = (
+                "mentor" if mentor_enabled_rt and not (comment_enabled or post_enabled) else "board"
+            )
+            _set_event_progress(1.0, "완료", layout=_final_prog_layout)
+        except Exception as e:
+            st.error(f"댓글 수집 실행 중 오류: {e}")
+            update_logs(f"❌ 댓글 수집 실행 중 오류: {e}")
+            st.session_state.event_last_run_message = f"⚠️ 실행 중 오류: {e}"
+        finally:
+            st.session_state.event_run_pending = False
+            st.session_state.event_running = False
+            st.session_state.event_run_payload = None
+            st.session_state.event_stop_requested = False
+            st.rerun()
 
 # -----------------------------------------------------------------------------
 # Data Dashboard
@@ -2305,11 +2875,11 @@ _badge_post_count = len(
 _badge_comment_count = len(
     [x for x in str(st.session_state.get("event_exclude_comment_nicks_text", "") or "").splitlines() if str(x).strip()]
 )
-_badge_post_enabled = bool(st.session_state.get("event_apply_post_exclude_checkbox", True))
-_badge_comment_enabled = bool(st.session_state.get("event_apply_comment_exclude_checkbox", False))
+_badge_post_fm = _nick_filter_mode_from_session(prefix="event_post_filter")
+_badge_comment_fm = _nick_filter_mode_from_session(prefix="event_comment_filter")
 st.caption(
-    f"🏷️ 제외 설정 적용 중 · 게시글 제외 별명 {'ON' if _badge_post_enabled else 'OFF'}({_badge_post_count}명) · "
-    f"댓글 제외 별명 {'ON' if _badge_comment_enabled else 'OFF'}({_badge_comment_count}명)"
+    f"🏷️ 별명 필터 · 게시글 {_fmt_nick_filter_badge(_badge_post_fm)}({_badge_post_count}명) · "
+    f"댓글 {_fmt_nick_filter_badge(_badge_comment_fm)}({_badge_comment_count}명)"
 )
 
 try:
@@ -2331,14 +2901,13 @@ try:
         f"📅 표시 기간: **{dashboard_start_date.strftime('%Y-%m-%d')} ~ {dashboard_end_date.strftime('%Y-%m-%d')}**"
     )
     
-    m1, m2, m3, m4 = st.columns(4)
+    _mv_cnt = int(get_event_mentor_visits_count(EVENT_DB_PATH))
+    m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("저장 게시글", f"{int(stats_row['posts_cnt']):,}개")
     m2.metric("수집된 댓글", f"{int(stats_row['comments_cnt']):,}개")
     m3.metric("참여 인원", f"{int(stats_row['people_cnt']):,}명")
     m4.metric("총 글자수", f"{int(stats_row['chars_cnt']):,}자")
-    st.caption(
-        f"조건(3) 등급별 방문수 DB 행: **{get_event_mentor_visits_count(EVENT_DB_PATH):,}**"
-    )
+    m5.metric("등급별 방문수", f"{_mv_cnt:,}행")
     _last_processed = int(st.session_state.get("event_last_processed_posts", 0) or 0)
     _last_seen_comments = int(st.session_state.get("event_last_seen_comments", 0) or 0)
     _last_excluded_comments = int(st.session_state.get("event_last_excluded_comments", 0) or 0)
@@ -2353,6 +2922,7 @@ try:
     df = pd.read_sql_query(
         """
         SELECT
+            ec.comment_date,
             ec.post_date,
             ec.board_name,
             COALESCE(NULLIF(ep.author_nickname, ''), NULLIF(epa.author_nickname, ''), 'unknown') AS post_author_nickname,
@@ -2366,7 +2936,7 @@ try:
         FROM event_comments ec
         LEFT JOIN event_posts ep ON ep.post_id = ec.post_id
         LEFT JOIN event_post_analysis epa ON epa.post_id = ec.post_id
-        ORDER BY ec.post_date DESC, ec.post_id DESC, ec.id ASC
+        ORDER BY ec.id DESC
         """,
         conn,
     )
@@ -2384,6 +2954,7 @@ try:
         st.data_editor(
             df,
             column_config={
+                "comment_date": "댓글작성일",
                 "post_date": "게시일",
                 "board_name": "게시판",
                 "post_author_nickname": "게시글작성자(별명)",
@@ -2407,7 +2978,7 @@ try:
         st.download_button(
             "⬇️ CSV 저장",
             data=csv_bytes,
-            file_name=f"event_comments_{datetime.now().strftime('%Y%m%d')}.csv",
+            file_name=_build_export_filename("댓글원본", include_period=True),
             mime="text/csv",
             use_container_width=True,
         )
@@ -2429,6 +3000,7 @@ try:
             post_title,
             author_nickname,
             post_char_count,
+            post_title_char_count,
             post_image_count
         FROM event_post_analysis
         ORDER BY
@@ -2451,22 +3023,43 @@ try:
                 "board_name": "게시판명",
                 "post_title": st.column_config.TextColumn("게시글제목", width="large"),
                 "author_nickname": "별명",
-                "post_char_count": st.column_config.NumberColumn("글자수", format="%d"),
+                "post_char_count": st.column_config.NumberColumn("본문글자수", format="%d"),
+                "post_title_char_count": st.column_config.NumberColumn("제목글자수", format="%d"),
                 "post_image_count": st.column_config.NumberColumn("사진수", format="%d"),
             },
+        )
+        _post_result_bytes = df_post.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+        st.download_button(
+            "⬇️ 조건1 분석결과 다운로드",
+            data=_post_result_bytes,
+            file_name=_build_export_filename("조건1분석결과", include_period=True),
+            mime="text/csv",
+            use_container_width=True,
+            key="post_analysis_result_download_top",
         )
     if not df_post.empty:
         st.markdown("#### 🎫 조건1 참여자 티켓수 집계")
         _post_sum_indent, _post_sum_body = st.columns([0.05, 0.95])
         with _post_sum_body:
+            _post_board_bonus_text = str(st.session_state.get("event_post_board_ticket_bonus_text", "") or "")
+            _post_board_bonus_rules = _parse_post_board_bonus_rules(_post_board_bonus_text)
             st.caption(
-                f"티켓 산정 규칙: 글자수(제목 포함) {post_chars_per_ticket}자당 티켓 1개 / 사진 {post_images_per_ticket}장당 티켓 1개"
+                f"티켓 산정 규칙: 글자수(제목 포함) {post_chars_per_ticket}자당 티켓 1개 / "
+                f"사진 {post_images_per_ticket}장당 티켓 1개"
             )
+            if _post_board_bonus_rules:
+                st.caption(
+                    f"게시판 가산 규칙 {len(_post_board_bonus_rules)}개 적용 "
+                    "(게시판명 매칭 시 게시글당 가산 티켓 추가)"
+                )
 
             _df_p = df_post.copy()
-            for _nc in ["post_char_count", "post_image_count"]:
+            for _nc in ["post_char_count", "post_title_char_count", "post_image_count"]:
                 _df_p[_nc] = pd.to_numeric(_df_p[_nc], errors="coerce").fillna(0).astype(int)
-            _df_p["_title_len"] = _df_p["post_title"].apply(lambda t: len(str(t or "")))
+            _df_p["_title_len"] = _df_p["post_title_char_count"].where(
+                _df_p["post_title_char_count"] > 0,
+                _df_p["post_title"].apply(lambda t: len(str(t or ""))),
+            )
             _df_p["_total_chars"] = _df_p["post_char_count"] + _df_p["_title_len"]
 
             def _text_ticket(chars: int) -> int:
@@ -2476,7 +3069,16 @@ try:
 
             _df_p["텍스트티켓"] = _df_p["_total_chars"].apply(_text_ticket)
             _df_p["사진티켓"] = (_df_p["post_image_count"] // max(1, int(post_images_per_ticket))).astype(int)
-            _df_p["티켓합"] = _df_p["텍스트티켓"] + _df_p["사진티켓"]
+            if _post_board_bonus_rules:
+                _df_p["_board_key"] = _df_p["board_name"].apply(
+                    lambda v: re.sub(r"\s+", "", str(v or "")).strip().lower()
+                )
+                _df_p["게시판가산티켓"] = _df_p["_board_key"].apply(
+                    lambda k: _resolve_post_board_bonus(str(k), _post_board_bonus_rules)
+                ).astype(int)
+            else:
+                _df_p["게시판가산티켓"] = 0
+            _df_p["티켓합"] = _df_p["텍스트티켓"] + _df_p["사진티켓"] + _df_p["게시판가산티켓"]
 
             _post_base = (
                 _df_p.groupby("author_nickname")
@@ -2484,16 +3086,18 @@ try:
                     게시글수=("post_title", "count"),
                     텍스트티켓=("텍스트티켓", "sum"),
                     사진티켓=("사진티켓", "sum"),
+                    게시판가산티켓=("게시판가산티켓", "sum"),
                     총티켓수=("티켓합", "sum"),
                 )
                 .rename_axis("별명")
             )
 
-            _max_t = int(_df_p["티켓합"].max()) if not _df_p.empty else 1
+            # 티켓N 분포 칼럼은 가산/사진이 아닌 "텍스트 티켓" 구간 기준으로만 생성
+            _max_t = int(_df_p["텍스트티켓"].max()) if not _df_p.empty else 1
             for _tv in range(1, _max_t + 1):
                 _col = f"티켓{_tv}"
                 _tc = (
-                    _df_p[_df_p["티켓합"] == _tv]
+                    _df_p[_df_p["텍스트티켓"] == _tv]
                     .groupby("author_nickname")["post_title"].count()
                     .rename(_col)
                 )
@@ -2501,7 +3105,7 @@ try:
                 _post_base[_col] = _post_base[_col].fillna(0).astype(int)
 
             _tcols = [c for c in _post_base.columns if c.startswith("티켓") and c not in ("총티켓수",)]
-            _ordered = ["총티켓수", "게시글수"] + sorted(_tcols, key=lambda x: int(x.replace("티켓", ""))) + ["텍스트티켓", "사진티켓"]
+            _ordered = ["총티켓수", "사진티켓", "게시판가산티켓", "게시글수", "텍스트티켓"] + sorted(_tcols, key=lambda x: int(x.replace("티켓", "")))
             _post_sum = _post_base[[c for c in _ordered if c in _post_base.columns]].sort_values(
                 ["총티켓수", "게시글수"], ascending=[False, False]
             )
@@ -2528,7 +3132,7 @@ try:
             st.download_button(
                 "⬇️ 조건1 티켓 집계 다운로드",
                 data=_post_sum_bytes,
-                file_name=f"event_post_ticket_{datetime.now().strftime('%Y%m%d')}.csv",
+                file_name=_build_export_filename("조건1티켓집계", include_period=True),
                 mime="text/csv",
                 use_container_width=True,
                 key="post_ticket_download",
@@ -2615,7 +3219,9 @@ if comment_condition_enabled:
         _sum_indent_col, _sum_body_col = st.columns([0.05, 0.95])
         with _sum_body_col:
             st.caption(
-                f"티켓 산정 규칙: 글자수 {comment_chars_per_ticket}자당 티켓 1개 / 아이콘 또는 사진 1장 = +{comment_media_ticket_bonus}티켓 / 복붙 댓글은 티켓 1개 고정"
+                f"티켓 산정 규칙: 글자수 {comment_chars_per_ticket}자당 티켓 1개 / "
+                f"아이콘 또는 사진 1장 = +{comment_media_ticket_bonus}티켓 / "
+                f"한 댓글 최대 {comment_max_tickets_per_comment}티켓 / 복붙 댓글은 티켓 1개 고정"
             )
 
             final_summary_report = st.session_state.get("event_final_summary_report")
@@ -2646,7 +3252,7 @@ if comment_condition_enabled:
                         st.download_button(
                             "⬇️ 조건2 티켓 집계 다운로드",
                             data=sum_bytes,
-                            file_name=f"event_comment_ticket_{datetime.now().strftime('%Y%m%d')}.csv",
+                            file_name=_build_export_filename("조건2티켓집계", include_period=True),
                             mime="text/csv",
                             use_container_width=True,
                         )
@@ -2663,22 +3269,26 @@ try:
     conn_mv = sqlite3.connect(EVENT_DB_PATH, timeout=30.0)
     df_mv = pd.read_sql_query(
         """
-        SELECT member_grade AS 등급, nickname AS 별명, visit_count AS 방문수, updated_at AS 갱신시각
+        SELECT
+            member_grade AS 등급,
+            nickname AS 별명,
+            COALESCE(NULLIF(TRIM(last_visit_date), ''), '—') AS 최종방문일,
+            visit_count AS 방문수
         FROM event_mentor_visits
-        ORDER BY member_grade ASC, visit_count DESC, nickname ASC
+        ORDER BY collect_seq ASC, id ASC
         """,
         conn_mv,
     )
     conn_mv.close()
     if df_mv.empty:
-        st.info("조건(3)으로 저장된 등급별 방문수가 없습니다. 조건(3) 수집을 실행하면 여기에 표시됩니다.")
+        st.info("조건(3)으로 저장된 등급별 방문수가 없습니다. 조건(3) 수집을 실행하면 아래 표에 채워집니다.")
     else:
         st.dataframe(df_mv, use_container_width=True, hide_index=True)
         _mv_csv = df_mv.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
         st.download_button(
             "⬇️ 등급별 방문수 CSV",
             data=_mv_csv,
-            file_name=f"event_mentor_visits_{datetime.now().strftime('%Y%m%d')}.csv",
+            file_name=_build_export_filename("등급별방문수", include_period=True),
             mime="text/csv",
             use_container_width=True,
             key="event_download_mentor_visits_csv",
@@ -2686,3 +3296,145 @@ try:
 except Exception as _emv:
     st.error(f"등급별 방문수 조회 오류: {_emv}")
 
+
+# -----------------------------------------------------------------------------
+# Final Combined Summary (CSV x 2)
+# -----------------------------------------------------------------------------
+st.markdown("### 최종 집계")
+st.caption(
+    "티켓 집계 CSV 2개를 업로드해 같은 별명의 총티켓수를 합산합니다. "
+    "댓글 포함 별명 순서(설정창 입력 순서)가 있으면 그 순서로 정렬합니다."
+)
+
+_fc1, _fc2 = st.columns(2)
+with _fc1:
+    final_csv_a = st.file_uploader(
+        "집계 CSV A",
+        type=["csv"],
+        key="event_final_summary_csv_a",
+        help="예: 조건1 티켓 집계 CSV",
+    )
+with _fc2:
+    final_csv_b = st.file_uploader(
+        "집계 CSV B",
+        type=["csv"],
+        key="event_final_summary_csv_b",
+        help="예: 조건2 티켓 집계 CSV",
+    )
+
+
+def _norm_nick_for_merge(v: str) -> str:
+    return "".join(str(v or "").strip().lower().split())
+
+
+def _extract_nick_ticket_df(uploaded_file) -> pd.DataFrame:
+    if uploaded_file is None:
+        return pd.DataFrame(columns=["별명", "총티켓수"])
+
+    uploaded_file.seek(0)
+    src = pd.read_csv(uploaded_file)
+    if src.empty:
+        return pd.DataFrame(columns=["별명", "총티켓수"])
+
+    # 별명 컬럼 탐지:
+    # - 조건2 CSV: "별명"
+    # - 조건1 CSV(index 포함 저장): "별명" 혹은 "Unnamed: 0"
+    nick_col = None
+    for cand in ["별명", "nickname", "닉네임", "author_nickname", "Unnamed: 0"]:
+        if cand in src.columns:
+            nick_col = cand
+            break
+    if nick_col is None:
+        # 인덱스가 이름 없이 들어온 경우를 대비해 첫 번째 컬럼을 별명으로 간주
+        nick_col = str(src.columns[0])
+
+    ticket_col = None
+    for cand in ["총티켓수", "total_tickets", "티켓합계"]:
+        if cand in src.columns:
+            ticket_col = cand
+            break
+    if ticket_col is None:
+        raise ValueError("CSV에 '총티켓수' 컬럼이 없습니다.")
+
+    out = src[[nick_col, ticket_col]].copy()
+    out.columns = ["별명", "총티켓수"]
+    out["별명"] = out["별명"].astype(str).str.strip()
+    out = out[out["별명"] != ""]
+    out["총티켓수"] = pd.to_numeric(out["총티켓수"], errors="coerce").fillna(0).astype(int)
+    return out
+
+
+if st.button("최종 집계 실행", use_container_width=True, key="event_final_summary_run_btn"):
+    try:
+        if final_csv_a is None or final_csv_b is None:
+            raise ValueError("CSV 2개를 모두 업로드해주세요.")
+
+        df_a = _extract_nick_ticket_df(final_csv_a)
+        df_b = _extract_nick_ticket_df(final_csv_b)
+        merged_src = pd.concat([df_a, df_b], ignore_index=True)
+
+        if merged_src.empty:
+            st.session_state["event_final_merge_df"] = pd.DataFrame(columns=["별명", "총티켓수"])
+        else:
+            merged_src["_nick_key"] = merged_src["별명"].apply(_norm_nick_for_merge)
+            # 표시용 별명은 첫 등장 값을 유지하고, 총티켓수만 합산
+            merged_df = (
+                merged_src.groupby("_nick_key", as_index=False)
+                .agg(
+                    별명=("별명", "first"),
+                    총티켓수=("총티켓수", "sum"),
+                )
+            )
+
+            # 조건2와 동일하게 댓글 포함 별명 순서를 정렬 우선순위로 사용
+            include_mode = _nick_filter_mode_from_session(prefix="event_comment_filter")
+            include_raw = str(st.session_state.get("event_exclude_comment_nicks_text", "") or "")
+            include_order_map: dict[str, int] = {}
+            if include_mode == "include":
+                for ln in include_raw.splitlines():
+                    n = str(ln or "").strip()
+                    if not n:
+                        continue
+                    nk = _norm_nick_for_merge(n)
+                    if nk and nk not in include_order_map:
+                        include_order_map[nk] = len(include_order_map)
+
+            if include_order_map:
+                _fallback_rank = len(include_order_map) + 100000
+                merged_df["__order"] = merged_df["_nick_key"].apply(
+                    lambda k: include_order_map.get(str(k), _fallback_rank)
+                )
+                merged_df = merged_df.sort_values(
+                    ["__order", "총티켓수", "별명"],
+                    ascending=[True, False, True],
+                ).drop(columns=["__order"])
+            else:
+                merged_df = merged_df.sort_values(
+                    ["총티켓수", "별명"],
+                    ascending=[False, True],
+                )
+
+            merged_df = merged_df.drop(columns=["_nick_key"]).reset_index(drop=True)
+            st.session_state["event_final_merge_df"] = merged_df
+
+    except Exception as _final_err:
+        st.error(f"최종 집계 실행 오류: {_final_err}")
+
+_final_df = st.session_state.get("event_final_merge_df")
+if isinstance(_final_df, pd.DataFrame):
+    if _final_df.empty:
+        st.info("최종 집계 결과가 비어 있습니다.")
+    else:
+        _f1, _f2 = st.columns(2)
+        _f1.metric("참여자", f"{len(_final_df):,}명")
+        _f2.metric("총 티켓", f"{int(_final_df['총티켓수'].sum()):,}개")
+        st.dataframe(_final_df, use_container_width=True, hide_index=True)
+        _final_bytes = _final_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+        st.download_button(
+            "⬇️ 최종 집계 CSV 다운로드",
+            data=_final_bytes,
+            file_name=_build_export_filename("최종합산티켓", include_period=True),
+            mime="text/csv",
+            use_container_width=True,
+            key="event_final_summary_download_btn",
+        )

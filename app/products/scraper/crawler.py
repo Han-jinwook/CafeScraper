@@ -2527,6 +2527,23 @@ class NaverCafeCrawler:
             pass
         return False
 
+    @staticmethod
+    def _parse_member_table_visit_count_text(raw: str) -> Optional[int]:
+        """방문수 셀만 인정. 날짜(점/YYYYMMDD)는 제외."""
+        s = (raw or "").strip()
+        if not s:
+            return None
+        if re.search(r"\d{4}\s*\.\s*\d{1,2}\s*\.\s*\d", s):
+            return None
+        if re.fullmatch(r"\d{8}", s):
+            y, m, d = int(s[:4]), int(s[4:6]), int(s[6:8])
+            if 2000 <= y <= 2099 and 1 <= m <= 12 and 1 <= d <= 31:
+                return None
+        digits = re.sub(r"[^\d]", "", s)
+        if not digits:
+            return None
+        return int(digits)
+
     def _scrape_manage_member_table_visits(self, *, max_pages: int, grade_label: str = "") -> List[Dict[str, Any]]:
         """현재 멤버 관리 표에서 별명·방문수 후보 열을 읽는다. max_pages는 안전 상한(이후 '다음' 없으면 종료)."""
         rows_out: List[Dict[str, Any]] = []
@@ -2539,6 +2556,7 @@ class NaverCafeCrawler:
             if self._should_stop():
                 self._update_status("🛑 사용자 요청으로 등급별 방문수 수집을 중단합니다.")
                 break
+            self._update_status(f"__MENTOR_PROGRESS_PAGE__:{_grade}:{page}")
             self._switch_to_cafe_iframe()
             tables = self.driver.find_elements(By.CSS_SELECTOR, "table")
             best_tb = None
@@ -2558,6 +2576,8 @@ class NaverCafeCrawler:
 
             nick_idx: Optional[int] = None
             visit_idx: Optional[int] = None
+            last_visit_idx: Optional[int] = None
+            hdr: List[str] = []
             try:
                 ths = best_tb.find_elements(By.CSS_SELECTOR, "thead tr th")
                 if not ths:
@@ -2568,6 +2588,8 @@ class NaverCafeCrawler:
                     ht_norm = re.sub(r"\s+", "", ht)
                     if nick_idx is None and any(k in ht for k in ("별명", "닉네임", "멤버")):
                         nick_idx = i
+                    if last_visit_idx is None and "최종방문일" in ht_norm:
+                        last_visit_idx = i
                     # 방문수 컬럼만 우선 매칭 (최종방문일 오인 방지)
                     if visit_idx is None and ("방문수" in ht_norm):
                         visit_idx = i
@@ -2578,14 +2600,44 @@ class NaverCafeCrawler:
                             visit_idx = i
                             break
             except Exception:
-                pass
+                hdr = []
             if nick_idx is None:
+                # 헤더 없을 때: tbody 기준 별명 열(체크박스 다음)을 1로 둠 — td_offset과 합쳐짐
                 nick_idx = 1
             if visit_idx is None:
                 # 헤더를 못 읽으면 기본값을 오른쪽(방문수 쪽)으로 두어 날짜 오인 가능성 축소
-                visit_idx = min(5, max(0, len(best_tb.find_elements(By.CSS_SELECTOR, "thead tr th")) - 1))
+                _nth = len(best_tb.find_elements(By.CSS_SELECTOR, "thead tr th"))
+                visit_idx = min(5, max(0, _nth - 1)) if _nth else 0
+            if last_visit_idx is None and visit_idx is not None and visit_idx > 0:
+                last_visit_idx = visit_idx - 1
 
             data_trs = best_tb.find_elements(By.CSS_SELECTOR, "tbody tr")
+            hdr_len = len(hdr)
+
+            td_offset = 0
+            for _tr in data_trs[:5]:
+                try:
+                    _tds = _tr.find_elements(By.CSS_SELECTOR, "td")
+                    if not _tds:
+                        continue
+                    if hdr_len and len(_tds) > hdr_len:
+                        td_offset = min(2, max(0, len(_tds) - hdr_len))
+                    break
+                except Exception:
+                    continue
+            if td_offset:
+                self._update_status(f"📎 멤버 표: thead/th 대비 tbody/td +{td_offset}열 보정(체크박스 등)")
+
+            def _td_i(idx: Optional[int]) -> Optional[int]:
+                if idx is None:
+                    return None
+                j = int(idx) + int(td_offset)
+                return j if j >= 0 else None
+
+            nick_td = _td_i(nick_idx)
+            visit_td = _td_i(visit_idx)
+            last_visit_td = _td_i(last_visit_idx)
+
             page_added = 0
             for tr in data_trs:
                 try:
@@ -2596,32 +2648,51 @@ class NaverCafeCrawler:
                     joined_head = " ".join(cells[:4])
                     if "별명" in joined_head and "아이디" in joined_head:
                         continue
-                    nick = cells[nick_idx] if nick_idx < len(cells) else ""
+                    if nick_td is None or nick_td >= len(cells):
+                        continue
+                    nick = cells[nick_td]
                     if not nick:
                         continue
                     # "별명(id)" 형태에서 id 괄호 부분 제거
                     nick = re.split(r"\s*[\(\（].*$", nick)[0].strip()
                     if not nick:
                         continue
-                    visit_raw = ""
-                    if 0 <= visit_idx < len(cells):
-                        visit_raw = cells[visit_idx]
-                    if not re.sub(r"[^\d]", "", visit_raw):
-                        for c in reversed(cells):
-                            if re.fullmatch(r"[\d,\s]+", (c or "").strip() or ""):
-                                visit_raw = c
+                    visit_val: Optional[int] = None
+                    if visit_td is not None and 0 <= visit_td < len(cells):
+                        visit_val = self._parse_member_table_visit_count_text(cells[visit_td])
+                    if visit_val is None and visit_td is not None:
+                        for _j in range(max(0, visit_td - 1), min(len(cells), visit_td + 3)):
+                            visit_val = self._parse_member_table_visit_count_text(cells[_j])
+                            if visit_val is not None:
                                 break
-                    visit_val = int(re.sub(r"[^\d]", "", visit_raw) or "0")
+                    if visit_val is None:
+                        for c in reversed(cells):
+                            v = self._parse_member_table_visit_count_text(c)
+                            if v is not None:
+                                visit_val = v
+                                break
+                    if visit_val is None:
+                        visit_val = 0
+                    last_visit_raw = ""
+                    if last_visit_td is not None and 0 <= last_visit_td < len(cells):
+                        last_visit_raw = (cells[last_visit_td] or "").strip()
                     key = (nick, str(visit_val))
                     if key in seen:
                         continue
                     seen.add(key)
-                    rows_out.append({"nickname": nick, "visit_count": visit_val})
+                    rows_out.append(
+                        {
+                            "nickname": nick,
+                            "visit_count": visit_val,
+                            "last_visit_date": last_visit_raw,
+                        }
+                    )
                     page_added += 1
                 except Exception:
                     continue
 
             self._update_status(f"📋 멤버 표 [{_grade}] {page}페이지: {page_added}행 (누적 {len(rows_out)})")
+            self._update_status(f"__MENTOR_PROGRESS_ROWS__:{len(rows_out)}")
             if page >= max_pages:
                 self._update_status("⏹️ 멤버 표 페이지 상한(안전장치) 도달 — 수집을 멈춥니다.")
                 break
@@ -2643,18 +2714,23 @@ class NaverCafeCrawler:
         if not grades:
             return {"status": "fail", "message": "등급을 1개 이상 입력해주세요.", "rows": []}
 
+        self._update_status("__MENTOR_PROGRESS_PHASE__:카페에서 멤버 관리 화면으로 이동 중… (로딩·대기 구간일 수 있음)")
         nav = self.go_to_member_management(cafe_url)
         if nav.get("status") != "success":
             return {"status": "fail", "message": str(nav.get("message") or "멤버관리 이동 실패"), "rows": []}
 
         time.sleep(1.0)
         self._switch_to_cafe_iframe()
+        self._update_status("__MENTOR_PROGRESS_PHASE__:멤버 관리 화면 로드됨 · 등급별 필터 적용 중")
+        self._update_status("__MENTOR_PROGRESS_ROWS__:0")
 
         all_rows: List[Dict[str, Any]] = []
         failed_filter_grades: List[str] = []
         succeeded_filter_grades: List[str] = []
         for g in grades:
             if self._should_stop():
+                for i, r in enumerate(all_rows):
+                    r["collect_seq"] = int(i)
                 return {
                     "status": "stopped",
                     "message": "사용자 요청으로 중단되었습니다.",
@@ -2671,6 +2747,7 @@ class NaverCafeCrawler:
                 continue
             succeeded_filter_grades.append(g)
             time.sleep(0.9)
+            self._update_status(f"__MENTOR_PROGRESS_PHASE__:등급 '{g}' · 표 페이지 스캔 시작")
             self._update_status(f"▶ 등급 '{g}' 페이지 순회 시작")
             part = self._scrape_manage_member_table_visits(
                 max_pages=int(self._MENTOR_MEMBER_LIST_PAGE_GUARD),
@@ -2713,6 +2790,9 @@ class NaverCafeCrawler:
                 "rows": [],
             }
 
+        for i, r in enumerate(all_rows):
+            r["collect_seq"] = int(i)
+
         return {
             "status": "ok",
             "message": f"등급 {len(grades)}종 · 행 {len(all_rows)}",
@@ -2723,29 +2803,56 @@ class NaverCafeCrawler:
         time.sleep(random.uniform(min_sec, max_sec))
 
     def _parse_date(self, date_str: str) -> Optional[datetime]:
-        if not date_str: return None
-        date_str = date_str.strip()
+        if not date_str:
+            return None
+        s = str(date_str).strip()
+        if not s:
+            return None
+        now = datetime.now()
         try:
-            if "전" in date_str: return datetime.now()
-            if ":" in date_str and "." not in date_str:
-                return datetime.now().replace(hour=int(date_str.split(":")[0]), minute=int(date_str.split(":")[1]))
-            
-            clean_date = re.sub(r'[^0-9.]', '', date_str).strip('.')
-            parts = clean_date.split('.')
-            if len(parts) == 3:
-                y, m, d = int(parts[0]), int(parts[1]), int(parts[2])
-                # 2자리 연도(YY) 보정: 1900년대일 확률은 낮으므로 2000을 더함
+            # 상대 표기: "3일 전", "2시간 전", "15분 전"
+            m_days = re.search(r"(\d+)\s*일\s*전", s)
+            if m_days:
+                return now - timedelta(days=int(m_days.group(1)))
+            m_hours = re.search(r"(\d+)\s*시간\s*전", s)
+            if m_hours:
+                return now - timedelta(hours=int(m_hours.group(1)))
+            m_mins = re.search(r"(\d+)\s*분\s*전", s)
+            if m_mins:
+                return now - timedelta(minutes=int(m_mins.group(1)))
+            if "방금" in s or "오늘" in s:
+                return now
+            if "어제" in s:
+                return now - timedelta(days=1)
+
+            # 시각만 있는 케이스(HH:MM[:SS])는 오늘 날짜로 보정
+            if re.fullmatch(r"\d{1,2}:\d{2}(?::\d{2})?", s):
+                hh, mm = s.split(":")[0], s.split(":")[1]
+                return now.replace(hour=int(hh), minute=int(mm), second=0, microsecond=0)
+
+            # 연도 포함 날짜(2/4자리 연도 + 구분자, 뒤에 시각이 붙어도 허용)
+            m_ymd = re.search(r"(\d{2,4})[./-](\d{1,2})[./-](\d{1,2})", s)
+            if m_ymd:
+                y = int(m_ymd.group(1))
+                mo = int(m_ymd.group(2))
+                d = int(m_ymd.group(3))
                 if y < 100:
                     y += 2000
-                return datetime(y, m, d)
-            
-            # (추가) MM.DD 형식 대응 (올해로 가정)
-            if len(parts) == 2:
-                m, d = int(parts[0]), int(parts[1])
-                return datetime(datetime.now().year, m, d)
+                return datetime(y, mo, d)
+
+            # 연도 없는 날짜(MM.DD / MM-DD / MM/DD) + 시간/기타 문구 동반 허용
+            m_md = re.search(r"\b(\d{1,2})[./-](\d{1,2})\b", s)
+            if m_md:
+                mo = int(m_md.group(1))
+                d = int(m_md.group(2))
+                y = now.year
+                # 연초에 전년도 글을 넘겨보는 상황 보정
+                if (mo, d) > (now.month, now.day):
+                    y -= 1
+                return datetime(y, mo, d)
 
             return None
-        except:
+        except Exception:
             return None
 
     def _to_ymd(self, raw: Any) -> str:
@@ -3120,6 +3227,10 @@ class NaverCafeCrawler:
         if exclude_boards:
             exclude_norm = {self._normalize_board_name(x) for x in exclude_boards if str(x).strip()}
 
+        # 목록 글 날짜는 대부분 자정 기준 — 시각 비교 시 끝나는 날(23:59:59)이 잘리는 일 방지
+        range_start_d = start_date.date() if isinstance(start_date, datetime) else start_date
+        range_end_d = end_date.date() if isinstance(end_date, datetime) else end_date
+
         def _read_page_date_range(page_no: int) -> tuple[Optional[datetime], Optional[datetime], int, str]:
             """
             특정 페이지의 날짜 범위를 읽는다.
@@ -3197,6 +3308,11 @@ class NaverCafeCrawler:
                                 cand = self._parse_date(m_inner.group(1))
                                 if cand and 2015 <= cand.year <= (datetime.now().year + 1):
                                     dval_inner = cand
+                        # 신형 리스트에서 오늘 글이 "12:44" 형태로만 보이는 경우 대응
+                        if not dval_inner:
+                            m_time_inner = re.search(r"\b(?:[01]?\d|2[0-3]):[0-5]\d\b", row_inner.text or "")
+                            if m_time_inner:
+                                dval_inner = self._parse_date(m_time_inner.group(0))
                         if dval_inner:
                             dates.append(dval_inner)
                     except:
@@ -3208,14 +3324,16 @@ class NaverCafeCrawler:
             except:
                 return None, None, 0, ""
 
-        def _auto_locate_start_page(target_end: datetime, initial_page: int) -> int:
+        def _auto_locate_start_page(initial_page: int) -> int:
             """
-            목표 종료일(end_date)이 포함될 가능성이 높은 페이지를 자동 탐색.
+            탐색 구간의 끝 날짜(range_end_d)가 나올 법한 페이지를 자동 탐색.
             - 페이지 번호가 커질수록 더 과거 글이 나온다는 전제.
             - 반환 페이지는 경계 누락 방지를 위해 찾은 페이지의 1페이지 앞에서 시작.
             """
             if initial_page > 1:
                 return initial_page
+
+            te = range_end_d
 
             self._update_status("🧭 해당 기간의 페이지를 찾는 중... (자동 점프 준비)")
 
@@ -3224,24 +3342,27 @@ class NaverCafeCrawler:
                 self._update_status("⚠️ 1페이지 날짜를 읽지 못해 자동 점프를 건너뜁니다.")
                 return 1
 
+            p1_min_d = p1_min.date() if isinstance(p1_min, datetime) else p1_min
+            p1_max_d = p1_max.date() if isinstance(p1_max, datetime) else p1_max
+
             self._update_status(
                 f"🧭 해당 기간의 페이지를 찾는 중... 1p 확인 "
                 f"(범위: {p1_max.strftime('%Y-%m-%d')} ~ {p1_min.strftime('%Y-%m-%d')})"
             )
 
-            if p1_min <= target_end <= p1_max:
+            if p1_min_d <= te <= p1_max_d:
                 self._update_status("✅ 해당 기간의 페이지를 찾았습니다. 1페이지부터 시작합니다.")
                 return 1
 
             # 목표가 1페이지보다 과거면(일반적인 과거 수집): 지수 탐색 후 이분 탐색
-            if target_end < p1_min:
+            if te < p1_min_d:
                 lo = 1
                 hi = 1
                 hi_min = p1_min
                 hi_first_id = p1_first_id
                 max_probe_page = 5000
 
-                while hi < max_probe_page and hi_min and target_end < hi_min:
+                while hi < max_probe_page and hi_min and te < (hi_min.date() if isinstance(hi_min, datetime) else hi_min):
                     if self._should_stop():
                         return lo
                     nxt = min(max_probe_page, hi * 2)
@@ -3277,7 +3398,8 @@ class NaverCafeCrawler:
                         f"🧭 해당 기간의 페이지를 찾는 중... {mid}p 확인 "
                         f"(범위: {m_max.strftime('%Y-%m-%d')} ~ {m_min.strftime('%Y-%m-%d')})"
                     )
-                    if target_end < m_min:
+                    m_min_d = m_min.date() if isinstance(m_min, datetime) else m_min
+                    if te < m_min_d:
                         left = mid + 1
                     else:
                         found = mid
@@ -3301,7 +3423,15 @@ class NaverCafeCrawler:
         )
 
         all_articles = []
-        page = _auto_locate_start_page(end_date, start_page)
+        # 정확도 우선: 자동 점프가 경계 페이지를 과거로 건너뛰는 사례가 있어
+        # 기본은 순차 탐색으로 고정한다. (성능보다 누락 방지 우선)
+        use_auto_locate = False
+        if use_auto_locate:
+            page = _auto_locate_start_page(start_page)
+        else:
+            page = max(1, int(start_page))
+            if page <= 1:
+                self._update_status("🧭 정확도 우선 모드: 1페이지부터 순차 탐색합니다.")
         self.last_effective_start_page = int(page)
         initial_effective_page = int(page)
         manual_start_relocated = False
@@ -3359,11 +3489,21 @@ class NaverCafeCrawler:
                         except Exception:
                             continue
 
-                # 게시글 행 찾기 (최신 SPA 구조 우선)
-                row_selector = "div[class*='ArticleItem'], li[class*='article'], div.article-board table tbody tr"
+                # 게시글 행 찾기 (최신 SPA + 구형 테이블 혼합 대응)
+                row_selector = (
+                    "div[class*='ArticleItem'], "
+                    "li[class*='article'], "
+                    "li[class*='ArticleItem'], "
+                    "tr[class*='article'], "
+                    "div.article-board table tbody tr, "
+                    "table[class*='Article'] tbody tr, "
+                    "table tbody tr"
+                )
                 rows = []
-                empty_retries = 3 if self.speed_profile == "fast" else 2
+                empty_retries = 4 if self.speed_profile == "fast" else 3
                 for retry_idx in range(empty_retries):
+                    # iframe 전환 타이밍 이슈를 줄이기 위해 매 재시도마다 재진입 시도
+                    self._switch_to_cafe_iframe()
                     rows = self.driver.find_elements(By.CSS_SELECTOR, row_selector)
                     if rows:
                         break
@@ -3381,10 +3521,32 @@ class NaverCafeCrawler:
                         except:
                             pass
                         self._sleep_scaled(0.5, floor=0.3)
+                    else:
+                        # 마지막 시도에서 페이지를 한 번 새로 불러 재확인
+                        try:
+                            self.driver.get(target_page_url)
+                            self._sleep_scaled(1.8, floor=0.9)
+                            self._switch_to_cafe_iframe()
+                            rows = self.driver.find_elements(By.CSS_SELECTOR, row_selector)
+                        except Exception:
+                            pass
                 
                 if not rows:
                     self._update_status(
-                        f"⚠️ {page}페이지에서 게시글을 찾지 못했습니다. (재확인 후에도 비어 있음, 게시판 끝/로딩 지연 가능)"
+                        f"⚠️ {page}페이지에서 게시글을 찾지 못했습니다. "
+                        "(재확인 후에도 비어 있음, iframe 지연/일시 로딩 실패 가능)"
+                    )
+                    consecutive_no_date_pages += 1
+                    if consecutive_no_date_pages <= 2:
+                        self._update_status(
+                            f"↪️ 빈 페이지 보호모드: 즉시 종료하지 않고 다음 페이지를 추가 확인합니다. "
+                            f"({consecutive_no_date_pages}/2)"
+                        )
+                        page += 1
+                        self._sleep_scaled(1.5, floor=0.8)
+                        continue
+                    self._update_status(
+                        "⏹️ 연속 빈 페이지가 반복되어 게시판 끝으로 판단합니다."
                     )
                     is_finished = True
                     break
@@ -3396,6 +3558,23 @@ class NaverCafeCrawler:
                 page_found_count = 0
                 page_dates = [] # (추가) 페이지 내 유효한(공지 제외) 게시글 날짜 수집
                 restart_from_page = False
+                dbg_row_budget = 35
+
+                def _emit_row_dbg(row_idx: int, row_post_id: str, row_date: Optional[datetime], reason: str, raw_preview: str):
+                    nonlocal dbg_row_budget
+                    if dbg_row_budget <= 0:
+                        return
+                    dsv = "-"
+                    if isinstance(row_date, datetime):
+                        dsv = row_date.strftime("%Y-%m-%d")
+                    elif row_date is not None:
+                        dsv = str(row_date)
+                    pid = str(row_post_id or "").strip() or "-"
+                    txt = (raw_preview or "").replace("\n", " ").strip()
+                    self._update_status(
+                        f"[DBG_ROW] p={page} row={row_idx + 1} post_id={pid} date={dsv} reason={reason} text={txt[:80]}"
+                    )
+                    dbg_row_budget -= 1
                 
                 # (추가) 무한 루프(페이지 고착) 감지
                 # 첫 번째 게시글(공지 제외)의 ID를 확인하여 이전 페이지와 동일하면 중단
@@ -3403,6 +3582,8 @@ class NaverCafeCrawler:
 
                 for idx, row in enumerate(rows):
                     try:
+                        raw_preview = re.sub(r"\s+", " ", str(row.text or "")).strip()
+
                         # 공지 스킵 강화
                         row_class = (row.get_attribute("class") or "").lower()
                         is_notice = False
@@ -3414,11 +3595,14 @@ class NaverCafeCrawler:
                             try:
                                 if row.find_elements(By.CSS_SELECTOR, ".ico_notice, .icon_notice, .td_notice"):
                                     is_notice = True
-                                elif "공지" in row.text[:10]: # 텍스트 앞부분에 '공지' 포함 시
+                                # 제목 본문 중간의 '공지' 단어로 오탐하지 않도록 앞머리만 판정
+                                elif re.match(r"^\s*(공지|필독|안내)\b", raw_preview[:16]):
                                     is_notice = True
                             except: pass
                         
-                        if is_notice: continue
+                        if is_notice:
+                            _emit_row_dbg(idx, "", None, "notice", raw_preview)
+                            continue
                         
                         # 날짜 추출
                         date_val = None
@@ -3437,7 +3621,14 @@ class NaverCafeCrawler:
                                 cand = self._parse_date(date_match.group(1))
                                 if cand and 2015 <= cand.year <= (datetime.now().year + 1):
                                     date_val = cand
-                        if not date_val: continue
+                        # 신형 리스트의 "오늘 시각(HH:MM)" 표기를 날짜로 복구
+                        if not date_val:
+                            time_match = re.search(r"\b(?:[01]?\d|2[0-3]):[0-5]\d\b", row.text or "")
+                            if time_match:
+                                date_val = self._parse_date(time_match.group(0))
+                        if not date_val:
+                            _emit_row_dbg(idx, "", None, "parse_fail", raw_preview)
+                            continue
                         
                         # (추가) 무한 루프 감지용 ID 수집 (첫 번째 유효 게시글)
                         if current_first_post_id is None:
@@ -3459,8 +3650,11 @@ class NaverCafeCrawler:
                         # (추가) 유효한 게시글 날짜만 수집
                         page_dates.append(date_val)
 
-                        if date_val > end_date: continue
-                        if date_val < start_date:
+                        _dv = date_val.date() if isinstance(date_val, datetime) else date_val
+                        if _dv > range_end_d:
+                            _emit_row_dbg(idx, "", date_val, "after_end", raw_preview)
+                            continue
+                        if _dv < range_start_d:
                             # 수동 시작 페이지가 너무 과거면(예: 619p) 기간을 건너뛰고 바로 종료되는 문제가 생길 수 있다.
                             # 최초 시작 페이지에서 곧바로 과거가 나오면 1페이지 기준으로 재탐색을 1회 수행한다.
                             if (
@@ -3471,7 +3665,7 @@ class NaverCafeCrawler:
                                 self._update_status(
                                     "⚠️ 수동 시작 페이지가 기간보다 과거로 판단됩니다. 1페이지 기준으로 자동 재탐색합니다."
                                 )
-                                page = _auto_locate_start_page(end_date, 1)
+                                page = _auto_locate_start_page(1)
                                 self.last_effective_start_page = int(page)
                                 self.last_scanned_page = max(0, int(page) - 1)
                                 end_page = page + max_pages - 1
@@ -3485,6 +3679,7 @@ class NaverCafeCrawler:
                             # 단일 행 기준 즉시 종료하지 않는다.
                             # 장시간 수집 중 단일 이상치 날짜가 섞이면 조기 종료로 이어질 수 있으므로,
                             # 페이지 단위(아래 page_dates 판정)로 종료 여부를 결정한다.
+                            _emit_row_dbg(idx, "", date_val, "before_start", raw_preview)
                             continue
                         
                         # 링크/제목
@@ -3495,7 +3690,9 @@ class NaverCafeCrawler:
                                 if link_el: break
                             except: continue
                             
-                        if not link_el: continue
+                        if not link_el:
+                            _emit_row_dbg(idx, "", date_val, "no_link", raw_preview)
+                            continue
                         href = link_el.get_attribute("href")
                         title = link_el.text.strip()
                         list_comment_count = 0
@@ -3533,7 +3730,9 @@ class NaverCafeCrawler:
                                 pass
                         
                         match = re.search(r'articleid=(\d+)', href) or re.search(r'/articles/(\d+)', href)
-                        if not match: continue
+                        if not match:
+                            _emit_row_dbg(idx, "", date_val, "no_post_id", raw_preview)
+                            continue
 
                         # 게시판 이름 추출 (전체글보기에서 컬럼으로 존재)
                         board_name = ""
@@ -3559,6 +3758,7 @@ class NaverCafeCrawler:
                         if board_name and exclude_norm:
                             bn = self._normalize_board_name(board_name)
                             if bn in exclude_norm:
+                                _emit_row_dbg(idx, match.group(1), date_val, "board_excluded", raw_preview)
                                 continue
                         
                         # 작성자 정보 추출 (통합 ID 추출 엔진 적용)
@@ -3596,6 +3796,7 @@ class NaverCafeCrawler:
                             "board_name": board_name,
                             "list_comment_count": int(list_comment_count),
                         })
+                        _emit_row_dbg(idx, match.group(1), date_val, "collected", raw_preview)
                         page_found_count += 1
                         
                     except: continue
@@ -3607,11 +3808,15 @@ class NaverCafeCrawler:
                     consecutive_no_date_pages = 0
                     # end_date 초과 날짜 제외: "방금 전"/"N일 전" 등이 datetime.now()로 파싱되어
                     # 오래된 페이지에도 최근 날짜가 섞이는 문제를 방지한다.
-                    dates_for_boundary = [d for d in page_dates if d <= end_date]
+                    dates_for_boundary = [
+                        d for d in page_dates
+                        if (d.date() if isinstance(d, datetime) else d) <= range_end_d
+                    ]
                     if dates_for_boundary:
-                        page_min_date = min(dates_for_boundary)
-                        page_max_date = max(dates_for_boundary)
-                        if page_max_date < start_date:
+                        _bd = [d.date() if isinstance(d, datetime) else d for d in dates_for_boundary]
+                        page_min_date = min(_bd)
+                        page_max_date = max(_bd)
+                        if page_max_date < range_start_d:
                             consecutive_before_start_pages += 1
                             self._update_status(
                                 f"⏱️ 시작일 이전 페이지 감지 "
@@ -3628,7 +3833,7 @@ class NaverCafeCrawler:
                         else:
                             consecutive_before_start_pages = 0
                     else:
-                        # 페이지 내 날짜가 전부 end_date 초과(최신 댓글 범프)인 경우
+                        # 페이지 내 날짜가 전부 range_end_d 초과(최신 댓글 범프)인 경우
                         # 종료 카운터를 올리지 않고 계속 탐색
                         consecutive_before_start_pages = 0
                 else:
@@ -3650,7 +3855,10 @@ class NaverCafeCrawler:
                 # (수정) 사용자 안심용 로그: end_date 이하 날짜 기준으로 탐색 위치 표시
                 if page_dates:
                     try:
-                        display_dates = [d for d in page_dates if d <= end_date] or page_dates
+                        display_dates = [
+                            d for d in page_dates
+                            if (d.date() if isinstance(d, datetime) else d) <= range_end_d
+                        ] or page_dates
                         self.last_scan_oldest_date = min(display_dates).strftime("%Y-%m-%d")
                     except:
                         pass

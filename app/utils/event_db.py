@@ -54,6 +54,7 @@ def init_event_db(db_path: str) -> None:
             post_id TEXT UNIQUE,
             post_url TEXT,
             post_title TEXT,
+            post_title_char_count INTEGER DEFAULT 0,
             post_date TEXT,
             board_name TEXT,
             comments_seen INTEGER DEFAULT 0,
@@ -71,6 +72,7 @@ def init_event_db(db_path: str) -> None:
             post_id TEXT UNIQUE,
             post_url TEXT,
             post_title TEXT,
+            post_title_char_count INTEGER DEFAULT 0,
             post_date TEXT,
             board_name TEXT,
             author_nickname TEXT,
@@ -88,6 +90,8 @@ def init_event_db(db_path: str) -> None:
             nickname TEXT NOT NULL,
             member_grade TEXT NOT NULL,
             visit_count INTEGER NOT NULL DEFAULT 0,
+            last_visit_date TEXT DEFAULT '',
+            collect_seq INTEGER NOT NULL DEFAULT 0,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(nickname, member_grade)
         )
@@ -157,6 +161,12 @@ def init_event_db(db_path: str) -> None:
             cur.execute("ALTER TABLE event_posts ADD COLUMN post_char_count INTEGER DEFAULT 0")
         if "post_image_count" not in post_cols:
             cur.execute("ALTER TABLE event_posts ADD COLUMN post_image_count INTEGER DEFAULT 0")
+        if "post_title_char_count" not in post_cols:
+            cur.execute("ALTER TABLE event_posts ADD COLUMN post_title_char_count INTEGER DEFAULT 0")
+            cur.execute(
+                "UPDATE event_posts SET post_title_char_count = LENGTH(COALESCE(post_title, '')) "
+                "WHERE post_title_char_count IS NULL OR post_title_char_count = 0"
+            )
     except Exception:
         pass
 
@@ -169,8 +179,25 @@ def init_event_db(db_path: str) -> None:
             cur.execute("ALTER TABLE event_post_analysis ADD COLUMN post_char_count INTEGER DEFAULT 0")
         if "post_image_count" not in ana_cols:
             cur.execute("ALTER TABLE event_post_analysis ADD COLUMN post_image_count INTEGER DEFAULT 0")
+        if "post_title_char_count" not in ana_cols:
+            cur.execute("ALTER TABLE event_post_analysis ADD COLUMN post_title_char_count INTEGER DEFAULT 0")
+            cur.execute(
+                "UPDATE event_post_analysis SET post_title_char_count = LENGTH(COALESCE(post_title, '')) "
+                "WHERE post_title_char_count IS NULL OR post_title_char_count = 0"
+            )
     except Exception:
         pass
+
+    try:
+        cur.execute("PRAGMA table_info(event_mentor_visits)")
+        mv_cols = [row[1] for row in cur.fetchall()]
+        if "last_visit_date" not in mv_cols:
+            cur.execute("ALTER TABLE event_mentor_visits ADD COLUMN last_visit_date TEXT DEFAULT ''")
+        if "collect_seq" not in mv_cols:
+            cur.execute("ALTER TABLE event_mentor_visits ADD COLUMN collect_seq INTEGER NOT NULL DEFAULT 0")
+    except Exception:
+        pass
+
     conn.commit()
     conn.close()
 
@@ -269,6 +296,34 @@ def save_event_comments(
             ),
         )
         if cur.fetchone() is not None:
+            # 중복으로 삽입이 생략되는 경우에도 게시글 메타(post_date/title/url/board)는 최신값으로 동기화.
+            # (목록 수집 보정 후 재실행 시 과거 post_date가 계속 남는 문제 방지)
+            cur.execute(
+                """
+                UPDATE event_comments
+                SET
+                    post_url = ?,
+                    post_title = ?,
+                    post_date = ?,
+                    board_name = ?
+                WHERE post_id = ?
+                  AND comment_writer_id IN (?, ?)
+                  AND comment_date = ?
+                  AND content_hash IN (?, ?)
+                """,
+                (
+                    str(post.get("url") or ""),
+                    str(post.get("title") or ""),
+                    str(post.get("date") or ""),
+                    str(post.get("board_name") or ""),
+                    post_id,
+                    writer_key,
+                    legacy_writer_key,
+                    comment_date,
+                    old_hash,
+                    h,
+                ),
+            )
             continue
 
         cur.execute(
@@ -324,14 +379,16 @@ def save_event_post(
     """
     conn = sqlite3.connect(db_path, timeout=30.0)
     cur = conn.cursor()
+    post_title = str(post.get("title") or "")
+    post_title_char_count = len(post_title)
     cur.execute(
         """
         INSERT INTO event_posts (
             post_id, post_url, post_title, post_date, board_name,
             comments_seen, comments_saved, comments_excluded,
-            author_nickname, post_char_count, post_image_count, updated_at
+            author_nickname, post_char_count, post_image_count, post_title_char_count, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(post_id) DO UPDATE SET
             post_url=excluded.post_url,
             post_title=excluded.post_title,
@@ -343,12 +400,13 @@ def save_event_post(
             author_nickname=excluded.author_nickname,
             post_char_count=excluded.post_char_count,
             post_image_count=excluded.post_image_count,
+            post_title_char_count=excluded.post_title_char_count,
             updated_at=CURRENT_TIMESTAMP
         """,
         (
             str(post.get("post_id") or ""),
             str(post.get("url") or ""),
-            str(post.get("title") or ""),
+            post_title,
             str(post.get("date") or ""),
             str(post.get("board_name") or ""),
             int(comments_seen or 0),
@@ -357,6 +415,7 @@ def save_event_post(
             str(author_nickname or ""),
             int(post_char_count or 0),
             int(post_image_count or 0),
+            int(post_title_char_count or 0),
         ),
     )
     conn.commit()
@@ -374,13 +433,15 @@ def save_event_post_analysis(
     """조건2(게시글 수집·분석) 결과 저장/업데이트."""
     conn = sqlite3.connect(db_path, timeout=30.0)
     cur = conn.cursor()
+    post_title = str(post.get("title") or "")
+    post_title_char_count = len(post_title)
     cur.execute(
         """
         INSERT INTO event_post_analysis (
             post_id, post_url, post_title, post_date, board_name,
-            author_nickname, post_char_count, post_image_count, updated_at
+            author_nickname, post_char_count, post_image_count, post_title_char_count, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(post_id) DO UPDATE SET
             post_url=excluded.post_url,
             post_title=excluded.post_title,
@@ -389,17 +450,19 @@ def save_event_post_analysis(
             author_nickname=excluded.author_nickname,
             post_char_count=excluded.post_char_count,
             post_image_count=excluded.post_image_count,
+            post_title_char_count=excluded.post_title_char_count,
             updated_at=CURRENT_TIMESTAMP
         """,
         (
             str(post.get("post_id") or ""),
             str(post.get("url") or ""),
-            str(post.get("title") or ""),
+            post_title,
             str(post.get("date") or ""),
             str(post.get("board_name") or ""),
             str(author_nickname or ""),
             int(post_char_count or 0),
             int(post_image_count or 0),
+            int(post_title_char_count or 0),
         ),
     )
     conn.commit()
@@ -444,7 +507,7 @@ def upsert_event_mentor_visits(db_path: str, rows: Iterable[Dict[str, Any]]) -> 
     conn = sqlite3.connect(db_path, timeout=30.0)
     cur = conn.cursor()
     try:
-        for r in rows:
+        for idx, r in enumerate(rows):
             nick = str((r or {}).get("nickname") or "").strip()
             grade = str((r or {}).get("member_grade") or "").strip()
             if not nick or not grade:
@@ -453,15 +516,27 @@ def upsert_event_mentor_visits(db_path: str, rows: Iterable[Dict[str, Any]]) -> 
                 vc = int((r or {}).get("visit_count") or 0)
             except Exception:
                 vc = 0
+            lvd = str((r or {}).get("last_visit_date") or "").strip()
+            try:
+                if (r or {}).get("collect_seq") is not None:
+                    cseq = int((r or {}).get("collect_seq"))
+                else:
+                    cseq = int(idx)
+            except Exception:
+                cseq = int(idx)
             cur.execute(
                 """
-                INSERT INTO event_mentor_visits (nickname, member_grade, visit_count, updated_at)
-                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                INSERT INTO event_mentor_visits (
+                    nickname, member_grade, visit_count, last_visit_date, collect_seq, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(nickname, member_grade) DO UPDATE SET
                     visit_count = excluded.visit_count,
+                    last_visit_date = excluded.last_visit_date,
+                    collect_seq = excluded.collect_seq,
                     updated_at = CURRENT_TIMESTAMP
                 """,
-                (nick, grade, vc),
+                (nick, grade, vc, lvd, cseq),
             )
             n += 1
         conn.commit()
