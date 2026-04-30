@@ -1686,12 +1686,7 @@ with _ev2:
                 on_change=_pick_comment_mode,
             )
         if cond2_checked:
-            st.caption(
-                "게시글 **탐색** 기간 — **목록에서 어떤 날짜 범위의 글**을 가져올지입니다. "
-                "목표 댓글 기간보다 넓게 잡으면 그 안의 댓글만 저장됩니다."
-            )
             # 사용자 실수 방지: 조건(2)의 게시글 탐색 종료일은 수집기간 종료일과 항상 동일하게 고정
-            st.session_state["event_comment_search_end_date_input"] = collection_end_date
             _cs_s, _cs_e = st.columns(2)
             with _cs_s:
                 comment_search_start_date = st.date_input(
@@ -1703,6 +1698,7 @@ with _ev2:
             with _cs_e:
                 comment_search_end_date = st.date_input(
                     "게시글 탐색 종료일",
+                    value=collection_end_date,
                     key="event_comment_search_end_date_input",
                     disabled=True,
                 )
@@ -1884,7 +1880,7 @@ with _ev3:
         event_db_path_text = st.text_input(
             "DB 경로",
             value=str(config.get("event_db_path", "")),
-            placeholder=r"D:\CafeScraper\data\event_comments.db",
+            placeholder=r"D:\CafeScraper\data\event_analysis.db",
             key="event_db_path_input",
         )
         _ec1, _ec2, _ec3 = st.columns(3)

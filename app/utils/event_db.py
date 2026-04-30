@@ -198,8 +198,143 @@ def init_event_db(db_path: str) -> None:
     except Exception:
         pass
 
+    # 자동 댓글러: 타겟 목록 스냅샷(세션 대신 재실행·새로고침 후 복원용)
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS commenter_targets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            post_id TEXT,
+            url TEXT NOT NULL UNIQUE,
+            nickname TEXT,
+            title TEXT,
+            date TEXT,
+            board_name TEXT,
+            saved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    try:
+        cur.execute("PRAGMA table_info(commenter_targets)")
+        _ct_cols = [row[1] for row in cur.fetchall()]
+        if "comment_status" not in _ct_cols:
+            cur.execute("ALTER TABLE commenter_targets ADD COLUMN comment_status TEXT")
+        if "comment_detail" not in _ct_cols:
+            cur.execute("ALTER TABLE commenter_targets ADD COLUMN comment_detail TEXT")
+        if "comment_tried_at" not in _ct_cols:
+            cur.execute("ALTER TABLE commenter_targets ADD COLUMN comment_tried_at TEXT")
+    except Exception:
+        pass
+
     conn.commit()
     conn.close()
+
+
+def replace_commenter_targets(db_path: str, rows: list[dict]) -> None:
+    """타겟 표 스냅샷을 DB에 덮어씀(수집 직후 호출)."""
+    conn = sqlite3.connect(db_path, timeout=30.0)
+    cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM commenter_targets")
+        for r in rows or []:
+            u = str((r or {}).get("url") or "").strip()
+            if not u:
+                continue
+            cur.execute(
+                """
+                INSERT INTO commenter_targets (
+                    post_id, url, nickname, title, date, board_name,
+                    comment_status, comment_detail, comment_tried_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str((r or {}).get("post_id") or ""),
+                    u,
+                    str((r or {}).get("nickname") or ""),
+                    str((r or {}).get("title") or ""),
+                    str((r or {}).get("date") or ""),
+                    str((r or {}).get("board_name") or ""),
+                    (str((r or {}).get("comment_status") or "").strip() or None),
+                    (str((r or {}).get("comment_detail") or "").strip() or None),
+                    (str((r or {}).get("comment_tried_at") or "").strip() or None),
+                ),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def update_commenter_target_comment_status(
+    db_path: str, url: str, status: str, detail: str = ""
+) -> int:
+    """타겟 URL 한 건에 대해 댓글 시도 결과를 저장. 반환: 변경된 행 수(0이면 URL 미일치 가능)."""
+    url = str(url).strip()
+    if not url:
+        return 0
+    status = str(status or "")[:48]
+    detail = (detail or "")[:2000]
+    tried_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn = sqlite3.connect(db_path, timeout=30.0)
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            UPDATE commenter_targets
+            SET comment_status = ?, comment_detail = ?, comment_tried_at = ?
+            WHERE url = ?
+            """,
+            (status, detail, tried_at, url),
+        )
+        n = int(cur.rowcount or 0)
+        conn.commit()
+        return n
+    finally:
+        conn.close()
+
+
+def clear_commenter_targets(db_path: str) -> None:
+    """자동댓글러 타겟 스냅샷 테이블만 전부 삭제 (다른 이벤트 테이블은 유지)."""
+    conn = sqlite3.connect(db_path, timeout=30.0)
+    cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM commenter_targets")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def load_commenter_targets(db_path: str) -> list[dict[str, Any]]:
+    """저장된 타겟 스냅샷을 행 dict 리스트로 로드."""
+    conn = sqlite3.connect(db_path, timeout=30.0)
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT post_id, url, nickname, title, date, board_name,
+                   comment_status, comment_detail
+            FROM commenter_targets
+            ORDER BY id ASC
+            """
+        )
+        cols = (
+            "post_id",
+            "url",
+            "nickname",
+            "title",
+            "date",
+            "board_name",
+            "comment_status",
+            "comment_detail",
+        )
+        out: list[dict[str, Any]] = []
+        for row in cur.fetchall():
+            d = dict(zip(cols, row))
+            d["comment_status"] = str(d.get("comment_status") or "").strip()
+            d["comment_detail"] = str(d.get("comment_detail") or "").strip()
+            out.append(d)
+        return out
+    finally:
+        conn.close()
 
 
 def _hash_content(s: str) -> str:

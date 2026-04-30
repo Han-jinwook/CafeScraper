@@ -24,10 +24,11 @@ def get_logs_dir() -> Path:
 
 def resolve_db_path(config_db_path: str | None = None) -> Path:
     """
-    SQLite DB 경로 결정 규칙 (우선순위):
-    1) 환경변수 `CAFESCRAPER_DB_PATH` (절대경로 권장)
-    2) config_db_path (UI/로컬 설정에 저장된 값)
-    3) 기본값: <project_root>/cafe_data.db
+    카페 메인 수집 전용 SQLite DB (이벤트·논문·자동댓글러와 분리).
+    우선순위:
+    1) 환경변수 `CAFESCRAPER_DB_PATH`
+    2) config_db_path
+    3) 기본값: data/cafe_data.db
     """
     env_path = (os.getenv("CAFESCRAPER_DB_PATH") or "").strip()
     if env_path:
@@ -47,10 +48,11 @@ def resolve_db_path(config_db_path: str | None = None) -> Path:
 
 def resolve_event_db_path(config_event_db_path: str | None = None) -> Path:
     """
-    이벤트/단기 작업용 SQLite DB 경로 결정 규칙 (우선순위):
+    이벤트 댓글 분석 전용 SQLite DB (카페 수집·논문·자동댓글러와 파일 분리).
+    우선순위:
     1) 환경변수 `CAFESCRAPER_EVENT_DB_PATH`
-    2) config_event_db_path (설정에 저장된 값)
-    3) 기본값: <project_root>/event_comments.db
+    2) config_event_db_path
+    3) 기본값: data/event_analysis.db
     """
     env_path = (os.getenv("CAFESCRAPER_EVENT_DB_PATH") or "").strip()
     if env_path:
@@ -63,7 +65,49 @@ def resolve_event_db_path(config_event_db_path: str | None = None) -> Path:
         p.parent.mkdir(parents=True, exist_ok=True)
         return p
 
-    p = (get_project_root() / "data" / "event_comments.db").resolve()
+    p = (get_project_root() / "data" / "event_analysis.db").resolve()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def resolve_paper_db_path(config_paper_db_path: str | None = None) -> Path:
+    """
+    논문(위키 등) 수집 전용 SQLite DB.
+    우선순위: `CAFESCRAPER_PAPER_DB_PATH` → config → data/paper_collection.db
+    """
+    env_path = (os.getenv("CAFESCRAPER_PAPER_DB_PATH") or "").strip()
+    if env_path:
+        p = Path(env_path).expanduser().resolve()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        return p
+
+    if config_paper_db_path and str(config_paper_db_path).strip():
+        p = Path(str(config_paper_db_path)).expanduser().resolve()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        return p
+
+    p = (get_project_root() / "data" / "paper_collection.db").resolve()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def resolve_commenter_db_path(config_commenter_db_path: str | None = None) -> Path:
+    """
+    자동 댓글러 전용 SQLite DB.
+    우선순위: `CAFESCRAPER_COMMENTER_DB_PATH` → config → data/auto_commenter.db
+    """
+    env_path = (os.getenv("CAFESCRAPER_COMMENTER_DB_PATH") or "").strip()
+    if env_path:
+        p = Path(env_path).expanduser().resolve()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        return p
+
+    if config_commenter_db_path and str(config_commenter_db_path).strip():
+        p = Path(str(config_commenter_db_path)).expanduser().resolve()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        return p
+
+    p = (get_project_root() / "data" / "auto_commenter.db").resolve()
     p.parent.mkdir(parents=True, exist_ok=True)
     return p
 

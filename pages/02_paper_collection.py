@@ -11,7 +11,7 @@ from pathlib import Path
 
 from app.products.scraper.crawler import VitaminDWikiCrawler
 from app.utils.sqlite_db import init_db
-from app.utils.paths import get_config_path, resolve_db_path
+from app.utils.paths import get_config_path, resolve_paper_db_path
 from app.utils.streamlit_brand import render_logo_png
 from app.utils.streamlit_top_nav import (
     inject_settings_three_cards_css,
@@ -51,7 +51,9 @@ def save_config(config):
 
 
 config = load_config()
-DB_PATH = str(resolve_db_path(config.get("db_path")))
+if "paper_db_path_input" not in st.session_state:
+    st.session_state.paper_db_path_input = str(config.get("paper_db_path", "") or "")
+DB_PATH = str(resolve_paper_db_path(config.get("paper_db_path")))
 
 init_db(DB_PATH)
 
@@ -312,14 +314,22 @@ with _pw2:
 with _pw3:
     with st.container(border=True, key="papers_settings_card_3"):
         render_settings_card_title("설정 · DB", icon="💾")
+        st.text_input(
+            "논문 DB 파일 경로 (비우면 기본 `data/paper_collection.db`)",
+            key="paper_db_path_input",
+            help="카페 수집(`cafe_data.db`)·이벤트·자동댓글러와 다른 파일을 쓰는 것을 권장합니다.",
+        )
         if st.button("💾 설정 저장", use_container_width=True, disabled=st.session_state.wiki_running):
             config["wiki_debug_mode"] = bool(st.session_state.wiki_debug_mode)
             config["wiki_start_url"] = wiki_start_url
             config["wiki_delay"] = float(wiki_delay)
             config["wiki_max_pages"] = int(wiki_max_pages)
             config["wiki_skip_existing"] = bool(skip_existing)
+            config["paper_db_path"] = str(st.session_state.get("paper_db_path_input", "") or "").strip()
             save_config(config)
             st.success("✅ 설정 저장 완료")
+            time.sleep(0.45)
+            st.rerun()
 
         db_full_path = os.path.abspath(DB_PATH)
         _t_card, _c_card, _d_card = get_papers_stats()

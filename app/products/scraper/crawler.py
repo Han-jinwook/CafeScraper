@@ -217,6 +217,36 @@ class NaverCafeCrawler:
         # 공백 제거 + 소문자 (예: "먹거리 / 맛집" == "먹거리/맛집")
         return re.sub(r"\s+", "", (name or "")).strip().lower()
 
+    def _is_noise_board_label(self, text: str) -> bool:
+        """탭·breadcrumb 등에서 잘못 잡히는 UI 문구(게시판 실명 아님)."""
+        t = self._clean_text(text or "")
+        if not t or len(t) > 80:
+            return True
+        tn = self._normalize_board_name(t)
+        noise_norm = {
+            "목록",
+            "list",
+            "전체글보기",
+            "전체글",
+            "글목록",
+            "게시판",
+            "글쓰기",
+            "검색",
+            "search",
+            "이전글",
+            "다음글",
+            "이전",
+            "다음",
+            "댓글",
+            "공유",
+        }
+        if tn in noise_norm:
+            return True
+        tl = t.strip().lower()
+        if tl in ("list", "prev", "next", "write", "reply"):
+            return True
+        return False
+
     def _extract_text_from_element(self, element) -> str:
         """Selenium 요소에서 표시 텍스트를 최대한 복구(React/SPA 대비)."""
         if not element:
@@ -3483,7 +3513,7 @@ class NaverCafeCrawler:
                         try:
                             _bn_el = self.driver.find_element(By.CSS_SELECTOR, _bns)
                             _bn_txt = self._extract_text_from_element(_bn_el)
-                            if _bn_txt:
+                            if _bn_txt and not self._is_noise_board_label(_bn_txt):
                                 _fallback_board_name = _bn_txt
                                 break
                         except Exception:
@@ -3746,13 +3776,20 @@ class NaverCafeCrawler:
                             try:
                                 b_el = row.find_element(By.CSS_SELECTOR, bs)
                                 board_name = self._extract_text_from_element(b_el)
-                                if board_name:
+                                if board_name and not self._is_noise_board_label(board_name):
                                     break
                             except:
                                 continue
+                        else:
+                            board_name = ""
+
+                        if board_name and self._is_noise_board_label(board_name):
+                            board_name = ""
 
                         if not board_name and _fallback_board_name:
                             board_name = _fallback_board_name
+                        if board_name and self._is_noise_board_label(board_name):
+                            board_name = ""
 
                         # 제외 게시판 필터
                         if board_name and exclude_norm:
@@ -3939,26 +3976,53 @@ class NaverCafeCrawler:
             if api_author_id and api_author_id != "unknown":
                 post_author_id = api_author_id
 
-            # 게시판 이름 (상세에서 복구)
+            # 게시판 이름 (상세에서 복구) — 넓은 menuid 셀렉터는 '목록' 탭을 잡기 쉬워 후순위·다중 후보만 사용
             board_name = ""
             try:
-                board_name_selectors = [
-                    "a.board_name",
-                    "a[href*='menuid=']",
-                    "a[href*='/menus/']",
-                    ".article_header a",
+                for sel in [
                     ".ArticleTopInfo__boardName a",
-                ]
-                for sel in board_name_selectors:
+                    ".ArticleTopInfo__boardName",
+                    "a.board_name",
+                    "a[class*='board_name']",
+                    ".article_header .board_name",
+                    ".ArticleTopInfo a[href*='menuid=']",
+                ]:
                     try:
-                        el = self.driver.find_element(By.CSS_SELECTOR, sel)
-                        t = self._extract_text_from_element(el)
-                        if t and len(t) <= 40 and "http" not in t.lower():
+                        for el in self.driver.find_elements(By.CSS_SELECTOR, sel):
+                            t = self._extract_text_from_element(el)
+                            if not t or self._is_noise_board_label(t):
+                                continue
+                            if len(t) > 60:
+                                continue
+                            if "http" in t.lower():
+                                continue
                             board_name = t
                             break
-                    except:
+                        if board_name:
+                            break
+                    except Exception:
                         continue
-            except:
+                if not board_name:
+                    try:
+                        for el in self.driver.find_elements(
+                            By.CSS_SELECTOR, "a[href*='menuid='], a[href*='/menus/']"
+                        ):
+                            try:
+                                href = str(el.get_attribute("href") or "")
+                            except Exception:
+                                href = ""
+                            if "articleid" in href.lower() or "/articles/" in href:
+                                continue
+                            t = self._extract_text_from_element(el)
+                            if not t or self._is_noise_board_label(t):
+                                continue
+                            if len(t) > 40:
+                                continue
+                            board_name = t
+                            break
+                    except Exception:
+                        pass
+            except Exception:
                 pass
 
             # 게시글 닉네임은 API에서 비어있는 경우가 있어서, DOM에서 한번 더 복구

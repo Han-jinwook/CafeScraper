@@ -17,6 +17,10 @@ from selenium.webdriver.support import expected_conditions as EC
 # 기존 크롤러의 강력한 브라우저/로그인 기능을 재사용하기 위해 임포트
 from app.products.scraper.crawler import NaverCafeCrawler
 
+# 글과 글 사이 추가 대기: UI 기준값 기준 ±이 초(균등 랜덤)
+COMMENTER_BETWEEN_POSTS_JITTER_SEC = 10.0
+
+
 class NaverCafeCommenter(NaverCafeCrawler):
     """
     Scraper의 기능을 상속받아 브라우저 제어 능력을 확보하고,
@@ -25,6 +29,21 @@ class NaverCafeCommenter(NaverCafeCrawler):
     def __init__(self, db_path: str = "", debug_mode: bool = False):
         super().__init__(output_dir="outputs", debug_mode=debug_mode)
         self.db_path = db_path
+
+    def human_sleep_between(self, gap_sec: float) -> None:
+        """
+        연속 댓글 작성 시 글과 글 사이 추가 대기(초).
+        UI에서 입력한 값(gap_sec)은 **중심값**이며, 실제 대기는
+        [gap_sec - COMMENTER_BETWEEN_POSTS_JITTER_SEC, gap_sec + COMMENTER_BETWEEN_POSTS_JITTER_SEC] 구간에서 균등 랜덤.
+        write_comment() 내부 이동·등록 대기와 별개.
+        """
+        base = max(0.0, float(gap_sec))
+        if base <= 0:
+            return
+        j = float(COMMENTER_BETWEEN_POSTS_JITTER_SEC)
+        low = max(0.0, base - j)
+        high = base + j
+        time.sleep(random.uniform(low, high))
 
     def paste_text(self, text: str):
         """
@@ -42,75 +61,485 @@ class NaverCafeCommenter(NaverCafeCrawler):
         ActionChains(self.driver).key_down(Keys.CONTROL).send_keys('v').key_up(Keys.CONTROL).perform()
         time.sleep(0.5)
 
+    # ─── write_comment: editable sink 자동 탐색 + 입력 검증 + 등록 후 확인 ───
+
+    def _get_element_length(self, el) -> int:
+        """요소에 입력된 텍스트 길이 반환 (input/textarea: value, contenteditable: innerText)"""
+        try:
+            length = self.driver.execute_script(
+                "var e=arguments[0];"
+                "if(e.tagName==='TEXTAREA'||e.tagName==='INPUT') return (e.value||'').length;"
+                "return (e.innerText||e.textContent||'').trim().length;",
+                el,
+            )
+            return int(length or 0)
+        except Exception:
+            return 0
+
+    def _find_editable_candidates(self) -> list:
+        """
+        현재 프레임에서 editable 후보를 모두 찾아 반환.
+        각 항목: {"el": WebElement, "reason": str, "info": dict}
+        """
+        candidates = []
+        seen_ids = set()
+
+        def _add(el, reason):
+            if el is None:
+                return
+            el_id = id(el)
+            if el_id in seen_ids:
+                return
+            seen_ids.add(el_id)
+            try:
+                info = self.driver.execute_script("""
+                    var e = arguments[0];
+                    return {
+                        tag: e.tagName, id: e.id, className: e.className,
+                        role: e.getAttribute('role'),
+                        ce: e.getAttribute('contenteditable'),
+                        isCE: e.isContentEditable,
+                        displayed: !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length)
+                    };
+                """, el)
+            except Exception:
+                info = {}
+            if info.get("displayed", True):
+                candidates.append({"el": el, "reason": reason, "info": info})
+
+        selectors_global = [
+            ("textarea", "textarea"),
+            ("input[type='text']", "input[text]"),
+            ("[contenteditable='true']", "contenteditable"),
+            ("[role='textbox']", "role=textbox"),
+        ]
+        for sel, reason in selectors_global:
+            try:
+                for el in self.driver.find_elements(By.CSS_SELECTOR, sel):
+                    _add(el, f"global:{reason}")
+            except Exception:
+                pass
+
+        for box_sel in [".comment_inbox_text", ".CommentWriter"]:
+            try:
+                boxes = self.driver.find_elements(By.CSS_SELECTOR, box_sel)
+                for box in boxes:
+                    _add(box, f"box:{box_sel}")
+                    for sel, reason in selectors_global:
+                        try:
+                            for el in box.find_elements(By.CSS_SELECTOR, sel):
+                                _add(el, f"inside:{box_sel}>{reason}")
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+        try:
+            active = self.driver.execute_script("return document.activeElement;")
+            _add(active, "activeElement")
+        except Exception:
+            pass
+
+        return candidates
+
+    def _try_input_on_element(self, el, text: str, _wc) -> bool:
+        """
+        후보 요소에 다양한 방법으로 text를 입력하고 검증.
+        React 제어 컴포넌트 대응을 위해 native setter를 우선 시도.
+        성공하면 True, 실패하면 False.
+        """
+        info = {}
+        try:
+            info = self.driver.execute_script("""
+                var e = arguments[0];
+                return {tag: e.tagName, id: e.id, ce: e.getAttribute('contenteditable'), isCE: e.isContentEditable};
+            """, el)
+        except Exception:
+            pass
+        tag = (info.get("tag") or "").upper()
+        is_ce = info.get("isCE", False)
+
+        # ── textarea/input: React 제어 컴포넌트 대응 ──
+        if tag in ("TEXTAREA", "INPUT"):
+            # 확실한 focus 확보
+            try:
+                self.driver.execute_script(
+                    "arguments[0].scrollIntoView({block:'center'}); arguments[0].click(); arguments[0].focus();",
+                    el)
+                time.sleep(0.5)
+            except Exception:
+                pass
+
+            # 1순위: send_keys (React가 실제 키보드 이벤트를 인식)
+            try:
+                ActionChains(self.driver).move_to_element(el).click().perform()
+                time.sleep(0.3)
+                # 기존 내용 선택 후 덮어쓰기 (clear() 사용 안 함 - React 상태 리셋 방지)
+                ActionChains(self.driver).key_down(Keys.CONTROL).send_keys('a').key_up(Keys.CONTROL).perform()
+                time.sleep(0.1)
+                ActionChains(self.driver).send_keys(text).perform()
+                time.sleep(0.8)
+                if self._get_element_length(el) > 0:
+                    _wc(f"  ✓ send_keys 성공 (len={self._get_element_length(el)})")
+                    return True
+                _wc(f"  send_keys: len=0")
+            except Exception as e:
+                _wc(f"  send_keys 실패: {e}")
+
+            # 2순위: clipboard paste (Ctrl+V - 사람 동작)
+            try:
+                ActionChains(self.driver).move_to_element(el).click().perform()
+                time.sleep(0.3)
+                pyperclip.copy(text)
+                ActionChains(self.driver).key_down(Keys.CONTROL).send_keys('a').key_up(Keys.CONTROL).perform()
+                time.sleep(0.1)
+                ActionChains(self.driver).key_down(Keys.CONTROL).send_keys('v').key_up(Keys.CONTROL).perform()
+                time.sleep(0.8)
+                if self._get_element_length(el) > 0:
+                    _wc(f"  ✓ paste 성공 (len={self._get_element_length(el)})")
+                    return True
+                _wc(f"  paste: len=0")
+            except Exception as e:
+                _wc(f"  paste 실패: {e}")
+
+            # 3순위: native setter (DOM만 바뀔 수 있음 - 마지막 수단)
+            try:
+                self.driver.execute_script("""
+                    var e = arguments[0], text = arguments[1];
+                    e.focus();
+                    var proto = e.tagName === 'TEXTAREA'
+                        ? window.HTMLTextAreaElement.prototype
+                        : window.HTMLInputElement.prototype;
+                    var nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+                    nativeSetter.call(e, text);
+                    e.dispatchEvent(new Event('input', {bubbles: true}));
+                    e.dispatchEvent(new Event('change', {bubbles: true}));
+                """, el, text)
+                time.sleep(0.5)
+                if self._get_element_length(el) > 0:
+                    _wc(f"  ✓ native setter 성공 (len={self._get_element_length(el)}) ⚠ React 미반영 가능")
+                    return True
+                _wc(f"  native setter: len=0")
+            except Exception as e:
+                _wc(f"  native setter 실패: {e}")
+
+            return False
+
+        # ── contenteditable 요소 ──
+        if is_ce:
+            # 1순위: focus + send_keys
+            try:
+                el.click()
+                time.sleep(0.3)
+                el.send_keys(text)
+                time.sleep(0.4)
+                if self._get_element_length(el) > 0:
+                    _wc(f"  ✓ CE send_keys 성공 (len={self._get_element_length(el)})")
+                    return True
+            except Exception as e:
+                _wc(f"  CE send_keys 실패: {e}")
+
+            # 2순위: clipboard paste
+            try:
+                el.click()
+                time.sleep(0.3)
+                pyperclip.copy(text)
+                ActionChains(self.driver).key_down(Keys.CONTROL).send_keys('v').key_up(Keys.CONTROL).perform()
+                time.sleep(0.5)
+                if self._get_element_length(el) > 0:
+                    _wc(f"  ✓ CE paste 성공 (len={self._get_element_length(el)})")
+                    return True
+            except Exception as e:
+                _wc(f"  CE paste 실패: {e}")
+
+            # 3순위: execCommand
+            try:
+                self.driver.execute_script("""
+                    var e = arguments[0], text = arguments[1];
+                    e.focus();
+                    document.execCommand('selectAll', false, null);
+                    document.execCommand('insertText', false, text);
+                """, el, text)
+                time.sleep(0.4)
+                if self._get_element_length(el) > 0:
+                    _wc(f"  ✓ CE execCommand 성공 (len={self._get_element_length(el)})")
+                    return True
+            except Exception as e:
+                _wc(f"  CE execCommand 실패: {e}")
+
+            # 4순위: direct DOM injection + events
+            try:
+                self.driver.execute_script("""
+                    var e = arguments[0], text = arguments[1];
+                    e.focus();
+                    e.innerText = text;
+                    e.dispatchEvent(new InputEvent('input', {bubbles: true, inputType: 'insertText', data: text}));
+                    e.dispatchEvent(new Event('change', {bubbles: true}));
+                """, el, text)
+                time.sleep(0.4)
+                if self._get_element_length(el) > 0:
+                    _wc(f"  ✓ CE DOM inject 성공 (len={self._get_element_length(el)})")
+                    return True
+            except Exception as e:
+                _wc(f"  CE DOM inject 실패: {e}")
+
+            return False
+
+        # ── 기타 요소 (div 등) ──
+        try:
+            el.click()
+            time.sleep(0.3)
+            el.send_keys(text)
+            time.sleep(0.4)
+            if self._get_element_length(el) > 0:
+                _wc(f"  ✓ generic send_keys 성공 (len={self._get_element_length(el)})")
+                return True
+        except Exception:
+            pass
+        return False
+
+    def _verify_comment_posted(self, comment_text: str, input_el=None) -> bool:
+        """
+        등록 성공 판정: textarea가 비워졌으면 서버가 수신한 것.
+        DOM 텍스트 검색은 하지 않음 (기존 댓글과의 거짓 양성 방지).
+        """
+        if not input_el:
+            return False
+        # 네이버는 등록 성공 시 textarea를 자동 clear
+        try:
+            remaining = self._get_element_length(input_el)
+            return remaining == 0
+        except Exception:
+            return False
+
+    # 전체 write 시도 횟수 (동일 URL에 대해 처음부터 재시도)
+    WRITE_MAX_ATTEMPTS = 2
+
     def write_comment(self, article_url: str, template: str, nickname: str = "", title: str = "") -> dict:
         """
-        게시글에 댓글 작성
+        게시글에 댓글 작성 (editable sink 자동 탐색 + 입력 안정화 + 등록 후 확인)
         return: {"status": "success"|"fail", "message": "..."}
         """
         if not self.driver:
             return {"status": "fail", "message": "브라우저가 실행되지 않았습니다."}
 
-        try:
-            # 1. 이동
-            normalized_url = self._normalize_article_url(article_url)
-            self.driver.get(normalized_url)
-            time.sleep(random.uniform(2.0, 4.0))
+        def _wc(msg: str) -> None:
+            print(f"[commenter/write] {msg}", flush=True)
 
-            # 2. Iframe 전환 (crawler.py의 기능 재사용)
+        last_fail_msg = ""
+        for attempt in range(1, self.WRITE_MAX_ATTEMPTS + 1):
+            result = self._write_comment_once(article_url, template, nickname, title, _wc, attempt)
+            if result["status"] == "success":
+                return result
+            last_fail_msg = result["message"]
+            _wc(f"시도 {attempt}/{self.WRITE_MAX_ATTEMPTS} 실패: {last_fail_msg}")
+            if attempt < self.WRITE_MAX_ATTEMPTS:
+                _wc("재시도 전 대기...")
+                time.sleep(random.uniform(2.0, 3.0))
+
+        return {"status": "fail", "message": last_fail_msg}
+
+    def _write_comment_once(self, article_url: str, template: str, nickname: str, title: str, _wc, attempt: int) -> dict:
+        """단일 시도 로직"""
+        try:
+            # ── 0. 팝업/새탭 방어: 원래 창으로 복귀 ──
+            self._close_unexpected_windows()
+
+            # ── 1. 게시글 이동 ──
+            normalized_url = self._normalize_article_url(article_url)
+            _wc(f"[시도{attempt}] GET {normalized_url[:100]}")
+            self.driver.get(normalized_url)
+            time.sleep(random.uniform(3.0, 5.0))
+
+            # ── 2. Iframe 전환 ──
             if not self._switch_to_cafe_iframe():
                 return {"status": "fail", "message": "Iframe 전환 실패 (삭제된 글?)"}
 
-            # 3. 템플릿 치환 (닉네임, 제목 등)
-            # 예: "{닉네임}님 안녕하세요" -> "홍길동님 안녕하세요"
+            # ── 3. 템플릿 치환 ──
             final_text = template.replace("{닉네임}", nickname).replace("{제목}", title)
-            
-            # 4. 입력창 찾기
-            # 네이버 카페 댓글 입력창 클래스들
-            input_selectors = [
-                ".comment_inbox_text", 
-                "textarea.comment_inbox_text",
-                ".CommentWriter .text_input",
-                "textarea[placeholder*='댓글']"
-            ]
-            input_el = None
-            for sel in input_selectors:
-                try:
-                    input_el = self.driver.find_element(By.CSS_SELECTOR, sel)
-                    if input_el: break
-                except: continue
-            
-            if not input_el:
-                return {"status": "fail", "message": "댓글 입력창을 찾을 수 없습니다. (권한 없음?)"}
 
-            # 5. 클릭 후 붙여넣기
-            input_el.click()
-            time.sleep(0.5)
-            self.paste_text(final_text)
+            # ── 4. 댓글 영역 클릭 + 에디터 활성화 대기 ──
+            self._activate_comment_editor(_wc)
+
+            # ── 5. editable 후보 탐색 ──
+            candidates = self._find_editable_candidates()
+            _wc(f"editable 후보 {len(candidates)}개")
+            for i, c in enumerate(candidates[:8]):
+                _wc(f"  [{i}] {c['reason']} | {c['info'].get('tag','')} ce={c['info'].get('ce','')} cls={str(c['info'].get('className',''))[:40]}")
+
+            if not candidates:
+                return {"status": "fail", "message": "editable 후보 0개. 댓글창을 찾을 수 없습니다."}
+
+            # ── 6. 후보별 입력 시도 ──
+            success_el = None
+            for i, c in enumerate(candidates):
+                el = c["el"]
+                _wc(f"후보[{i}] 입력 시도 ({c['reason']})")
+                if self._try_input_on_element(el, final_text, _wc):
+                    success_el = el
+                    break
+                try:
+                    self.driver.execute_script(
+                        "var e=arguments[0];"
+                        "if(e.tagName==='TEXTAREA'||e.tagName==='INPUT') e.value='';"
+                        "else e.textContent='';", el)
+                except Exception:
+                    pass
+
+            if not success_el:
+                _wc("모든 후보 실패 → activeElement 재탐색")
+                try:
+                    active = self.driver.execute_script("return document.activeElement;")
+                    if active and self._try_input_on_element(active, final_text, _wc):
+                        success_el = active
+                except Exception:
+                    pass
+
+            if not success_el:
+                return {"status": "fail", "message": f"입력 실패. 후보 {len(candidates)}개 모두 불가."}
+
+            # ── 7. 입력 안정화 확인 (비동기 에디터 대응) ──
+            # 입력 직후가 아닌, 1초 뒤에도 유지되는지 재확인
             time.sleep(1.0)
+            stable_len = self._get_element_length(success_el)
+            _wc(f"입력 안정화 확인 (1초 후): len={stable_len}")
+            if stable_len == 0:
+                _wc("⚠ 에디터가 입력을 무효화함 (비동기 clear)")
+                return {"status": "fail", "message": "입력 후 에디터가 내용을 지움 (비동기 무효화)"}
 
-            # 6. 등록 버튼 클릭
-            btn_selectors = [
-                ".btn_register", 
-                ".btn_register.c_orange", # 구형
-                ".CommentWriter .btn_submit", # 신형
-                "a.btn_register"
-            ]
-            btn_el = None
-            for sel in btn_selectors:
-                try:
-                    btn_el = self.driver.find_element(By.CSS_SELECTOR, sel)
-                    if btn_el: break
-                except: continue
-            
-            if btn_el:
-                btn_el.click()
-                time.sleep(random.uniform(2.5, 4.0)) # 등록 대기
-                return {"status": "success", "message": "작성 완료"}
-            else:
+            # ── 8. 등록 버튼 찾기 ──
+            btn_el = self._find_register_button(_wc)
+            if not btn_el:
                 return {"status": "fail", "message": "등록 버튼을 못 찾았습니다."}
 
+            # ── 9. 등록 직전 최종 길이 확인 ──
+            pre_click_len = self._get_element_length(success_el)
+            if pre_click_len == 0:
+                return {"status": "fail", "message": "등록 직전 입력이 사라짐"}
+
+            # ── 9.5 등록 전 textarea에 포커스 재확인 (네이버 등록 조건) ──
+            try:
+                self.driver.execute_script("arguments[0].focus();", success_el)
+                time.sleep(0.2)
+            except Exception:
+                pass
+
+            btn_el.click()
+            _wc("등록 클릭 완료, DOM 반영 대기...")
+            time.sleep(random.uniform(3.0, 5.0))
+
+            # ── 10. 등록 후 검증 ──
+            if self._verify_comment_posted(final_text, input_el=success_el):
+                _wc("✓ 댓글 등록 확인 → success")
+                return {"status": "success", "message": "작성 완료"}
+            else:
+                return {"status": "fail", "message": "등록 클릭했으나 댓글 미반영"}
+
         except Exception as e:
-            return {"status": "fail", "message": f"에러 발생: {str(e)}"}
+            _wc(f"예외: {e}")
+            return {"status": "fail", "message": f"에러: {str(e)}"}
+
+    def _close_unexpected_windows(self) -> None:
+        """광고 팝업/N플레이스 등 예상치 못한 새 탭을 닫고 첫 번째 탭으로 복귀"""
+        try:
+            handles = self.driver.window_handles
+            if len(handles) > 1:
+                main_handle = handles[0]
+                for h in handles[1:]:
+                    try:
+                        self.driver.switch_to.window(h)
+                        self.driver.close()
+                    except Exception:
+                        pass
+                self.driver.switch_to.window(main_handle)
+            else:
+                self.driver.switch_to.window(handles[0])
+        except Exception:
+            pass
+
+    def _activate_comment_editor(self, _wc) -> None:
+        """
+        댓글 textarea를 찾아 클릭하고, activeElement가 textarea가 될 때까지
+        반복 시도. 네이버는 textarea에 focus가 잡혀야 등록이 동작함.
+        """
+        textarea_el = None
+        for sel in ["textarea.comment_inbox_text", ".comment_inbox_text", "textarea[placeholder*='댓글']"]:
+            try:
+                textarea_el = self.driver.find_element(By.CSS_SELECTOR, sel)
+                if textarea_el:
+                    break
+            except Exception:
+                continue
+
+        if not textarea_el:
+            _wc("댓글 textarea 못 찾음")
+            return
+
+        # 최대 5회 클릭 시도하면서 activeElement가 textarea가 되는지 확인
+        for i in range(5):
+            try:
+                # 스크롤 + 클릭
+                self.driver.execute_script(
+                    "arguments[0].scrollIntoView({block:'center'}); arguments[0].click();",
+                    textarea_el
+                )
+                time.sleep(0.6)
+
+                # activeElement 확인
+                is_focused = self.driver.execute_script(
+                    "return document.activeElement === arguments[0];", textarea_el
+                )
+                if is_focused:
+                    _wc(f"댓글 textarea 포커스 확인 (시도 {i+1})")
+                    return
+            except Exception:
+                pass
+
+            # ActionChains로 재시도
+            try:
+                ActionChains(self.driver).move_to_element(textarea_el).click().perform()
+                time.sleep(0.5)
+                is_focused = self.driver.execute_script(
+                    "return document.activeElement === arguments[0];", textarea_el
+                )
+                if is_focused:
+                    _wc(f"댓글 textarea 포커스 확인 (ActionChains, 시도 {i+1})")
+                    return
+            except Exception:
+                pass
+
+        # 마지막 수단: JS로 강제 focus
+        try:
+            self.driver.execute_script("arguments[0].focus();", textarea_el)
+            time.sleep(0.3)
+            _wc("댓글 textarea JS focus() 강제 적용")
+        except Exception:
+            _wc("⚠ textarea 포커스 실패 (모든 방법)")
+
+    def _find_register_button(self, _wc):
+        """등록 버튼 탐색"""
+        btn_selectors = [
+            ".btn_register",
+            ".btn_register.c_orange",
+            ".CommentWriter .btn_submit",
+            "a.btn_register",
+            "button[class*='register']",
+            "button[class*='submit']",
+        ]
+        for sel in btn_selectors:
+            try:
+                btn_el = self.driver.find_element(By.CSS_SELECTOR, sel)
+                if btn_el:
+                    try:
+                        disp = btn_el.is_displayed()
+                        enab = btn_el.is_enabled()
+                    except Exception:
+                        disp, enab = True, True
+                    _wc(f"등록 버튼: {sel} displayed={disp} enabled={enab}")
+                    return btn_el
+            except Exception:
+                continue
+        return None
 
     def go_to_member_management(self, target_url: str = "") -> dict:
         """
