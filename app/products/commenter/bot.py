@@ -17,10 +17,6 @@ from selenium.webdriver.support import expected_conditions as EC
 # 기존 크롤러의 강력한 브라우저/로그인 기능을 재사용하기 위해 임포트
 from app.products.scraper.crawler import NaverCafeCrawler
 
-# 글과 글 사이 추가 대기: UI 기준값 기준 ±이 초(균등 랜덤)
-COMMENTER_BETWEEN_POSTS_JITTER_SEC = 10.0
-
-
 class NaverCafeCommenter(NaverCafeCrawler):
     """
     Scraper의 기능을 상속받아 브라우저 제어 능력을 확보하고,
@@ -29,21 +25,6 @@ class NaverCafeCommenter(NaverCafeCrawler):
     def __init__(self, db_path: str = "", debug_mode: bool = False):
         super().__init__(output_dir="outputs", debug_mode=debug_mode)
         self.db_path = db_path
-
-    def human_sleep_between(self, gap_sec: float) -> None:
-        """
-        연속 댓글 작성 시 글과 글 사이 추가 대기(초).
-        UI에서 입력한 값(gap_sec)은 **중심값**이며, 실제 대기는
-        [gap_sec - COMMENTER_BETWEEN_POSTS_JITTER_SEC, gap_sec + COMMENTER_BETWEEN_POSTS_JITTER_SEC] 구간에서 균등 랜덤.
-        write_comment() 내부 이동·등록 대기와 별개.
-        """
-        base = max(0.0, float(gap_sec))
-        if base <= 0:
-            return
-        j = float(COMMENTER_BETWEEN_POSTS_JITTER_SEC)
-        low = max(0.0, base - j)
-        high = base + j
-        time.sleep(random.uniform(low, high))
 
     def paste_text(self, text: str):
         """

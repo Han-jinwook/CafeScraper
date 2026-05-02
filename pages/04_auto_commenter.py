@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 import time
+import random
 import json
 import re
 import traceback
@@ -74,8 +75,13 @@ config = load_config()
 COMMENTER_DB_PATH = str(resolve_commenter_db_path(config.get("commenter_db_path")))
 init_event_db(COMMENTER_DB_PATH)
 
-# 댓글 작업 시 글과 글 사이 **추가** 대기(초) — 이보다 짧게는 UI에서 설정 불가
-COMMENTER_GAP_MIN_SEC = 60
+# 댓글 간격: 30~120초 랜덤 (UI 입력 불필요, 고정 정책)
+COMMENTER_GAP_MIN_SEC = 30
+COMMENTER_GAP_MAX_SEC = 120
+# 세션당 최대 댓글 수
+COMMENTER_SESSION_LIMIT = 60
+# 세션 간 휴식 시간(초) — 1시간
+COMMENTER_SESSION_REST_SEC = 3600
 
 TEMPLATES_FILE = "comment_templates.json"
 
@@ -163,12 +169,6 @@ if "commenter_exclude_nicks" not in st.session_state:
     st.session_state.commenter_exclude_nicks = str(
         config.get("commenter_exclude_nicks", "운영자,매니저,스탭") or "운영자,매니저,스탭"
     )
-if "commenter_gap_sec_input" not in st.session_state:
-    try:
-        _g0 = int(config.get("commenter_between_posts_sec", COMMENTER_GAP_MIN_SEC))
-    except (TypeError, ValueError):
-        _g0 = COMMENTER_GAP_MIN_SEC
-    st.session_state.commenter_gap_sec_input = max(COMMENTER_GAP_MIN_SEC, _g0)
 
 
 def _commenter_ensure_comment_cols(df: pd.DataFrame | None) -> None:
@@ -1043,11 +1043,6 @@ with _col2:
             cfg_now["commenter_exclude_nicks"] = str(
                 st.session_state.get("commenter_exclude_nicks", "") or ""
             )
-            try:
-                _gap_save = int(st.session_state.get("commenter_gap_sec_input", COMMENTER_GAP_MIN_SEC))
-            except (TypeError, ValueError):
-                _gap_save = COMMENTER_GAP_MIN_SEC
-            cfg_now["commenter_between_posts_sec"] = max(COMMENTER_GAP_MIN_SEC, _gap_save)
             save_config(cfg_now)
             config.update(cfg_now)
             st.success("✅ 타겟 수집 설정이 저장되었습니다.")
@@ -1084,22 +1079,9 @@ with _col3:
 
             st.markdown("<div style='height:3px;'></div>", unsafe_allow_html=True)
             st.caption("브라우저·목록 수집은 **아래 실행 제어**에서 하세요.")
-            st.number_input(
-                f"글 사이 추가 대기 (초, 최소 {COMMENTER_GAP_MIN_SEC})",
-                min_value=COMMENTER_GAP_MIN_SEC,
-                step=5,
-                format="%d",
-                key="commenter_gap_sec_input",
-                help=(
-                    "한 글에 댓글을 단 뒤 **다음 글로 가기 전**에만 추가로 쉬는 시간입니다. "
-                    "글 열기·댓글 입력·등록 버튼 후 대기는 `write_comment` 안에서 별도로 둡니다. "
-                    f"차단 완화를 위해 **{COMMENTER_GAP_MIN_SEC}초 미만은 선택할 수 없습니다.** "
-                    "실제 대기 시간은 입력값을 중심으로 **±10초 범위에서 무작위**로 정해집니다."
-                ),
-            )
             st.caption(
-                f"기본·하한 **{COMMENTER_GAP_MIN_SEC}초** — 더 짧게는 불가, 길게만 가능. "
-                "실제 간격은 ±10초 랜덤. 값은 가운데 **💾 저장**에 포함됩니다."
+                f"⏱ 댓글 간격: **{COMMENTER_GAP_MIN_SEC}~{COMMENTER_GAP_MAX_SEC}초** 랜덤 · "
+                f"세션 **{COMMENTER_SESSION_LIMIT}건** 후 {COMMENTER_SESSION_REST_SEC//60}분 휴식"
             )
             if st.session_state.get("commenter_collecting"):
                 st.caption("⏳ **타겟 수집 중**에는 댓글 작성을 시작할 수 없습니다.")
@@ -1364,55 +1346,7 @@ with st.container(border=True):
         '<p style="margin:0 0 0.35rem 0;font-size:1.05rem;font-weight:600;">📋 타겟 목록</p>',
         unsafe_allow_html=True,
     )
-    _fb1, _fb2 = st.columns(2, gap="small")
-    with _fb1:
-        if st.button(
-            "🔁 실패만 재시도 대상으로",
-            use_container_width=True,
-            key="commenter_filter_failed_only_btn",
-            help="comment_status가 fail인 행만 남기고 댓글 작성 시작 시 그 글만 순회합니다.",
-            disabled=_commenter_ui_busy(),
-        ):
-            _fbase = _commenter_full_dataframe()
-            if _fbase is None or _fbase.empty:
-                st.warning("목록이 없습니다.")
-            else:
-                _commenter_ensure_comment_cols(_fbase)
-                _only_f = _fbase[
-                    _fbase["comment_status"].fillna("").astype(str).str.strip().str.lower()
-                    == "fail"
-                ].copy()
-                if _only_f.empty:
-                    st.info("실패(fail)로 기록된 행이 없습니다.")
-                else:
-                    st.session_state.target_df = _only_f
-                    st.success(f"재시도 대상 **{len(_only_f)}**건으로 제한했습니다. 댓글 작성 시작을 누르세요.")
-                    st.rerun()
-    with _fb2:
-        if st.button(
-            "📋 전체 목록 다시 보기",
-            use_container_width=True,
-            key="commenter_restore_full_targets_btn",
-            disabled=_commenter_ui_busy(),
-        ):
-            _full = st.session_state.get("commenter_target_df_full")
-            if _full is not None and not _full.empty:
-                _commenter_ensure_comment_cols(_full)
-                st.session_state.target_df = _full.copy()
-                st.rerun()
-            else:
-                try:
-                    _rows_restore = load_commenter_targets(COMMENTER_DB_PATH)
-                    if _rows_restore:
-                        _tdr = pd.DataFrame(_rows_restore)
-                        _commenter_ensure_comment_cols(_tdr)
-                        st.session_state.commenter_target_df_full = _tdr.copy()
-                        st.session_state.target_df = _tdr.copy()
-                        st.rerun()
-                    else:
-                        st.info("DB에 저장된 타겟이 없습니다.")
-                except Exception as _e_restore:
-                    st.warning(f"목록 복원 실패: {_e_restore}")
+    st.caption("comment_status가 fail인 행만 남기고 댓글 작성 시작 시 그 글만 순회합니다.")
 
     if st.session_state.target_df is not None and not st.session_state.target_df.empty:
         _commenter_ensure_comment_cols(st.session_state.target_df)
@@ -1539,22 +1473,23 @@ if st.session_state.get("is_running", False):
                     else:
                         log_msg(f"❌ 실패: {res['message']}")
                     st.session_state.commenter_run_index = idx + 1
-                    if idx + 1 >= total:
+
+                    # 세션 한도 체크
+                    _done_count = idx + 1
+                    if _done_count >= total:
                         st.success("작업 완료!")
                         st.balloons()
                         _commenter_reset_run_state()
+                    elif _done_count % COMMENTER_SESSION_LIMIT == 0:
+                        _rest_min = COMMENTER_SESSION_REST_SEC // 60
+                        log_msg(f"⏸ 세션 {_done_count}건 완료. {_rest_min}분 휴식 시작...")
+                        print(f"[commenter] 세션 한도 도달 ({COMMENTER_SESSION_LIMIT}건). {_rest_min}분 휴식.", flush=True)
+                        time.sleep(COMMENTER_SESSION_REST_SEC)
+                        log_msg(f"▶ 휴식 종료. 재개합니다.")
+                        st.rerun()
                     else:
-                        try:
-                            _gap_run = float(
-                                st.session_state.get(
-                                    "commenter_gap_sec_input", COMMENTER_GAP_MIN_SEC
-                                )
-                            )
-                        except (TypeError, ValueError):
-                            _gap_run = float(COMMENTER_GAP_MIN_SEC)
-                        st.session_state.commenter.human_sleep_between(
-                            max(COMMENTER_GAP_MIN_SEC, _gap_run)
-                        )
+                        _gap = random.uniform(COMMENTER_GAP_MIN_SEC, COMMENTER_GAP_MAX_SEC)
+                        time.sleep(_gap)
                         st.rerun()
                 except Exception as e:
                     st.error(f"작업 중 오류: {e}")
