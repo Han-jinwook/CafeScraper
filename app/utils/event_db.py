@@ -620,6 +620,19 @@ def get_event_comments_count(db_path: str) -> int:
         return 0
 
 
+def get_existing_post_ids(db_path: str) -> set:
+    """DB에 이미 저장된 post_id 집합 반환 (skip 판단용)."""
+    try:
+        conn = sqlite3.connect(db_path, timeout=30.0)
+        cur = conn.cursor()
+        cur.execute("SELECT post_id FROM event_posts WHERE post_id IS NOT NULL AND post_id != ''")
+        ids = {str(row[0]) for row in cur.fetchall()}
+        conn.close()
+        return ids
+    except Exception:
+        return set()
+
+
 def get_event_posts_count(db_path: str) -> int:
     try:
         conn = sqlite3.connect(db_path, timeout=30.0)

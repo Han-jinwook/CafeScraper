@@ -85,9 +85,7 @@ COMMENTER_SESSION_REST_SEC = 3600
 
 TEMPLATES_FILE = "comment_templates.json"
 
-# ----- 이벤트 페이지와 동일한 event_* 세션 키 (카페·게시판 설정 공유) -----
-if "event_crawler" not in st.session_state:
-    st.session_state.event_crawler = None
+# ----- 자동댓글러 전용 설정 키 (이벤트분석과 분리) -----
 if "commenter" not in st.session_state:
     st.session_state.commenter = None
 if "comment_logs" not in st.session_state:
@@ -105,45 +103,45 @@ if "commenter_collecting" not in st.session_state:
 if "commenter_target_df_full" not in st.session_state:
     st.session_state.commenter_target_df_full = None
 
-if "event_cafe_name_input" not in st.session_state:
-    st.session_state.event_cafe_name_input = str(config.get("event_cafe_name", "") or "")
-if "event_cafe_url_input" not in st.session_state:
-    st.session_state.event_cafe_url_input = str(config.get("event_cafe_url", "") or "")
-if "event_extracted_boards" not in st.session_state or not st.session_state.event_extracted_boards:
-    _cfg_boards = config.get("event_extracted_boards", [])
+if "commenter_cafe_name_input" not in st.session_state:
+    st.session_state.commenter_cafe_name_input = str(config.get("commenter_cafe_name", "") or "")
+if "commenter_cafe_url_input" not in st.session_state:
+    st.session_state.commenter_cafe_url_input = str(config.get("commenter_cafe_url", "") or "")
+if "commenter_extracted_boards" not in st.session_state or not st.session_state.commenter_extracted_boards:
+    _cfg_boards = config.get("commenter_extracted_boards", [])
     if isinstance(_cfg_boards, list) and _cfg_boards:
-        st.session_state.event_extracted_boards = _cfg_boards
-    elif "event_extracted_boards" not in st.session_state:
-        st.session_state.event_extracted_boards = []
-if "event_selected_board_urls" not in st.session_state or not st.session_state.get(
-    "event_selected_board_urls"
+        st.session_state.commenter_extracted_boards = _cfg_boards
+    elif "commenter_extracted_boards" not in st.session_state:
+        st.session_state.commenter_extracted_boards = []
+if "commenter_selected_board_urls" not in st.session_state or not st.session_state.get(
+    "commenter_selected_board_urls"
 ):
-    _cfg_selected_urls = config.get("event_selected_board_urls", [])
+    _cfg_selected_urls = config.get("commenter_selected_board_urls", [])
     if isinstance(_cfg_selected_urls, list) and _cfg_selected_urls:
-        st.session_state.event_selected_board_urls = [
+        st.session_state.commenter_selected_board_urls = [
             str(u).strip() for u in _cfg_selected_urls if str(u).strip()
         ]
-    elif "event_selected_board_urls" not in st.session_state:
-        st.session_state.event_selected_board_urls = [
-            u.strip() for u in str(config.get("event_board_url", "") or "").splitlines() if u.strip()
+    elif "commenter_selected_board_urls" not in st.session_state:
+        st.session_state.commenter_selected_board_urls = [
+            u.strip() for u in str(config.get("commenter_board_url", "") or "").splitlines() if u.strip()
         ]
-if "event_selected_board_url" not in st.session_state or not st.session_state.get(
-    "event_selected_board_url"
+if "commenter_selected_board_url" not in st.session_state or not st.session_state.get(
+    "commenter_selected_board_url"
 ):
-    _fallback_urls = st.session_state.get("event_selected_board_urls", []) or []
-    st.session_state.event_selected_board_url = (
+    _fallback_urls = st.session_state.get("commenter_selected_board_urls", []) or []
+    st.session_state.commenter_selected_board_url = (
         _fallback_urls[0]
         if _fallback_urls
-        else str(config.get("event_board_url", "") or "").strip()
+        else str(config.get("commenter_board_url", "") or "").strip()
     )
-if "event_board_picker_version" not in st.session_state:
-    st.session_state.event_board_picker_version = 0
-if "event_board_picker_options_sig" not in st.session_state:
-    st.session_state.event_board_picker_options_sig = ""
-if "event_cafe_url_after_reset_save_mode" not in st.session_state:
-    st.session_state.event_cafe_url_after_reset_save_mode = False
-if "event_auto_login_after_reset_save_mode" not in st.session_state:
-    st.session_state.event_auto_login_after_reset_save_mode = False
+if "commenter_board_picker_version" not in st.session_state:
+    st.session_state.commenter_board_picker_version = 0
+if "commenter_board_picker_options_sig" not in st.session_state:
+    st.session_state.commenter_board_picker_options_sig = ""
+if "commenter_cafe_url_after_reset_save_mode" not in st.session_state:
+    st.session_state.commenter_cafe_url_after_reset_save_mode = False
+if "commenter_auto_login_after_reset_save_mode" not in st.session_state:
+    st.session_state.commenter_auto_login_after_reset_save_mode = False
 
 
 def _parse_cfg_date(val, fallback):
@@ -168,6 +166,10 @@ if "commenter_target_end_date" not in st.session_state:
 if "commenter_exclude_nicks" not in st.session_state:
     st.session_state.commenter_exclude_nicks = str(
         config.get("commenter_exclude_nicks", "운영자,매니저,스탭") or "운영자,매니저,스탭"
+    )
+if "commenter_allow_dup_nick" not in st.session_state:
+    st.session_state.commenter_allow_dup_nick = bool(
+        config.get("commenter_allow_dup_nick", False)
     )
 
 
@@ -232,14 +234,14 @@ else:
 
 def _inject_commenter_cafe_history_suggestions(cafe_names: list[str], cafe_urls: list[str]) -> None:
     inject_connect_history_suggestions(
-        prefix="event",
+        prefix="commenter",
         container_key_fragment="commenter_settings_card_1",
         cafe_names=cafe_names,
         cafe_urls=cafe_urls,
     )
 
 
-def _event_overall_url_from_boards(boards: list) -> str:
+def _commenter_overall_url_from_boards(boards: list) -> str:
     for b in boards or []:
         u = str((b or {}).get("url", "") or "")
         if "ArticleList.nhn" in u and "search.clubid=" in u:
@@ -334,7 +336,7 @@ def _commenter_normalized_target_range():
 
 def _commenter_board_label_for_url(board_url: str) -> str:
     """왼쪽에서 가져온 게시판 목록 URL → 표시 이름 (목록 DOM에 board_name이 없을 때)."""
-    boards = st.session_state.get("event_extracted_boards") or []
+    boards = st.session_state.get("commenter_extracted_boards") or []
     needle = str(board_url).strip()
     for b in boards:
         if str((b or {}).get("url") or "").strip() == needle:
@@ -352,7 +354,7 @@ def _collect_commenter_targets_into_session() -> None:
             dict.fromkeys(
                 [
                     str(u).strip()
-                    for u in (st.session_state.get("event_selected_board_urls") or [])
+                    for u in (st.session_state.get("commenter_selected_board_urls") or [])
                     if str(u).strip()
                 ]
             )
@@ -452,6 +454,14 @@ def _collect_commenter_targets_into_session() -> None:
         if excludes and not df.empty:
             mask = df["nickname"].apply(lambda x: not any(exc in str(x) for exc in excludes))
             df = df[mask]
+        # 동일 닉네임 중복 제거 (디폴트: 첫 번째만 유지)
+        allow_dup = st.session_state.get("commenter_allow_dup_nick", False)
+        if not allow_dup and not df.empty:
+            _before = len(df)
+            df = df.drop_duplicates(subset=["nickname"], keep="first")
+            _removed = _before - len(df)
+            if _removed > 0:
+                st.info(f"동일 닉네임 중복 {_removed}건 제거됨 (설정에서 허용 가능)")
         _commenter_ensure_comment_cols(df)
         st.session_state.target_df = df
         st.session_state.commenter_target_df_full = df.copy()
@@ -514,157 +524,157 @@ _col1, _col2, _col3 = st.columns([1, 1, 1], gap="medium")
 with _col1:
     with st.container(border=True, key="commenter_settings_card_1"):
         render_settings_card_title("카페 · 연결", icon="🏪")
-        if st.session_state.pop("_event_pending_clear_cafe_name_input", False):
-            st.session_state.event_cafe_name_input = ""
-        st.text_input("카페명", key="event_cafe_name_input")
+        if st.session_state.pop("_commenter_pending_clear_cafe_name_input", False):
+            st.session_state.commenter_cafe_name_input = ""
+        st.text_input("카페명", key="commenter_cafe_name_input")
         try:
             _ev_url_col, _ev_btn_col = st.columns([5, 1], gap="small", vertical_alignment="center")
         except TypeError:
             _ev_url_col, _ev_btn_col = st.columns([5, 1], gap="small")
         with _ev_url_col:
-            if st.session_state.pop("_event_pending_clear_cafe_url_input", False):
-                st.session_state.event_cafe_url_input = ""
-            cafe_url = st.text_input("카페 URL", key="event_cafe_url_input")
+            if st.session_state.pop("_commenter_pending_clear_cafe_url_input", False):
+                st.session_state.commenter_cafe_url_input = ""
+            cafe_url = st.text_input("카페 URL", key="commenter_cafe_url_input")
         _inject_commenter_cafe_history_suggestions(
-            (config.get("event_cafe_name_history", []) or []) + [str(config.get("event_cafe_name", "") or "")],
-            (config.get("event_cafe_url_history", []) or []) + [str(config.get("event_cafe_url", "") or "")],
+            (config.get("commenter_cafe_name_history", []) or []) + [str(config.get("commenter_cafe_name", "") or "")],
+            (config.get("commenter_cafe_url_history", []) or []) + [str(config.get("commenter_cafe_url", "") or "")],
         )
         with _ev_btn_col:
-            _ev_save_mode = bool(st.session_state.get("event_cafe_url_after_reset_save_mode", False))
+            _ev_save_mode = bool(st.session_state.get("commenter_cafe_url_after_reset_save_mode", False))
             _ev_side_lbl = "저장" if _ev_save_mode else "리셋"
             _ev_side_help = (
-                "카페명/카페 URL을 이벤트(자동댓글러) 설정에 저장합니다."
+                "카페명/카페 URL을 자동댓글러 설정에 저장합니다."
                 if _ev_save_mode
                 else "이벤트 게시판 목록/선택 데이터를 비웁니다."
             )
             if st.button(
                 _ev_side_lbl,
-                key="commenter_event_cafe_side_btn",
+                key="commenter_cafe_side_btn",
                 use_container_width=True,
                 help=_ev_side_help,
                 disabled=_commenter_ui_busy(),
             ):
                 if _ev_save_mode:
                     cfg_now = dict(load_config() or {})
-                    saved_event_cafe_name = str(st.session_state.get("event_cafe_name_input", "") or "").strip()
-                    saved_event_cafe_url = str(st.session_state.get("event_cafe_url_input", "") or "").strip()
-                    cfg_now["event_cafe_name"] = saved_event_cafe_name
-                    cfg_now["event_cafe_url"] = saved_event_cafe_url
-                    if saved_event_cafe_name:
-                        prev_event_name_hist = [
+                    saved_commenter_cafe_name = str(st.session_state.get("commenter_cafe_name_input", "") or "").strip()
+                    saved_commenter_cafe_url = str(st.session_state.get("commenter_cafe_url_input", "") or "").strip()
+                    cfg_now["commenter_cafe_name"] = saved_commenter_cafe_name
+                    cfg_now["commenter_cafe_url"] = saved_commenter_cafe_url
+                    if saved_commenter_cafe_name:
+                        prev_commenter_name_hist = [
                             str(x).strip()
-                            for x in (cfg_now.get("event_cafe_name_history", []) or [])
+                            for x in (cfg_now.get("commenter_cafe_name_history", []) or [])
                             if str(x).strip()
                         ]
-                        cfg_now["event_cafe_name_history"] = (
-                            [saved_event_cafe_name]
-                            + [x for x in prev_event_name_hist if x != saved_event_cafe_name]
+                        cfg_now["commenter_cafe_name_history"] = (
+                            [saved_commenter_cafe_name]
+                            + [x for x in prev_commenter_name_hist if x != saved_commenter_cafe_name]
                         )[:20]
-                    if saved_event_cafe_url:
-                        prev_event_url_hist = [
+                    if saved_commenter_cafe_url:
+                        prev_commenter_url_hist = [
                             str(x).strip()
-                            for x in (cfg_now.get("event_cafe_url_history", []) or [])
+                            for x in (cfg_now.get("commenter_cafe_url_history", []) or [])
                             if str(x).strip()
                         ]
-                        cfg_now["event_cafe_url_history"] = (
-                            [saved_event_cafe_url]
-                            + [x for x in prev_event_url_hist if x != saved_event_cafe_url]
+                        cfg_now["commenter_cafe_url_history"] = (
+                            [saved_commenter_cafe_url]
+                            + [x for x in prev_commenter_url_hist if x != saved_commenter_cafe_url]
                         )[:20]
                     save_config(cfg_now)
                     config.update(cfg_now)
-                    st.session_state.event_cafe_url_after_reset_save_mode = False
-                    st.session_state._event_cafe_url_apply_ack = True
+                    st.session_state.commenter_cafe_url_after_reset_save_mode = False
+                    st.session_state._commenter_cafe_url_apply_ack = True
                     st.rerun()
                 else:
-                    st.session_state.event_extracted_boards = []
-                    st.session_state.event_selected_board_urls = []
-                    st.session_state.event_selected_board_url = ""
-                    st.session_state.event_cafe_url_after_reset_save_mode = True
-                    st.session_state._event_pending_clear_cafe_name_input = True
-                    st.session_state._event_pending_clear_cafe_url_input = True
-                    st.session_state._event_cafe_reset_done = True
+                    st.session_state.commenter_extracted_boards = []
+                    st.session_state.commenter_selected_board_urls = []
+                    st.session_state.commenter_selected_board_url = ""
+                    st.session_state.commenter_cafe_url_after_reset_save_mode = True
+                    st.session_state._commenter_pending_clear_cafe_name_input = True
+                    st.session_state._commenter_pending_clear_cafe_url_input = True
+                    st.session_state._commenter_cafe_reset_done = True
                     st.rerun()
-        if st.session_state.get("_event_cafe_reset_done"):
-            st.session_state._event_cafe_reset_done = False
+        if st.session_state.get("_commenter_cafe_reset_done"):
+            st.session_state._commenter_cafe_reset_done = False
             st.success(
                 "카페 관련 데이터를 비웠고 카페명/카페 URL 칸을 비웠습니다. 새 값을 입력 후 오른쪽 저장을 눌러주세요."
             )
-        if st.session_state.get("_event_cafe_url_apply_ack"):
-            st.session_state._event_cafe_url_apply_ack = False
+        if st.session_state.get("_commenter_cafe_url_apply_ack"):
+            st.session_state._commenter_cafe_url_apply_ack = False
             st.success("카페 연결 정보를 저장했습니다.")
 
-        _saved_event_login_id = str(config.get("event_naver_id", "") or "").strip()
-        _saved_event_login_pw = str(config.get("event_naver_pw", "") or "")
-        _event_auto_login_done = bool(_saved_event_login_id and _saved_event_login_pw)
-        _event_auto_login_title = "🔐 자동로그인 설정 (완료)" if _event_auto_login_done else "🔐 자동로그인 설정"
-        with st.expander(_event_auto_login_title, expanded=False):
-            if st.session_state.pop("_event_pending_clear_auto_login_inputs", False):
-                st.session_state.pop("event_auto_login_enabled_input", None)
-                st.session_state.pop("event_naver_id_input", None)
-                st.session_state.pop("event_naver_pw_input", None)
-            if "event_auto_login_enabled_input" not in st.session_state:
-                st.session_state.event_auto_login_enabled_input = bool(
-                    config.get("event_auto_login_enabled", False)
+        _saved_login_id = str(config.get("commenter_naver_id", "") or "").strip()
+        _saved_login_pw = str(config.get("commenter_naver_pw", "") or "")
+        _auto_login_done = bool(_saved_login_id and _saved_login_pw)
+        _auto_login_title = "🔐 자동로그인 설정 (완료)" if _auto_login_done else "🔐 자동로그인 설정"
+        with st.expander(_auto_login_title, expanded=False):
+            if st.session_state.pop("_commenter_pending_clear_auto_login_inputs", False):
+                st.session_state.pop("commenter_auto_login_enabled_input", None)
+                st.session_state.pop("commenter_naver_id_input", None)
+                st.session_state.pop("commenter_naver_pw_input", None)
+            if "commenter_auto_login_enabled_input" not in st.session_state:
+                st.session_state.commenter_auto_login_enabled_input = bool(
+                    config.get("commenter_auto_login_enabled", False)
                 )
             st.checkbox(
                 "브라우저 열 때 자동로그인 실행",
-                key="event_auto_login_enabled_input",
+                key="commenter_auto_login_enabled_input",
                 help="브라우저 열기 직후 저장된 계정으로 로그인을 시도합니다.",
             )
             _ev_al_input_col, _ev_al_btn_col = st.columns([4, 1], gap="small")
             with _ev_al_input_col:
-                if "event_naver_id_input" not in st.session_state:
-                    st.session_state.event_naver_id_input = str(config.get("event_naver_id", "") or "")
-                if "event_naver_pw_input" not in st.session_state:
-                    st.session_state.event_naver_pw_input = str(config.get("event_naver_pw", "") or "")
-                st.text_input("네이버 아이디", key="event_naver_id_input", placeholder="아이디 입력")
+                if "commenter_naver_id_input" not in st.session_state:
+                    st.session_state.commenter_naver_id_input = str(config.get("commenter_naver_id", "") or "")
+                if "commenter_naver_pw_input" not in st.session_state:
+                    st.session_state.commenter_naver_pw_input = str(config.get("commenter_naver_pw", "") or "")
+                st.text_input("네이버 아이디", key="commenter_naver_id_input", placeholder="아이디 입력")
                 st.text_input(
                     "네이버 비밀번호",
-                    key="event_naver_pw_input",
+                    key="commenter_naver_pw_input",
                     type="password",
                     placeholder="비밀번호 입력",
                 )
             with _ev_al_btn_col:
                 st.markdown("<div style='margin-top: 88px;'></div>", unsafe_allow_html=True)
-                _ev_al_save_mode = bool(st.session_state.get("event_auto_login_after_reset_save_mode", False))
+                _ev_al_save_mode = bool(st.session_state.get("commenter_auto_login_after_reset_save_mode", False))
                 _ev_al_lbl = "저장" if _ev_al_save_mode else "리셋"
                 if st.button(
                     _ev_al_lbl,
-                    key="commenter_event_auto_login_side_btn",
+                    key="commenter_auto_login_side_btn",
                     use_container_width=True,
                     disabled=_commenter_ui_busy(),
                 ):
                     if _ev_al_save_mode:
                         cfg_now = dict(load_config() or {})
-                        cfg_now["event_auto_login_enabled"] = bool(
-                            st.session_state.get("event_auto_login_enabled_input", False)
+                        cfg_now["commenter_auto_login_enabled"] = bool(
+                            st.session_state.get("commenter_auto_login_enabled_input", False)
                         )
-                        cfg_now["event_naver_id"] = str(
-                            st.session_state.get("event_naver_id_input", "") or ""
+                        cfg_now["commenter_naver_id"] = str(
+                            st.session_state.get("commenter_naver_id_input", "") or ""
                         ).strip()
-                        cfg_now["event_naver_pw"] = str(
-                            st.session_state.get("event_naver_pw_input", "") or ""
+                        cfg_now["commenter_naver_pw"] = str(
+                            st.session_state.get("commenter_naver_pw_input", "") or ""
                         )
                         save_config(cfg_now)
                         config.update(cfg_now)
-                        st.session_state.event_auto_login_after_reset_save_mode = False
-                        st.session_state._event_auto_login_save_ack = True
+                        st.session_state.commenter_auto_login_after_reset_save_mode = False
+                        st.session_state._commenter_auto_login_save_ack = True
                         st.rerun()
                     else:
-                        st.session_state._event_pending_clear_auto_login_inputs = True
-                        st.session_state.event_auto_login_after_reset_save_mode = True
-                        st.session_state._event_auto_login_reset_ack = True
+                        st.session_state._commenter_pending_clear_auto_login_inputs = True
+                        st.session_state.commenter_auto_login_after_reset_save_mode = True
+                        st.session_state._commenter_auto_login_reset_ack = True
                         st.rerun()
-            if st.session_state.get("_event_auto_login_reset_ack"):
-                st.session_state._event_auto_login_reset_ack = False
+            if st.session_state.get("_commenter_auto_login_reset_ack"):
+                st.session_state._commenter_auto_login_reset_ack = False
                 st.success("자동로그인 설정 값을 비웠습니다. 새 값을 입력한 뒤 오른쪽 저장을 눌러주세요.")
-            if st.session_state.get("_event_auto_login_save_ack"):
-                st.session_state._event_auto_login_save_ack = False
+            if st.session_state.get("_commenter_auto_login_save_ack"):
+                st.session_state._commenter_auto_login_save_ack = False
                 st.success("자동로그인 설정을 저장했습니다.")
 
         if st.button(
             "🔍 게시판 목록 가져오기",
-            key="commenter_event_scan_boards_btn",
+            key="commenter_scan_boards_btn",
             use_container_width=True,
             disabled=_commenter_ui_busy() or (not _commenter_browser_opened()),
         ):
@@ -774,16 +784,16 @@ with _col1:
                             except Exception:
                                 pass
                     if boards:
-                        st.session_state.event_extracted_boards = boards
-                        st.session_state.event_selected_board_urls = []
-                        st.session_state.event_selected_board_url = ""
-                        st.session_state.event_board_picker_version = int(
-                            st.session_state.get("event_board_picker_version", 0)
+                        st.session_state.commenter_extracted_boards = boards
+                        st.session_state.commenter_selected_board_urls = []
+                        st.session_state.commenter_selected_board_url = ""
+                        st.session_state.commenter_board_picker_version = int(
+                            st.session_state.get("commenter_board_picker_version", 0)
                         ) + 1
                         cfg_now = dict(load_config() or {})
-                        cfg_now["event_extracted_boards"] = boards
-                        cfg_now["event_selected_board_urls"] = []
-                        cfg_now["event_board_url"] = ""
+                        cfg_now["commenter_extracted_boards"] = boards
+                        cfg_now["commenter_selected_board_urls"] = []
+                        cfg_now["commenter_board_url"] = ""
                         save_config(cfg_now)
                         config.update(cfg_now)
                         st.success(f"✅ 게시판 스캔 완료: {len(boards)}개")
@@ -792,13 +802,13 @@ with _col1:
                 except Exception as e:
                     st.error(f"게시판 목록 스캔 실패: {e}")
 
-        if st.session_state.event_extracted_boards:
-            total_board_count = len(st.session_state.event_extracted_boards)
+        if st.session_state.commenter_extracted_boards:
+            total_board_count = len(st.session_state.commenter_extracted_boards)
             selected_count_header = st.empty()
             _selected_now = len(
                 list(
                     dict.fromkeys(
-                        [u for u in (st.session_state.get("event_selected_board_urls", []) or []) if u]
+                        [u for u in (st.session_state.get("commenter_selected_board_urls", []) or []) if u]
                     )
                 )
             )
@@ -810,14 +820,14 @@ with _col1:
                 f"</div>",
                 unsafe_allow_html=True,
             )
-            options = st.session_state.event_extracted_boards
+            options = st.session_state.commenter_extracted_boards
             board_options: dict[str, str] = {}
             for i, b in enumerate(options, start=1):
                 name = str((b or {}).get("name", "") or "").strip() or f"게시판_{i}"
                 url = str((b or {}).get("url", "") or "").strip()
                 board_options[f"{i:02d}. {name}"] = url
 
-            overall_url = _event_overall_url_from_boards(options)
+            overall_url = _commenter_overall_url_from_boards(options)
 
             options_list: list[str] = []
             if overall_url:
@@ -825,10 +835,10 @@ with _col1:
             options_list.extend(list(board_options.keys()))
 
             options_sig = "||".join(options_list)
-            if options_sig != str(st.session_state.get("event_board_picker_options_sig", "")):
-                st.session_state.event_board_picker_options_sig = options_sig
-                _new_version = int(st.session_state.get("event_board_picker_version", 0)) + 1
-                st.session_state.event_board_picker_version = _new_version
+            if options_sig != str(st.session_state.get("commenter_board_picker_options_sig", "")):
+                st.session_state.commenter_board_picker_options_sig = options_sig
+                _new_version = int(st.session_state.get("commenter_board_picker_version", 0)) + 1
+                st.session_state.commenter_board_picker_version = _new_version
                 _available_urls = [str(u).strip() for u in board_options.values() if str(u).strip()]
                 if overall_url:
                     _available_urls.insert(0, str(overall_url).strip())
@@ -837,20 +847,20 @@ with _col1:
                     dict.fromkeys(
                         [
                             str(u).strip()
-                            for u in (st.session_state.get("event_selected_board_urls", []) or [])
+                            for u in (st.session_state.get("commenter_selected_board_urls", []) or [])
                             if str(u).strip()
                         ]
                     )
                 )
                 _preserved = [u for u in _existing_selected if u in _available_set]
-                st.session_state.event_selected_board_urls = _preserved
-                st.session_state.event_selected_board_url = _preserved[0] if _preserved else ""
+                st.session_state.commenter_selected_board_urls = _preserved
+                st.session_state.commenter_selected_board_url = _preserved[0] if _preserved else ""
                 _preserved_set = set(_preserved)
                 for _lb in options_list:
                     _idx = options_list.index(_lb)
                     _u = overall_url if _lb == "00. 전체글보기" else board_options.get(_lb, "")
                     if _u:
-                        st.session_state[f"event_board_chk_{_new_version}_{_idx}"] = bool(_u in _preserved_set)
+                        st.session_state[f"commenter_board_chk_{_new_version}_{_idx}"] = bool(_u in _preserved_set)
 
             label_to_url: dict[str, str] = {}
             for label in options_list:
@@ -860,18 +870,18 @@ with _col1:
                     label_to_url[label] = board_options.get(label, "")
 
             with st.expander("게시판 목록 열기/접기", expanded=False):
-                v = int(st.session_state.get("event_board_picker_version", 0))
+                v = int(st.session_state.get("commenter_board_picker_version", 0))
                 label_to_idx = {label: i for i, label in enumerate(options_list)}
                 overall_label = "00. 전체글보기" if "00. 전체글보기" in options_list else None
-                combo_key = f"event_board_combo_select_all_{v}"
-                combo_prev_key = f"_event_board_combo_select_all_prev_{v}"
-                wanted_urls = set(st.session_state.get("event_selected_board_urls", []) or [])
+                combo_key = f"commenter_board_combo_select_all_{v}"
+                combo_prev_key = f"_commenter_board_combo_select_all_prev_{v}"
+                wanted_urls = set(st.session_state.get("commenter_selected_board_urls", []) or [])
 
                 overall_key = ""
                 if overall_label:
                     overall_idx = int(label_to_idx.get(overall_label, -1))
                     if overall_idx >= 0:
-                        overall_key = f"event_board_chk_{v}_{overall_idx}"
+                        overall_key = f"commenter_board_chk_{v}_{overall_idx}"
                 if overall_key and bool(st.session_state.get(overall_key, False)):
                     st.session_state[combo_key] = False
                     st.session_state[combo_prev_key] = False
@@ -889,7 +899,7 @@ with _col1:
                         i = int(label_to_idx.get(label, -1))
                         if i < 0:
                             continue
-                        chk_key = f"event_board_chk_{v}_{i}"
+                        chk_key = f"commenter_board_chk_{v}_{i}"
                         if overall_label and label == overall_label:
                             st.session_state[chk_key] = False
                         else:
@@ -899,7 +909,7 @@ with _col1:
                         i = int(label_to_idx.get(label, -1))
                         if i < 0:
                             continue
-                        st.session_state[f"event_board_chk_{v}_{i}"] = False
+                        st.session_state[f"commenter_board_chk_{v}_{i}"] = False
                 st.session_state[combo_prev_key] = bool(combo_checked_now)
 
                 if overall_key and bool(st.session_state.get(overall_key, False)):
@@ -912,13 +922,13 @@ with _col1:
                     if i < 0:
                         continue
                     u = str(label_to_url.get(label, "") or "")
-                    chk_key = f"event_board_chk_{v}_{i}"
+                    chk_key = f"commenter_board_chk_{v}_{i}"
                     if chk_key not in st.session_state:
                         st.session_state[chk_key] = bool(u and u in wanted_urls)
 
                 if overall_label:
                     overall_idx = int(label_to_idx.get(overall_label, -1))
-                    overall_key = f"event_board_chk_{v}_{overall_idx}" if overall_idx >= 0 else ""
+                    overall_key = f"commenter_board_chk_{v}_{overall_idx}" if overall_idx >= 0 else ""
                     overall_checked = bool(st.session_state.get(overall_key, False)) if overall_key else False
                     other_checked = False
                     for label in options_list:
@@ -927,7 +937,7 @@ with _col1:
                         i = int(label_to_idx.get(label, -1))
                         if i < 0:
                             continue
-                        if bool(st.session_state.get(f"event_board_chk_{v}_{i}", False)):
+                        if bool(st.session_state.get(f"commenter_board_chk_{v}_{i}", False)):
                             other_checked = True
                             break
                     if overall_checked:
@@ -937,7 +947,7 @@ with _col1:
                             i = int(label_to_idx.get(label, -1))
                             if i < 0:
                                 continue
-                            st.session_state[f"event_board_chk_{v}_{i}"] = False
+                            st.session_state[f"commenter_board_chk_{v}_{i}"] = False
                     elif other_checked and overall_key:
                         st.session_state[overall_key] = False
 
@@ -947,11 +957,11 @@ with _col1:
                             i = int(label_to_idx.get(label, -1))
                             if i < 0:
                                 continue
-                            chk_key = f"event_board_chk_{v}_{i}"
+                            chk_key = f"commenter_board_chk_{v}_{i}"
                             disable_this = False
                             if overall_label and label != overall_label:
                                 oidx = int(label_to_idx.get(overall_label, -1))
-                                if oidx >= 0 and bool(st.session_state.get(f"event_board_chk_{v}_{oidx}", False)):
+                                if oidx >= 0 and bool(st.session_state.get(f"commenter_board_chk_{v}_{oidx}", False)):
                                     disable_this = True
                             st.checkbox(label, key=chk_key, disabled=disable_this)
                 except TypeError:
@@ -959,11 +969,11 @@ with _col1:
                         i = int(label_to_idx.get(label, -1))
                         if i < 0:
                             continue
-                        chk_key = f"event_board_chk_{v}_{i}"
+                        chk_key = f"commenter_board_chk_{v}_{i}"
                         disable_this = False
                         if overall_label and label != overall_label:
                             oidx = int(label_to_idx.get(overall_label, -1))
-                            if oidx >= 0 and bool(st.session_state.get(f"event_board_chk_{v}_{oidx}", False)):
+                            if oidx >= 0 and bool(st.session_state.get(f"commenter_board_chk_{v}_{oidx}", False)):
                                 disable_this = True
                         st.checkbox(label, key=chk_key, disabled=disable_this)
 
@@ -972,22 +982,22 @@ with _col1:
                     i = int(label_to_idx.get(label, -1))
                     if i < 0:
                         continue
-                    if bool(st.session_state.get(f"event_board_chk_{v}_{i}", False)):
+                    if bool(st.session_state.get(f"commenter_board_chk_{v}_{i}", False)):
                         u = str(label_to_url.get(label, "") or "")
                         if u:
                             selected_urls.append(u)
                 selected_urls_dedup = list(dict.fromkeys(selected_urls))
-                st.session_state.event_selected_board_urls = selected_urls_dedup
-                st.session_state.event_selected_board_url = (
+                st.session_state.commenter_selected_board_urls = selected_urls_dedup
+                st.session_state.commenter_selected_board_url = (
                     selected_urls_dedup[0] if selected_urls_dedup else ""
                 )
 
                 _selected_sig = "|".join(selected_urls_dedup)
-                if st.session_state.get("_event_selected_board_urls_saved_sig", "") != _selected_sig:
-                    st.session_state._event_selected_board_urls_saved_sig = _selected_sig
+                if st.session_state.get("_commenter_selected_board_urls_saved_sig", "") != _selected_sig:
+                    st.session_state._commenter_selected_board_urls_saved_sig = _selected_sig
                     cfg_now = dict(load_config() or {})
-                    cfg_now["event_selected_board_urls"] = selected_urls_dedup
-                    cfg_now["event_board_url"] = "\n".join(selected_urls_dedup)
+                    cfg_now["commenter_selected_board_urls"] = selected_urls_dedup
+                    cfg_now["commenter_board_url"] = "\n".join(selected_urls_dedup)
                     save_config(cfg_now)
                     config.update(cfg_now)
 
@@ -1019,6 +1029,11 @@ with _col2:
         with _period_b:
             st.date_input("종료일", key="commenter_target_end_date")
         st.text_input("제외 닉네임 (쉼표)", key="commenter_exclude_nicks")
+        st.checkbox(
+            "동일 별명 중복 허용",
+            key="commenter_allow_dup_nick",
+            help="여러 게시판에서 같은 닉네임이 있을 때, 체크하면 모두 포함합니다. 기본은 첫 번째만 유지.",
+        )
 
         st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)
         if st.button(
@@ -1042,6 +1057,9 @@ with _col2:
                 cfg_now["commenter_target_end_date"] = _e.strftime("%Y-%m-%d")
             cfg_now["commenter_exclude_nicks"] = str(
                 st.session_state.get("commenter_exclude_nicks", "") or ""
+            )
+            cfg_now["commenter_allow_dup_nick"] = bool(
+                st.session_state.get("commenter_allow_dup_nick", False)
             )
             save_config(cfg_now)
             config.update(cfg_now)
@@ -1156,20 +1174,21 @@ with _col3:
 
 # 실제 write_comment 루프는 파일 하단(표·메트릭 아래)에서 실행 →
 # 여기서 먼저 표가 그려지므로 직전까지 댓글결과가 보입니다.
-if st.session_state.get("is_running") and not st.session_state.get("commenter_stop_requested"):
-    _early_df = st.session_state.get("target_df")
-    if _early_df is not None and not getattr(_early_df, "empty", True):
-        _e_idx = int(st.session_state.get("commenter_run_index") or 0)
-        _e_total = len(_early_df)
-        st.warning(
-            "⏳ **댓글 작업 실행 중**입니다. 글 한 편을 처리하는 동안 Streamlit이 **전체를 잠시 흐릿하게** 덮을 수 있습니다. "
-            "**정지된 것이 아닙니다.** 중지는 위 **⏹ 댓글 작성 중지**."
-        )
-        st.progress(min(1.0, _e_idx / max(1, _e_total)))
-        st.caption(
-            f"**{_e_idx + 1}** / {_e_total} 번째 처리 중·대기. 아래 표 **`댓글결과`**는 **끝난 글만** 채워집니다. "
-            "목록은 날짜순이라 **위 행이 빈칸**이어도 됩니다. **상단 성공/실패 숫자·열 검색**을 활용하세요."
-        )
+with st.container(key="commenter_running_progress_area"):
+    if st.session_state.get("is_running") and not st.session_state.get("commenter_stop_requested"):
+        _early_df = st.session_state.get("target_df")
+        if _early_df is not None and not getattr(_early_df, "empty", True):
+            _e_idx = int(st.session_state.get("commenter_run_index") or 0)
+            _e_total = len(_early_df)
+            st.warning(
+                "⏳ **댓글 작업 실행 중**입니다. 글 한 편을 처리하는 동안 Streamlit이 **전체를 잠시 흐릿하게** 덮을 수 있습니다. "
+                "**정지된 것이 아닙니다.** 중지는 위 **⏹ 댓글 작성 중지**."
+            )
+            st.progress(min(1.0, _e_idx / max(1, _e_total)))
+            st.caption(
+                f"**{_e_idx + 1}** / {_e_total} 번째 처리 중·대기. 아래 표 **`댓글결과`**는 **끝난 글만** 채워집니다. "
+                "목록은 날짜순이라 **위 행이 빈칸**이어도 됩니다. **상단 성공/실패 숫자·열 검색**을 활용하세요."
+            )
 
 st.markdown(
     """
@@ -1255,14 +1274,14 @@ with st.container(key="commenter_exec_btns"):
             try:
                 _ev_auto_on = bool(
                     st.session_state.get(
-                        "event_auto_login_enabled_input", config.get("event_auto_login_enabled", False)
+                        "commenter_auto_login_enabled_input", config.get("commenter_auto_login_enabled", False)
                     )
                 )
                 _ev_login_id = str(
-                    st.session_state.get("event_naver_id_input", config.get("event_naver_id", "")) or ""
+                    st.session_state.get("commenter_naver_id_input", config.get("commenter_naver_id", "")) or ""
                 ).strip()
                 _ev_login_pw = str(
-                    st.session_state.get("event_naver_pw_input", config.get("event_naver_pw", "")) or ""
+                    st.session_state.get("commenter_naver_pw_input", config.get("commenter_naver_pw", "")) or ""
                 )
                 if _ev_auto_on and _ev_login_id and _ev_login_pw:
                     login_ok, reason = auto_login_naver_with_js(
@@ -1304,7 +1323,7 @@ _ds_rng, _de_rng = _commenter_normalized_target_range()
 _period_line = "—"
 if _ds_rng and _de_rng:
     _period_line = f"{_ds_rng.strftime('%Y-%m-%d')} ~ {_de_rng.strftime('%Y-%m-%d')}"
-_n_boards_dm = len(st.session_state.get("event_selected_board_urls") or [])
+_n_boards_dm = len(st.session_state.get("commenter_selected_board_urls") or [])
 st.markdown(
     f'<p style="margin:0.1rem 0 0.35rem 0;font-size:0.78rem;color:#64748b;line-height:1.35;">'
     f"🗓️ 표시 기간: {_period_line} &nbsp;·&nbsp; 📋 선택 게시판: {_n_boards_dm}개"
@@ -1340,7 +1359,7 @@ st.markdown(
     "<hr style='border:none;border-top:1px solid #e2e8f0;margin:0.35rem 0 0.4rem 0;'/>",
     unsafe_allow_html=True,
 )
-with st.container(border=True):
+with st.container(border=True, key="commenter_target_table_box"):
     st.caption(f"DB: `{COMMENTER_DB_PATH}`")
     st.markdown(
         '<p style="margin:0 0 0.35rem 0;font-size:1.05rem;font-weight:600;">📋 타겟 목록</p>',
@@ -1369,6 +1388,7 @@ with st.container(border=True):
             _show_df,
             use_container_width=True,
             height=420,
+            key="commenter_target_dataframe",
             column_config={
                 "url": st.column_config.LinkColumn("링크", display_text="🔗", width="small"),
                 "date": "작성일",

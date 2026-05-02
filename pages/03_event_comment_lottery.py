@@ -14,15 +14,11 @@ from selenium.webdriver.common.by import By
 from app.products.scraper.crawler import NaverCafeCrawler
 from app.utils.naver_login import auto_login_naver_with_js as _auto_login_naver_with_js
 from app.utils.paths import get_config_path, resolve_event_db_path
-from app.utils.event_nick_presets import (
-    delete_event_nick_preset,
-    load_event_nick_presets,
-    upsert_event_nick_preset,
-)
 from app.utils.event_db import (
     get_event_comments_count,
     get_event_mentor_visits_count,
     get_event_posts_count,
+    get_existing_post_ids,
     init_event_db,
     save_event_comments,
     save_event_post,
@@ -1485,8 +1481,6 @@ with _ev2:
                     key="event_post_filter_include_cb",
                     on_change=_on_post_include_change,
                 )
-            _nick_pr = load_event_nick_presets()
-
             _comment_left, _comment_right = st.columns([4.9, 1.3], gap="medium")
             with _comment_left:
                 exclude_comment_nicks_text = st.text_area(
@@ -1508,48 +1502,6 @@ with _ev2:
                     on_change=_on_comment_include_change,
                 )
 
-            _comment_presets = _nick_pr.get("comment") or []
-            _comment_sel_opts = ["— 선택 —"] + [
-                str(r.get("name") or "").strip() for r in _comment_presets if str(r.get("name") or "").strip()
-            ]
-            _crh1, _crh2, _crh3, _crh4, _crh5 = st.columns([1.65, 1.35, 0.52, 0.52, 0.52])
-            with _crh1:
-                st.selectbox(
-                    "댓글 · 저장된 목록",
-                    options=_comment_sel_opts,
-                    key="event_comment_nick_preset_sel",
-                    help="목록을 고른 뒤 「적용」으로 위 입력칸에 불러옵니다.",
-                )
-            with _crh2:
-                st.text_input(
-                    "저장 시 이름",
-                    key="event_comment_nick_preset_name_input",
-                    placeholder="비우면 날짜·시간으로 저장",
-                )
-            with _crh3:
-                if st.button("적용", key="event_comment_nick_preset_apply_btn", use_container_width=True):
-                    _csel = str(st.session_state.get("event_comment_nick_preset_sel") or "").strip()
-                    if _csel and _csel != "— 선택 —":
-                        for r in _comment_presets:
-                            if str(r.get("name") or "").strip() == _csel:
-                                st.session_state["event_exclude_comment_nicks_text"] = str(r.get("text") or "")
-                                break
-                        st.rerun()
-            with _crh4:
-                if st.button("저장", key="event_comment_nick_preset_save_btn", use_container_width=True):
-                    _cnm = str(st.session_state.get("event_comment_nick_preset_name_input") or "").strip()
-                    upsert_event_nick_preset(
-                        "comment",
-                        _cnm,
-                        str(st.session_state.get("event_exclude_comment_nicks_text") or ""),
-                    )
-                    st.rerun()
-            with _crh5:
-                if st.button("삭제", key="event_comment_nick_preset_del_btn", use_container_width=True):
-                    _csel = str(st.session_state.get("event_comment_nick_preset_sel") or "").strip()
-                    if _csel and _csel != "— 선택 —":
-                        delete_event_nick_preset("comment", _csel)
-                    st.rerun()
         _hdr_coll_s = st.session_state.get("event_collection_start_date_input", _collection_default_start)
         _hdr_coll_e = st.session_state.get("event_collection_end_date_input", _collection_default_end)
         if "event_collection_period_expanded" not in st.session_state:
@@ -2470,6 +2422,18 @@ if st.session_state.event_run_pending and st.session_state.event_running:
                         pass
                 return None
 
+            # URL → 게시판 이름 매핑 (scrape_board_list가 board_name을 못 구할 때 보충)
+            _url_to_board_name: dict[str, str] = {}
+            for _eb in (st.session_state.get("event_extracted_boards") or []):
+                _eb_url = str(_eb.get("url") or "").strip()
+                _eb_name = str(_eb.get("name") or "").strip()
+                if _eb_url and _eb_name:
+                    _url_to_board_name[_eb_url] = _eb_name
+
+            # 기존 수집 완료된 post_id → 상세 방문 생략 (시간 절약)
+            _existing_post_ids = get_existing_post_ids(EVENT_DB_PATH)
+            _skipped_existing = 0
+
             for b_idx, board_url_each in enumerate(board_urls, start=1):
                 if st.session_state.get("event_stop_requested", False):
                     update_logs("🛑 사용자 요청으로 실행을 중단합니다.")
@@ -2522,6 +2486,13 @@ if st.session_state.event_run_pending and st.session_state.event_running:
                     _set_event_progress(b_idx / max(1, len(board_urls)), f"게시판 {b_idx}/{len(board_urls)} 완료(대상 없음)")
                     continue
 
+                # board_name이 비어있는 article에 대해 URL 매핑으로 보충
+                _known_bn = _url_to_board_name.get(board_url_each, "")
+                if _known_bn:
+                    for _art in articles:
+                        if not str(_art.get("board_name") or "").strip():
+                            _art["board_name"] = _known_bn
+
                 try:
                     _date_counts: dict[str, int] = {}
                     for _a in articles:
@@ -2549,6 +2520,13 @@ if st.session_state.event_run_pending and st.session_state.event_running:
                     total_prog = ((b_idx - 1) + board_prog) / max(1, len(board_urls))
                     _set_event_progress(total_prog, f"진행률 {int(total_prog * 100)}% · 게시판 {b_idx}/{len(board_urls)}")
                     total_articles_processed += 1
+
+                    # 이미 수집된 글은 상세 방문 건너뛰기
+                    _art_pid = str(art.get("post_id") or "").strip()
+                    if _art_pid and _art_pid in _existing_post_ids:
+                        _skipped_existing += 1
+                        continue
+
                     list_author_nick = str(art.get("nickname") or "unknown").strip() or "unknown"
 
                     # 게시글 별명 필터: 제외(목록 작성자면 스킵) / 포함(목록 외 작성자면 스킵)
@@ -2823,7 +2801,7 @@ if st.session_state.event_run_pending and st.session_state.event_running:
                     )
                 _done_parts.append(
                     f"(별명필터 스킵: 게시글 {excluded_post_total}, 댓글 {excluded_total}, 날짜미확인 {unknown_date_excluded_total}, "
-                    f"기간완화글 {date_filter_relaxed_articles})"
+                    f"기간완화글 {date_filter_relaxed_articles}, 기수집스킵 {_skipped_existing})"
                 )
             done_msg = "✅ 완료: " + " ".join(_done_parts) + f" — {_fmt_duration(_total_elapsed)}"
             _avg_final = (_total_elapsed / total_articles_processed) if total_articles_processed > 0 else 0
