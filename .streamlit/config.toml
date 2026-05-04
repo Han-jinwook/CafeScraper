@@ -14,6 +14,6 @@ textColor = "#191c1d"
 font = "sans serif"
 
 [server]
-headless = false
+headless = true
 port = 8501
 address = "localhost"

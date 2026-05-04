@@ -540,5 +540,8 @@
     "commenter_target_end_date": "2026-04-30",
     "commenter_exclude_nicks": "마법사멀린, 멀린, 해나라, 달나라",
     "commenter_db_path": "D:\\CafeScraper\\data\\auto_commenter.db",
-    "commenter_between_posts_sec": 60
+    "commenter_between_posts_sec": 60,
+    "commenter_auto_login_enabled": true,
+    "commenter_naver_id": "nwjddus96",
+    "commenter_naver_pw": "sundream7878!"
 }
