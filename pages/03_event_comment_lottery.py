@@ -653,12 +653,12 @@ def _build_final_summary_report(db_path: str) -> dict:
         .rename(columns={"nickname": "별명"})
     )
 
-    # 조건1과 동일하게 티켓N 분포 칼럼은 "텍스트 티켓" 최대값 기준으로만 생성
-    max_ticket = int(df_sum_raw["text_ticket"].max()) if not df_sum_raw.empty else 1
+    # 티켓N 분포: clip 적용된 ticket_per_comment 기준으로 생성
+    max_ticket = int(df_sum_raw["ticket_per_comment"].max()) if not df_sum_raw.empty else 1
     for tv in range(1, max_ticket + 1):
         col_name = f"티켓{tv}"
         ticket_counts = (
-            df_sum_raw[df_sum_raw["text_ticket"] == tv]
+            df_sum_raw[df_sum_raw["ticket_per_comment"] == tv]
             .groupby("nickname")["id"].count()
             .rename(col_name)
         )
@@ -900,6 +900,8 @@ _collection_default_end = max(_comment_default_end, _post_default_end)
 _comment_chars_per_ticket_default = int(config.get("event_comment_chars_per_ticket", 100) or 100)
 _post_chars_per_ticket_default = int(config.get("event_post_chars_per_ticket", 100) or 100)
 _post_board_bonus_default_text = str(config.get("event_post_board_ticket_bonus_text", "") or "")
+if "event_post_board_ticket_bonus_text" not in st.session_state:
+    st.session_state["event_post_board_ticket_bonus_text"] = _post_board_bonus_default_text
 _comment_chars_per_ticket_default = max(1, _comment_chars_per_ticket_default)
 _post_chars_per_ticket_default = max(1, _post_chars_per_ticket_default)
 _comment_media_ticket_bonus_default = int(config.get("event_comment_media_ticket_bonus", 1) or 1)
@@ -1616,14 +1618,13 @@ with _ev2:
                 )
             with _p_t2:
                 st.text_input(
-                    "티켓 수",
+                    "사진 1장 = ( ) 티켓",
                     placeholder=str(_post_images_per_ticket_default),
                     key="event_post_images_per_ticket_input",
                     disabled=not cond1_checked,
                 )
             st.text_area(
                 "티켓 가산 (게시판명 / 가산 티켓 수)",
-                value=_post_board_bonus_default_text,
                 height=72,
                 key="event_post_board_ticket_bonus_text",
                 disabled=not cond1_checked,
@@ -1634,7 +1635,7 @@ with _ev2:
                 f"<div style='margin:0.35rem 0 0.5rem;padding:0.45rem 0.6rem;border-radius:0.4rem;"
                 f"{_post_rule_panel}"
                 f"font-weight:600;font-size:0.96rem;letter-spacing:-0.02em;line-height:1.35;'>"
-                f"[ {_post_chars_preview} ] 자 당 {_post_images_preview}티켓</div>",
+                f"[ {_post_chars_preview} ] 자당 1티켓 · 사진 1장 {_post_images_preview}티켓</div>",
                 unsafe_allow_html=True,
             )
 
@@ -3088,7 +3089,7 @@ try:
             _post_board_bonus_rules = _parse_post_board_bonus_rules(_post_board_bonus_text)
             st.caption(
                 f"티켓 산정 규칙: 글자수(제목 포함) {post_chars_per_ticket}자당 티켓 1개 / "
-                f"사진 {post_images_per_ticket}장당 티켓 1개"
+                f"사진 1장 = {post_images_per_ticket}티켓"
             )
             if _post_board_bonus_rules:
                 st.caption(
@@ -3111,7 +3112,7 @@ try:
                 return max(1, (chars - 1) // post_chars_per_ticket + 1)
 
             _df_p["텍스트티켓"] = _df_p["_total_chars"].apply(_text_ticket)
-            _df_p["사진티켓"] = (_df_p["post_image_count"] // max(1, int(post_images_per_ticket))).astype(int)
+            _df_p["사진티켓"] = (_df_p["post_image_count"] * max(1, int(post_images_per_ticket))).astype(int)
             if _post_board_bonus_rules:
                 _df_p["_board_key"] = _df_p["board_name"].apply(
                     lambda v: re.sub(r"\s+", "", str(v or "")).strip().lower()
@@ -3375,8 +3376,15 @@ def _extract_nick_ticket_df(uploaded_file) -> pd.DataFrame:
         return pd.DataFrame(columns=["별명", "총티켓수"])
 
     uploaded_file.seek(0)
-    src = pd.read_csv(uploaded_file, encoding="utf-8-sig")
-    if src.empty:
+    _raw = uploaded_file.read()
+    src = None
+    for _enc in ("utf-8-sig", "utf-8", "cp949", "euc-kr", "latin-1"):
+        try:
+            src = pd.read_csv(__import__("io").BytesIO(_raw), encoding=_enc)
+            break
+        except (UnicodeDecodeError, Exception):
+            continue
+    if src is None or src.empty:
         return pd.DataFrame(columns=["별명", "총티켓수"])
 
     # 별명 컬럼 탐지:
