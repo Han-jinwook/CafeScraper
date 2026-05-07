@@ -34,6 +34,10 @@ st.set_page_config(
 # 커스텀 CSS: 판매용 UI 톤 정리(기능 영향 없음)
 st.markdown("""
 <style>
+    /* 사이드바 완전 숨김 */
+    [data-testid="stSidebar"] { display: none !important; }
+    [data-testid="collapsedControl"] { display: none !important; }
+
     /* 본문 가로폭·패딩: render_main_top_nav()가 `.block-container`로 전 페이지 통일 */
 
     /* 제목/소제목 간격 정리 */

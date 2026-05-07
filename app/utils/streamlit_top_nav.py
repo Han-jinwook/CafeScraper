@@ -57,6 +57,10 @@ def render_main_top_nav(*, active: str) -> None:
     st.markdown(
         f"""
         <style>
+            /* 사이드바 완전 숨김 (판매용: 페이지 이동은 상단 메뉴로만) */
+            [data-testid="stSidebar"] {{ display: none !important; }}
+            [data-testid="collapsedControl"] {{ display: none !important; }}
+
             /*
              * 본문 폭: app.py와 동일 max-width. 서브페이지도 `.block-container`에 직접 적용.
              */

@@ -981,6 +981,14 @@ with _ev1:
                     st.session_state._event_pending_clear_cafe_name_input = True
                     st.session_state._event_pending_clear_cafe_url_input = True
                     st.session_state._event_cafe_reset_done = True
+                    # config에서도 게시판 목록 제거 (복원 방지)
+                    _cfg_reset = dict(load_config() or {})
+                    _cfg_reset["event_extracted_boards"] = []
+                    _cfg_reset["event_selected_board_urls"] = []
+                    _cfg_reset["event_board_url"] = ""
+                    _cfg_reset["event_cafe_name"] = ""
+                    _cfg_reset["event_cafe_url"] = ""
+                    save_config(_cfg_reset)
                     st.rerun()
         if st.session_state.get("_event_cafe_reset_done"):
             st.session_state._event_cafe_reset_done = False
@@ -2511,7 +2519,10 @@ if st.session_state.event_run_pending and st.session_state.event_running:
                 except Exception:
                     pass
 
-                update_logs(f"✅ 게시판 {b_idx}/{len(board_urls)} 대상 게시글 {len(articles):,}개 확보. 댓글 수집 시작...")
+                if comment_enabled:
+                    update_logs(f"✅ 게시판 {b_idx}/{len(board_urls)} 대상 게시글 {len(articles):,}개 확보. 댓글 수집 시작...")
+                else:
+                    update_logs(f"✅ 게시판 {b_idx}/{len(board_urls)} 대상 게시글 {len(articles):,}개 확보. 게시글 분석 시작...")
                 for i, art in enumerate(articles):
                     if st.session_state.get("event_stop_requested", False):
                         update_logs("🛑 사용자 요청으로 실행을 중단합니다.")
@@ -2601,7 +2612,7 @@ if st.session_state.event_run_pending and st.session_state.event_running:
                                 resolved_author_nick = detail_author_nick
                         except Exception:
                             pass
-                    if not comment_enabled:
+                    if not comment_enabled and not _in_post_window(art):
                         save_event_post(
                             EVENT_DB_PATH,
                             art,
@@ -2612,7 +2623,10 @@ if st.session_state.event_run_pending and st.session_state.event_running:
                         )
 
                     title = (art.get("title") or "")[:30]
-                    update_logs(f"💬 ({i+1}/{len(articles)}) '{title}...' 댓글 조회 중")
+                    if comment_enabled:
+                        update_logs(f"💬 ({i+1}/{len(articles)}) '{title}...' 댓글 조회 중")
+                    else:
+                        update_logs(f"📝 ({i+1}/{len(articles)}) '{title}...' 게시글 분석 중")
                     try:
                         if comment_enabled:
                             art_url = art.get("url") or ""
@@ -2714,15 +2728,17 @@ if st.session_state.event_run_pending and st.session_state.event_running:
                                 f"신규 저장 {ins:,}개 (누적 신규 {inserted_total:,})"
                             )
                         else:
-                            # 댓글 조건 미선택일 때도 게시글 메타는 보존
-                            save_event_post(
-                                EVENT_DB_PATH,
-                                art,
-                                comments_seen=0,
-                                comments_saved=0,
-                                comments_excluded=0,
-                                author_nickname=resolved_author_nick,
-                            )
+                            # 조건(1) 전용: _in_post_window 아닌 글만 여기서 저장
+                            # (_in_post_window 글은 아래 상세분석 블록에서 저장)
+                            if not _in_post_window(art):
+                                save_event_post(
+                                    EVENT_DB_PATH,
+                                    art,
+                                    comments_seen=0,
+                                    comments_saved=0,
+                                    comments_excluded=0,
+                                    author_nickname=resolved_author_nick,
+                                )
 
                         if _in_post_window(art):
                             detail = detail_for_author
@@ -2987,6 +3003,7 @@ try:
     df_post = pd.read_sql_query(
         """
         SELECT
+            id,
             post_date,
             board_name,
             post_title,
@@ -3006,11 +3023,15 @@ try:
     if df_post.empty:
         st.info("조건1 게시글 분석 결과가 없습니다.")
     else:
-        st.dataframe(
+        # 선택 체크박스 컬럼 추가
+        df_post.insert(0, "선택", False)
+        _edited_post = st.data_editor(
             df_post,
             use_container_width=True,
             hide_index=True,
             column_config={
+                "선택": st.column_config.CheckboxColumn("선택", default=False),
+                "id": None,
                 "post_date": "날짜",
                 "board_name": "게시판명",
                 "post_title": st.column_config.TextColumn("게시글제목", width="large"),
@@ -3019,16 +3040,46 @@ try:
                 "post_title_char_count": st.column_config.NumberColumn("제목글자수", format="%d"),
                 "post_image_count": st.column_config.NumberColumn("사진수", format="%d"),
             },
+            key="post_analysis_editor",
         )
-        _post_result_bytes = df_post.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-        st.download_button(
-            "⬇️ 조건1 분석결과 다운로드",
-            data=_post_result_bytes,
-            file_name=_build_export_filename("조건1분석결과", include_period=True),
-            mime="text/csv",
-            use_container_width=True,
-            key="post_analysis_result_download_top",
-        )
+        _selected_post_ids = _edited_post[_edited_post["선택"] == True]["id"].tolist()
+
+        _post_btn1, _post_btn2, _post_btn3 = st.columns(3)
+        with _post_btn1:
+            _post_result_bytes = df_post.drop(columns=["선택", "id"]).to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+            st.download_button(
+                "⬇️ 분석결과 다운로드",
+                data=_post_result_bytes,
+                file_name=_build_export_filename("조건1분석결과", include_period=True),
+                mime="text/csv",
+                use_container_width=True,
+                key="post_analysis_result_download_top",
+            )
+        with _post_btn2:
+            _del_disabled = len(_selected_post_ids) == 0
+            if st.button(
+                f"🗑️ 선택 삭제 ({len(_selected_post_ids)}건)",
+                use_container_width=True,
+                disabled=_del_disabled,
+                key="post_analysis_delete_selected",
+            ):
+                try:
+                    _conn_del = sqlite3.connect(EVENT_DB_PATH, timeout=30.0)
+                    _cur_del = _conn_del.cursor()
+                    _cur_del.executemany(
+                        "DELETE FROM event_post_analysis WHERE id = ?",
+                        [(int(pid),) for pid in _selected_post_ids],
+                    )
+                    _conn_del.commit()
+                    _conn_del.close()
+                    st.toast(f"✅ {len(_selected_post_ids)}건 삭제 완료")
+                    time.sleep(0.5)
+                    st.rerun()
+                except Exception as _del_e:
+                    st.error(f"삭제 실패: {_del_e}")
+        with _post_btn3:
+            if st.button("🔄 집계 다시 실행", use_container_width=True, key="post_analysis_rerun_ticket"):
+                st.rerun()
     if not df_post.empty:
         st.markdown("#### 🎫 조건1 참여자 티켓수 집계")
         _post_sum_indent, _post_sum_body = st.columns([0.05, 0.95])
@@ -3324,7 +3375,7 @@ def _extract_nick_ticket_df(uploaded_file) -> pd.DataFrame:
         return pd.DataFrame(columns=["별명", "총티켓수"])
 
     uploaded_file.seek(0)
-    src = pd.read_csv(uploaded_file)
+    src = pd.read_csv(uploaded_file, encoding="utf-8-sig")
     if src.empty:
         return pd.DataFrame(columns=["별명", "총티켓수"])
 

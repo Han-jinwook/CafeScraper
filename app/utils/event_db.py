@@ -292,12 +292,30 @@ def update_commenter_target_comment_status(
         conn.close()
 
 
+def get_commenter_targets_count(db_path: str) -> int:
+    """commenter_targets 행 수 (테이블 없음/쿼리 실패 시 0)."""
+    conn = sqlite3.connect(db_path, timeout=30.0)
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT COUNT(*) FROM commenter_targets")
+        row = cur.fetchone()
+        return int(row[0]) if row and row[0] is not None else 0
+    except Exception:
+        return 0
+    finally:
+        conn.close()
+
+
 def clear_commenter_targets(db_path: str) -> None:
     """자동댓글러 타겟 스냅샷 테이블만 전부 삭제 (다른 이벤트 테이블은 유지)."""
     conn = sqlite3.connect(db_path, timeout=30.0)
     cur = conn.cursor()
     try:
         cur.execute("DELETE FROM commenter_targets")
+        try:
+            cur.execute("DELETE FROM sqlite_sequence WHERE name = 'commenter_targets'")
+        except Exception:
+            pass
         conn.commit()
     finally:
         conn.close()

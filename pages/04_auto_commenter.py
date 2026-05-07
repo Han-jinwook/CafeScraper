@@ -15,11 +15,12 @@ from selenium.webdriver.common.by import By
 from app.products.commenter.bot import NaverCafeCommenter
 from app.utils.paths import get_config_path, resolve_commenter_db_path
 from app.utils.event_db import (
+    clear_commenter_targets,
+    get_commenter_targets_count,
     init_event_db,
     load_commenter_targets,
     replace_commenter_targets,
     update_commenter_target_comment_status,
-    clear_commenter_targets,
 )
 from app.utils.streamlit_brand import render_logo_png
 from app.utils.streamlit_input_history import inject_connect_history_suggestions
@@ -142,6 +143,10 @@ if "commenter_cafe_url_after_reset_save_mode" not in st.session_state:
     st.session_state.commenter_cafe_url_after_reset_save_mode = False
 if "commenter_auto_login_after_reset_save_mode" not in st.session_state:
     st.session_state.commenter_auto_login_after_reset_save_mode = False
+if "commenter_db_path_input" not in st.session_state:
+    st.session_state.commenter_db_path_input = str(config.get("commenter_db_path", "") or "")
+if "commenter_db_reset_confirm" not in st.session_state:
+    st.session_state.commenter_db_reset_confirm = False
 
 
 def _parse_cfg_date(val, fallback):
@@ -1171,6 +1176,92 @@ with _col3:
                     )
                 elif _show_preview:
                     st.caption("작업 진행 중에는 미리보기를 잠시 숨깁니다.")
+
+st.markdown("<div style='height:0.75rem'></div>", unsafe_allow_html=True)
+with st.container(border=True, key="commenter_settings_card_db"):
+    render_settings_card_title("DB 경로 / 초기화", icon="💾")
+    _commenter_env_db = (os.getenv("CAFESCRAPER_COMMENTER_DB_PATH") or "").strip()
+    if _commenter_env_db:
+        st.caption(
+            "환경변수 **`CAFESCRAPER_COMMENTER_DB_PATH`** 가 설정되어 있어 이 경로가 항상 우선합니다. "
+            "아래 입력란은 읽기 전용이며, 초기화도 해당 파일에 적용됩니다."
+        )
+        st.text_input(
+            "DB 파일 경로 (환경변수)",
+            value=_commenter_env_db,
+            disabled=True,
+            key="commenter_db_path_readonly_env",
+        )
+        _eff_commenter_db = str(Path(_commenter_env_db).expanduser().resolve())
+    else:
+        st.text_input(
+            "DB 경로",
+            key="commenter_db_path_input",
+            placeholder=r"D:\...\data\auto_commenter.db",
+            help="비우면 기본값(data/auto_commenter.db)입니다. 변경 후 💾 DB 경로 저장을 누르세요.",
+        )
+        _cfg_in = str(st.session_state.get("commenter_db_path_input", "") or "").strip()
+        _eff_commenter_db = str(resolve_commenter_db_path(_cfg_in if _cfg_in else None))
+
+    st.caption(f"실제 사용 경로: `{_eff_commenter_db}`")
+
+    _db_m1, _db_m2 = st.columns([1, 1])
+    with _db_m1:
+        st.metric("저장된 댓글 대상 글", f"{get_commenter_targets_count(_eff_commenter_db):,}건")
+    with _db_m2:
+        st.markdown("<div style='height: 1.85rem;'></div>", unsafe_allow_html=True)
+        if st.button(
+            "💾 DB 경로 저장",
+            use_container_width=True,
+            key="commenter_save_db_path_btn",
+            disabled=bool(_commenter_env_db),
+        ):
+            cfg_now = dict(load_config() or {})
+            cfg_now["commenter_db_path"] = str(st.session_state.get("commenter_db_path_input", "") or "").strip()
+            save_config(cfg_now)
+            config.update(cfg_now)
+            st.success("✅ DB 경로를 저장했습니다.")
+            time.sleep(0.6)
+            st.rerun()
+
+    st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
+    st.warning(
+        "**댓글 대상** 테이블(`commenter_targets`)만 비웁니다. 같은 DB 파일에 이벤트 수집 테이블이 있어도 **건드리지 않습니다**. "
+        "표에 남겨 둘 결과가 있으면 먼저 백업·다운로드 후 진행하세요."
+    )
+    st.checkbox(
+        "위 안내를 확인했으며, 저장된 댓글 대상을 삭제합니다. (복구 불가)",
+        key="commenter_db_reset_confirm",
+    )
+    if st.button(
+        "🗑️ 댓글 대상 DB 초기화",
+        type="primary",
+        use_container_width=True,
+        key="commenter_reset_db_btn",
+        disabled=(
+            _commenter_ui_busy()
+            or (not bool(st.session_state.get("commenter_db_reset_confirm")))
+        ),
+    ):
+        try:
+            try:
+                if st.session_state.get("commenter") and getattr(st.session_state.commenter, "driver", None):
+                    st.session_state.commenter.close()
+            except Exception:
+                pass
+            st.session_state.commenter = None
+            init_event_db(_eff_commenter_db)
+            clear_commenter_targets(_eff_commenter_db)
+            st.session_state.target_df = None
+            st.session_state.commenter_target_df_full = None
+            _commenter_reset_run_state()
+            st.session_state.comment_logs = []
+            st.session_state.commenter_db_reset_confirm = False
+            st.success("✅ 댓글 대상 DB를 초기화했습니다.")
+            time.sleep(0.8)
+            st.rerun()
+        except Exception as e:
+            st.error(f"DB 초기화 실패: {e}")
 
 # 실제 write_comment 루프는 파일 하단(표·메트릭 아래)에서 실행 →
 # 여기서 먼저 표가 그려지므로 직전까지 댓글결과가 보입니다.
