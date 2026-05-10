@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import html
-from urllib.parse import quote
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -16,34 +15,16 @@ PAGE_PAPERS = "pages/02_paper_collection.py"
 PAGE_EVENT = "pages/03_event_comment_lottery.py"
 PAGE_COMMENTER = "pages/04_auto_commenter.py"
 
-# (session active 키, URL 경로명, 표시 라벨) — 순서 고정
-_NAV_ENTRIES: tuple[tuple[str, str, str], ...] = (
-    ("app", "", "카페 수집"),
-    ("event", "event_comment_lottery", "이벤트 댓글 분석"),
-    ("papers", "paper_collection", "논문 수집"),
-    ("commenter", "auto_commenter", "자동 댓글러"),
+# (session active 키, 스크립트 경로, 표시 라벨) — 순서 고정.
+# `st.switch_page`로 같은 Streamlit 세션·탭 내 전환(외부 `<a href>` 새 탭·연결 끊김 완화).
+_NAV_PAGE_LINKS: tuple[tuple[str, str, str], ...] = (
+    ("app", PAGE_HOME, "카페 수집"),
+    ("event", PAGE_EVENT, "이벤트 댓글 분석"),
+    ("papers", PAGE_PAPERS, "논문 수집"),
+    ("commenter", PAGE_COMMENTER, "자동 댓글러"),
 )
 
-
-def _nav_href(page_name: str) -> str:
-    """Streamlit MPA `url_pathname` 규칙과 동일: 메인은 `/`, 나머지는 `/` + page_name(인코딩)."""
-    if not page_name:
-        return "/"
-    return "/" + quote(page_name, safe="_")
-
-
-def _html_top_nav_row(*, active: str) -> str:
-    parts: list[str] = [
-        '<nav class="cafe-monster-topnav" role="navigation" aria-label="메인 메뉴">'
-    ]
-    for nav_key, pathname, label in _NAV_ENTRIES:
-        href = _nav_href(pathname)
-        current = ' aria-current="page"' if active == nav_key else ""
-        parts.append(
-            f'<a href="{html.escape(href)}"{current}>{html.escape(label)}</a>'
-        )
-    parts.append("</nav>")
-    return "".join(parts)
+_TOP_NAV_CONTAINER_KEY = "cafe_monster_top_nav"
 
 
 def render_main_top_nav(*, active: str) -> None:
@@ -57,9 +38,19 @@ def render_main_top_nav(*, active: str) -> None:
     st.markdown(
         f"""
         <style>
-            /* 사이드바 완전 숨김 (판매용: 페이지 이동은 상단 메뉴로만) */
-            [data-testid="stSidebar"] {{ display: none !important; }}
+            /* 사이드바·멀티페이지 기본 네비 완전 숨김 (첫 페인트 후 잔상·유령 메뉴 최소화) */
+            section[data-testid="stSidebar"],
+            div[data-testid="stSidebar"],
+            [data-testid="stSidebar"] {{
+                display: none !important;
+                min-width: 0 !important;
+                width: 0 !important;
+            }}
             [data-testid="collapsedControl"] {{ display: none !important; }}
+            [data-testid="stSidebarNav"],
+            [data-testid="stSidebarNavItems"] {{
+                display: none !important;
+            }}
 
             /*
              * 본문 폭: app.py와 동일 max-width. 서브페이지도 `.block-container`에 직접 적용.
@@ -72,22 +63,22 @@ def render_main_top_nav(*, active: str) -> None:
                 margin-right: auto !important;
                 box-sizing: border-box !important;
             }}
-            /* 상단 메뉴: Streamlit column/page_link 조합이 세로로 쌓이는 환경 대비 — 순수 flex HTML */
-            nav.cafe-monster-topnav {{
-                display: flex !important;
-                flex-direction: row !important;
-                flex-wrap: nowrap !important;
-                gap: 0.5rem !important;
-                width: 100% !important;
-                box-sizing: border-box !important;
-                margin: 0 0 0.45rem 0 !important;
-                padding: 0 !important;
+            /* 상단 메뉴: switch_page 버튼 — 예전 HTML nav 링크와 동일한 칩 스타일 */
+            [class*="st-key-{_TOP_NAV_CONTAINER_KEY}"] {{
+                margin-bottom: 0.45rem !important;
             }}
-            nav.cafe-monster-topnav > a {{
+            [class*="st-key-{_TOP_NAV_CONTAINER_KEY}"] div[data-testid="column"] {{
                 flex: 1 1 0% !important;
                 min-width: 0 !important;
+            }}
+            [class*="st-key-{_TOP_NAV_CONTAINER_KEY}"] div[data-testid="stButton"] {{
+                width: 100% !important;
+            }}
+            [class*="st-key-{_TOP_NAV_CONTAINER_KEY}"] div[data-testid="stButton"] > button {{
+                width: 100% !important;
+                min-height: 2.55rem !important;
+                justify-content: center !important;
                 text-align: center !important;
-                text-decoration: none !important;
                 font-weight: 600 !important;
                 font-size: 0.92rem !important;
                 line-height: 1.35 !important;
@@ -98,20 +89,36 @@ def render_main_top_nav(*, active: str) -> None:
                 color: #191c1d !important;
                 box-sizing: border-box !important;
             }}
-            nav.cafe-monster-topnav > a:hover {{
+            [class*="st-key-{_TOP_NAV_CONTAINER_KEY}"] div[data-testid="stButton"] > button:not(:disabled):hover {{
                 background: #eef4ff !important;
+                border-color: #cfdbf3 !important;
+                color: #191c1d !important;
             }}
-            nav.cafe-monster-topnav > a[aria-current="page"] {{
+            [class*="st-key-{_TOP_NAV_CONTAINER_KEY}"] div[data-testid="stButton"] > button:disabled {{
                 background: #003629 !important;
                 border-color: #003629 !important;
                 color: #ffffff !important;
+                opacity: 1 !important;
+                cursor: default !important;
             }}
         </style>
         """,
         unsafe_allow_html=True,
     )
 
-    st.markdown(_html_top_nav_row(active=active), unsafe_allow_html=True)
+    with st.container(key=_TOP_NAV_CONTAINER_KEY):
+        cols = st.columns(4, gap="small")
+        for col, (nav_key, page_path, label) in zip(cols, _NAV_PAGE_LINKS, strict=True):
+            with col:
+                go = st.button(
+                    label,
+                    key=f"cm_topnav_{nav_key}",
+                    type="secondary",
+                    use_container_width=True,
+                    disabled=(active == nav_key),
+                )
+                if go:
+                    st.switch_page(page_path)
 
     # date_input 팝업(캘린더)의 월/요일 영문 라벨을 한국어로 보정
     components.html(

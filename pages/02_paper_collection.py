@@ -20,7 +20,11 @@ from app.utils.streamlit_top_nav import (
 )
 
 
-st.set_page_config(page_title="마케팅 몬스터 · 사이트 콘텐츠 수집", layout="wide")
+st.set_page_config(
+    page_title="마케팅 몬스터 · 사이트 콘텐츠 수집",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
 
 render_main_top_nav(active="papers")
 

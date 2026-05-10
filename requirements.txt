@@ -10,4 +10,5 @@ psutil==5.9.8
 streamlit==1.39.0
 pandas>=2.0.0
 pyperclip>=1.8.0
+pywebview>=5.0
 

@@ -31,7 +31,11 @@ from app.utils.streamlit_top_nav import (
 )
 from app.utils.naver_login import auto_login_naver_with_js
 
-st.set_page_config(page_title="댓글 자동화 - CafeScraper", layout="wide")
+st.set_page_config(
+    page_title="댓글 자동화 - CafeScraper",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
 
 render_main_top_nav(active="commenter")
 
@@ -531,7 +535,11 @@ with _col1:
         render_settings_card_title("카페 · 연결", icon="🏪")
         if st.session_state.pop("_commenter_pending_clear_cafe_name_input", False):
             st.session_state.commenter_cafe_name_input = ""
-        st.text_input("카페명", key="commenter_cafe_name_input")
+        st.text_input(
+            "카페명",
+            key="commenter_cafe_name_input",
+            on_change=lambda: None,
+        )
         try:
             _ev_url_col, _ev_btn_col = st.columns([5, 1], gap="small", vertical_alignment="center")
         except TypeError:
@@ -539,7 +547,11 @@ with _col1:
         with _ev_url_col:
             if st.session_state.pop("_commenter_pending_clear_cafe_url_input", False):
                 st.session_state.commenter_cafe_url_input = ""
-            cafe_url = st.text_input("카페 URL", key="commenter_cafe_url_input")
+            cafe_url = st.text_input(
+                "카페 URL",
+                key="commenter_cafe_url_input",
+                on_change=lambda: None,  # 엔터 시 불필요한 전체 리렌더/에러 방지
+            )
         _inject_commenter_cafe_history_suggestions(
             (config.get("commenter_cafe_name_history", []) or []) + [str(config.get("commenter_cafe_name", "") or "")],
             (config.get("commenter_cafe_url_history", []) or []) + [str(config.get("commenter_cafe_url", "") or "")],
@@ -632,12 +644,18 @@ with _col1:
                     st.session_state.commenter_naver_id_input = str(config.get("commenter_naver_id", "") or "")
                 if "commenter_naver_pw_input" not in st.session_state:
                     st.session_state.commenter_naver_pw_input = str(config.get("commenter_naver_pw", "") or "")
-                st.text_input("네이버 아이디", key="commenter_naver_id_input", placeholder="아이디 입력")
+                st.text_input(
+                    "네이버 아이디",
+                    key="commenter_naver_id_input",
+                    placeholder="아이디 입력",
+                    on_change=lambda: None,
+                )
                 st.text_input(
                     "네이버 비밀번호",
                     key="commenter_naver_pw_input",
                     type="password",
                     placeholder="비밀번호 입력",
+                    on_change=lambda: None,
                 )
             with _ev_al_btn_col:
                 st.markdown("<div style='margin-top: 88px;'></div>", unsafe_allow_html=True)

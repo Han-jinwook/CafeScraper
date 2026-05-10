@@ -34,7 +34,11 @@ from app.utils.streamlit_top_nav import (
 )
 
 
-st.set_page_config(page_title="이벤트 댓글 수집", layout="wide")
+st.set_page_config(
+    page_title="이벤트 댓글 수집",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
 
 render_main_top_nav(active="event")
 

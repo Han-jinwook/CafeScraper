@@ -29,6 +29,7 @@ st.set_page_config(
     page_title="[카페 몬스터] 카페 추출기 Pro V1.0",
     page_icon="☕",
     layout="wide",
+    initial_sidebar_state="collapsed",
 )
 
 # 커스텀 CSS: 판매용 UI 톤 정리(기능 영향 없음)
