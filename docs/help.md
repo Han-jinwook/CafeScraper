@@ -1,196 +1,29 @@
-# 인수인계 메모 (2026-04-30 최종)
+# 작업 인수인계 (Help)
 
-## 대상
-
-- 기능: `pages/04_auto_commenter.py` (자동 댓글러)
-- 관련 로직:
-  - UI/플로우: `pages/04_auto_commenter.py`
-  - 댓글 실행: `app/products/commenter/bot.py`
-  - 타겟 스냅샷 DB: `app/utils/event_db.py` (`commenter_targets`)
-
----
-
-## 핵심 이슈: 1순위 원인 판단
-
-### 증상
-
-```
-[commenter/write] 입력창 셀렉터: .comment_inbox_text
-[commenter/write] 붙여넣기 후 입력 길이=0 미리보기=''
-```
-
-- DOM에서 `.comment_inbox_text`는 잡히지만, 붙여넣기/JS 주입/send_keys 모두 길이 0.
-- "요소를 못 찾았다"가 아니라, **찾은 요소에 값을 넣어도 네이버 에디터 내부 상태가 안 바뀜**.
-
-### 유력 원인
-
-> `.comment_inbox_text`는 "보이는 댓글창 영역"일 뿐, 실제 텍스트가 들어가는 editable root가 아닐 가능성이 가장 높다.
-
-네이버 최신 에디터 특성:
-- `input`/`textarea`가 아닌 `contenteditable` div/span 구조
-- React류 프론트: 단순 DOM 값 변경만으로 내부 상태 갱신 안 됨
-- SyntheticEvent가 감싸므로 브라우저 이벤트만으로 앱 상태 반영 안 될 수 있음
-
-### 결론
-
-> 지금 문제는 "댓글 문구" 문제가 아니라 **"입력 sink 탐색 + 에디터 이벤트 반영"** 문제다.
-
----
-
-## 해결 방향: write_comment() 재설계
-
-### 기존 흐름 (실패)
-
-```
-.comment_inbox_text 찾기 → paste → 길이=0 → fallback → 그래도 0 → fail
-```
-
-### 신규 흐름
-
-```
-댓글 영역 클릭
-→ 실제 입력 후보 전체 탐색 (iframe 포함)
-→ 후보별 입력 시도 (send_keys → paste → execCommand → JS injection)
-→ 입력 반영 검증
-→ 성공한 후보로 등록 버튼 클릭
-→ 댓글 DOM 반영 확인
-→ success/fail 기록
-```
-
-### 입력 후보 탐색 순서
-
-1. iframe 내부까지 순회
-2. `textarea`
-3. `input[type=text]`
-4. `[contenteditable="true"]`
-5. `[role="textbox"]`
-6. `.comment_inbox_text` 하위의 contenteditable 요소
-7. 클릭 후 `activeElement` 또는 activeElement의 상위 contenteditable 요소
-
-### 입력 방식 우선순위
-
-| 순위 | 방식 | 비고 |
-|------|------|------|
-| 1 | click + send_keys | 가장 인간적, contenteditable에 잘 먹음 |
-| 2 | clipboard paste (Ctrl+V) | 포커스가 올바르면 유효 |
-| 3 | `execCommand("insertText")` | 구형이지만 에디터에서 의외로 유효 |
-| 4 | native value setter + input/change event | textarea/input용 |
-| 5 | innerText/textContent + beforeinput/input/keydown/keyup/blur | contenteditable용 |
-
-### 입력 검증
-
-- `input`/`textarea`: `.value` 길이
-- `contenteditable`: `innerText` 또는 `textContent` 길이
-- 길이 0이면 절대 등록 버튼 클릭하지 않음
-
-### 등록 후 성공 판정
-
-```python
-def is_comment_posted(driver, comment_text):
-    short = comment_text[:20]
-    xpath = f"//*[contains(normalize-space(.), {repr(short)})]"
-    WebDriverWait(driver, 10).until(
-        EC.presence_of_element_located((By.XPATH, xpath))
-    )
-```
-
-- 등록 버튼 클릭 = success 처리 제거
-- 댓글 목록 DOM에 방금 입력한 본문 일부 출현 확인 후 success
-
-### 실패 로그 필수 항목
-
-- 찾은 후보 셀렉터, tagName, contenteditable 여부, role, className
-- activeElement 정보, iframe 내부 여부
-- 입력 방식별 결과 길이
-
----
-
-## 진단용 JS (후보 탐색 스크립트)
-
-```javascript
-(() => {
-  const candidates = [];
-  const push = (el, reason) => {
-    if (!el) return;
-    candidates.push({
-      reason, tag: el.tagName, id: el.id, className: el.className,
-      role: el.getAttribute("role"),
-      contenteditable: el.getAttribute("contenteditable"),
-      isContentEditable: el.isContentEditable,
-      text: (el.innerText || el.textContent || el.value || "").slice(0, 80)
-    });
-  };
-  document.querySelectorAll('textarea, input[type="text"], [contenteditable="true"], [role="textbox"]').forEach(el => push(el, "global"));
-  document.querySelectorAll('.comment_inbox_text').forEach(box => {
-    push(box, ".comment_inbox_text");
-    box.querySelectorAll('textarea, input[type="text"], [contenteditable="true"], [role="textbox"]').forEach(el => push(el, "inside-comment_inbox_text"));
-  });
-  push(document.activeElement, "activeElement");
-  return candidates;
-})();
-```
-
----
-
-## 상태머신 (UI 버튼 활성 규칙)
-
-```python
-COMMENTER_STATE = {
-    "idle": "초기 상태",
-    "browser_ready": "브라우저 열림",
-    "collecting": "타겟 수집 중",
-    "ready": "타겟 수집 완료",
-    "running": "댓글 작성 중",
-    "stopping": "중지 요청됨",
-    "paused": "중지됨",
-    "done": "완료",
-    "error": "오류",
-}
-```
-
-| 상태 | 허용 동작 |
-|------|-----------|
-| idle/browser_ready | 수집 가능 |
-| collecting | 모든 실행 버튼 잠금 |
-| ready/paused/done | 댓글 시작 가능 |
-| running/stopping | 중지만 가능 |
-| error | 재시작 가능 |
-
----
-
-## Streamlit removeChild 문제 (후순위)
-
-- 서버 에러가 아닌 클라이언트 DOM 갱신 이슈
-- 우회: `st.empty()` 고정 placeholder, 동적 위젯 최소화, 갱신 간격 제한
-- 입력 문제 해결 후 안정화 단계에서 처리
-
----
-
-## 운영 규칙
-
-### 세션 정책 (하루 최대 6세션 권장)
 | 항목 | 값 |
-|------|------|
-| 댓글 간격 | 30~120초 랜덤 |
-| 세션당 최대 | 60건 |
-| 세션 간 휴식 | 1시간 자동 대기 |
-| 하루 최대 | 6세션 (360건) |
-
-- 60건 처리 후 자동으로 1시간 휴식 → 이후 자동 재개
-- 이미 성공한 건은 자동 스킵
-
-### 일시중지
-- `⏹ 댓글 작성 중지`는 현재 글 1건 완료 후 다음 루프 진입 전에 멈춤
-
-### 다시 하고 싶을 때
-- 그냥 `🚀 댓글 작성 시작` 다시 누르면 됨
-- 이미 성공한 건은 자동 패스
-
-### 처음부터 다시 (타겟 재수집)
-- `2단계: 타겟 목록 수집` 재실행
+|------|-----|
+| **제목** | 작업 인수인계 (Help) |
+| **버전** | 1.3.5 (`version.txt`와 동기) |
+| **일시** | 2026-05-10 (본문 메모 기준) |
 
 ---
 
-## 참고
+## 1. 현재까지 진행된 주요 작업
+* **UI 및 네비게이션 개선**
+  * 사이드바가 잠깐 나타나는 '유령 현상' 제거 (`initial_sidebar_state="collapsed"` 및 CSS 강제 숨김 처리).
+  * 상단 메뉴 이동 시 새 탭이 열리거나 먹통이 되는 현상 완화 (`<a href>` 대신 `st.button` + `st.switch_page` 적용).
+  * `run_app.py`에서 브라우저 호출 시 기존 창의 새 탭(`new=2`)으로 열리도록 수정.
+* **입력 폼 에러 방지 (`04_auto_commenter.py`)**
+  * 카페명, 카페 URL, 네이버 계정 입력 칸에서 엔터(Enter)를 칠 때 불필요한 새로고침(rerun)이 발생하며 에러가 터지는 문제 수정 (`on_change=lambda: None` 추가).
+* **빌드 스크립트 개선 (`build.bat`, `scripts/pack_dist.ps1`)**
+  * **버전·ZIP 이름:** 프로젝트 루트 `version.txt`에 **한 줄**로 semver 적기 (예: `1.3.1`). 빌드 결과 ZIP은 **`cafescraper_V1.3.1.zip`** (소문자 `cafescraper`, 버전 앞 `V`, 공백 없음 — 경로 호환). 다음 릴리스 때는 `version.txt`만 올린 뒤 `build.bat`.
+  * 빌드 전 `build/`·`dist\CafeScraper/`·**현재 버전과 동일한** `cafescraper_V*.zip`만 삭제 후 압축. **이전 버전 zip은 그대로 두어 보관 가능.**
+  * **산출물 위치:** PyInstaller 결과는 **`프로젝트폴더\dist\CafeScraper\`**. 배포용 압축은 **`프로젝트폴더\cafescraper_V{version}.zip`**.
 
-- 2026-04-09 `03_event_comment_lottery` 관련 메모는 별도 브랜치/히스토리 참고.
+## 2. 다음 세션에서 확인 및 해결해야 할 문제 (현재 에러 상태)
+* **전반적인 안정성 및 에러 점검:** 
+  * 현재 테스트 과정에서 산발적인 에러가 계속 발생하고 있음. 다른 PC에서 테스트 시 발생하는 구체적인 에러 로그 확인 필요.
+* **Connection Error 점검:** 
+  * 네비게이션을 `switch_page`로 바꿨으나, 여전히 세션이 끊기거나(Connection error) 상태가 초기화되는 엣지 케이스가 있는지 점검해야 함.
+* **자동 댓글러 전체 플로우 테스트:** 
+  * 입력 폼 수정 후, 실제 게시판 스캔 -> 타겟 수집 -> 댓글 작성까지의 전체 프로세스가 중단 없이 매끄럽게 진행되는지 교차 검증 필요.

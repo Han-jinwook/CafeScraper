@@ -5,7 +5,7 @@ gatherUsageStats = false
 [client]
 showSidebarNavigation = false
 
-# CafeMonster — assets/stitch-reference/monster_logic_pro/DESIGN.md 토큰 (UI만)
+# 앱 UI 테마 (primary 등)
 [theme]
 primaryColor = "#003629"
 backgroundColor = "#f8fafb"

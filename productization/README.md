@@ -2,4 +2,4 @@
 
 워크스페이스 생성, `profiles.json`, 라이선스 런타임 등 **코드·설정**은 이 폴더를 사용합니다.
 
-**문서** (제품화 안내, 3Monster 브랜드, Stitch 프롬프트 등)는 모두 **[`docs/productization/`](../docs/productization/README.md)** 에 있습니다.
+제품 설명·기능·DB는 저장소 루트의 `docs/기능명세서.md`, `docs/architecture/schema.md`를 기준으로 합니다.
