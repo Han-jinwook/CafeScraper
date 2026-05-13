@@ -65,6 +65,7 @@ def _wait_streamlit_http(url: str, timeout_sec: float = 120.0) -> None:
     deadline = time.time() + timeout_sec
     while time.time() < deadline:
         try:
+            # localhost 대신 127.0.0.1 사용
             req = urllib.request.Request(url, headers={"User-Agent": "CafeScraper/1"})
             urllib.request.urlopen(req, timeout=5)
             return
@@ -75,10 +76,15 @@ def _wait_streamlit_http(url: str, timeout_sec: float = 120.0) -> None:
 
 def _run_streamlit_bootstrap(app_script: str, port: int) -> None:
     """반드시 프로세스의 메인 스레드에서 호출 (signal 등록)."""
-    import streamlit.config as _st_cfg
+    import os
 
-    _st_cfg.set_option("global.developmentMode", False)
-    from streamlit.web.bootstrap import run as st_run
+    import streamlit.config as _st_cfg
+    from streamlit.web import bootstrap as _st_bootstrap
+
+    app_script = os.path.abspath(app_script)
+    # CLI(`streamlit run`)과 동일: 플래그 옵션은 load_config_options로 반드시 먼저 반영해야
+    # server.headless 등이 사용자 전역 config에 밀려 브라우저 자동 오픈되는 일이 없다.
+    _st_cfg._main_script_path = app_script
 
     flag_options = {
         "server.port": port,
@@ -90,6 +96,10 @@ def _run_streamlit_bootstrap(app_script: str, port: int) -> None:
         "server.enableCORS": False,
         "server.enableXsrfProtection": False,
     }
+    _st_bootstrap.load_config_options(flag_options=flag_options)
+
+    from streamlit.web.bootstrap import run as st_run
+
     st_run(
         main_script_path=app_script,
         is_hello=False,
@@ -216,7 +226,7 @@ def main() -> None:
     env["STREAMLIT_SERVER_PORT"] = str(port)
     env["STREAMLIT_BROWSER_GATHER_USAGE_STATS"] = "false"
     env["STREAMLIT_GLOBAL_DEVELOPMENT_MODE"] = "false"
-    env["STREAMLIT_BROWSER_SERVER_PORT"] = str(port)
+    env["STREAMLIT_SERVER_ADDRESS"] = "127.0.0.1"
 
     child = _popen_streamlit_child(port, exe_dir, env)
 
@@ -241,15 +251,15 @@ def main() -> None:
 
     if not use_browser:
         _try_webview(url, exe_dir, child)
+    else:
+        try:
+            import webbrowser
 
-    try:
-        import webbrowser
-
-        # new=2: 가능한 경우 기존 브라우저 창에서 새 탭으로 열기 (새 창 단독 실행 완화).
-        _boot_log(exe_dir, f"외부 브라우저(새 탭 시도): {url}")
-        webbrowser.open(url, new=2, autoraise=True)
-    except OSError as e:
-        logging.exception("브라우저 오픈 실패: %s", e)
+            # new=2: 가능한 경우 기존 브라우저 창에서 새 탭으로 열기
+            _boot_log(exe_dir, f"외부 브라우저(새 탭 시도): {url}")
+            webbrowser.open(url, new=2, autoraise=True)
+        except OSError as e:
+            logging.exception("브라우저 오픈 실패: %s", e)
 
     try:
         child.wait()

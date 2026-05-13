@@ -1013,7 +1013,7 @@ with _ev1:
                 st.session_state.pop("event_naver_id_input", None)
                 st.session_state.pop("event_naver_pw_input", None)
             if "event_auto_login_enabled_input" not in st.session_state:
-                st.session_state.event_auto_login_enabled_input = bool(config.get("event_auto_login_enabled", False))
+                st.session_state.event_auto_login_enabled_input = bool(config.get("event_auto_login_enabled", True))
             event_auto_login_enabled = st.checkbox(
                 "브라우저 열 때 자동로그인 실행",
                 key="event_auto_login_enabled_input",
@@ -1830,9 +1830,6 @@ with _ev2:
             config["event_naver_id"] = str(event_naver_id or "").strip()
             config["event_naver_pw"] = str(event_naver_pw or "")
             config["event_extracted_boards"] = st.session_state.get("event_extracted_boards", [])
-            config["event_db_path"] = str(
-                st.session_state.get("event_db_path_input", config.get("event_db_path", ""))
-            ).strip()
             save_config(config)
             _queue_ticket_inputs_materialize_after_save(config)
             st.success("✅ 설정이 저장되었습니다.")
@@ -1841,22 +1838,49 @@ with _ev2:
 
 with _ev3:
     with st.container(border=True, key="event_settings_card_3"):
-        render_settings_card_title("DB 경로/초기화", icon="💾")
-        event_db_path_text = st.text_input(
-            "DB 경로",
-            value=str(config.get("event_db_path", "")),
-            placeholder=r"D:\CafeScraper\data\event_analysis.db",
-            key="event_db_path_input",
+        render_settings_card_title("데이터/DB", icon="💾")
+        db_full_path = os.path.abspath(EVENT_DB_PATH)
+        exists = os.path.exists(db_full_path)
+        try:
+            size_mb = os.path.getsize(db_full_path) / (1024 * 1024) if exists else 0.0
+            mtime = (
+                datetime.fromtimestamp(os.path.getmtime(db_full_path)).strftime("%Y-%m-%d %H:%M:%S")
+                if exists
+                else "-"
+            )
+        except Exception:
+            size_mb, mtime = 0.0, "-"
+        st.caption(f"경로: `{db_full_path}`")
+        st.caption(f"파일: {'존재함' if exists else '없음'} · 크기: {size_mb:.2f}MB · 수정: {mtime}")
+        st.caption(
+            "경로를 바꾸려면 `crawler_config.json`의 `event_db_path` 또는 환경변수 `CAFESCRAPER_EVENT_DB_PATH`를 사용한 뒤 앱을 다시 시작하세요."
         )
+
         _ec1, _ec2, _ec3 = st.columns(3)
         _ec1.metric("저장 게시글", f"{get_event_posts_count(EVENT_DB_PATH):,}개")
         _ec2.metric("수집 댓글", f"{get_event_comments_count(EVENT_DB_PATH):,}건")
         _ec3.metric("등급별 방문수", f"{get_event_mentor_visits_count(EVENT_DB_PATH):,}행")
+
         st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
-        st.warning("초기화하지 않으면 데이터가 계속 누적됩니다. 기존 작업 결과가 필요하면 먼저 CSV/리포트를 다운로드한 뒤 초기화를 진행하세요.")
-        if st.button("🗑️ 이벤트 DB 초기화", type="primary", use_container_width=True, key="reset_event_db_btn"):
+        st.warning(
+            "이벤트 **게시글·댓글·분석·멘토 방문** 데이터를 모두 삭제합니다. 필요하면 먼저 CSV/리포트를 내려받으세요."
+        )
+        st.checkbox(
+            "위 안내를 확인했으며, 이벤트 DB 데이터를 삭제합니다. (복구 불가)",
+            key="event_data_reset_confirm",
+        )
+        _event_busy = bool(
+            st.session_state.get("event_running") or st.session_state.get("event_run_pending")
+        )
+        if st.button(
+            "🗑️ 데이터 초기화",
+            type="primary",
+            use_container_width=True,
+            key="reset_event_db_btn",
+            disabled=_event_busy or (not bool(st.session_state.get("event_data_reset_confirm"))),
+            help="이벤트 수집 실행 중에는 사용할 수 없습니다. 먼저 중단하세요.",
+        ):
             try:
-                # DB 초기화는 새 작업 시작 신호로 간주: 브라우저/실행 상태도 함께 리셋
                 try:
                     if st.session_state.get("event_crawler") and getattr(st.session_state.event_crawler, "driver", None):
                         st.session_state.event_crawler.close()
@@ -1884,6 +1908,7 @@ with _ev3:
                 st.session_state.event_dup_report = None
                 st.session_state.event_final_summary_report = None
                 st.session_state.event_analysis_signature = ""
+                st.session_state.event_data_reset_confirm = False
                 st.success("✅ 이벤트 DB를 초기화했습니다.")
                 time.sleep(0.8)
                 st.rerun()
@@ -2032,7 +2057,7 @@ with step_col1:
         # 자동로그인 실행
         try:
             _ev_auto_on = bool(
-                st.session_state.get("event_auto_login_enabled_input", config.get("event_auto_login_enabled", False))
+                st.session_state.get("event_auto_login_enabled_input", config.get("event_auto_login_enabled", True))
             )
             _ev_login_id = str(
                 st.session_state.get("event_naver_id_input", config.get("event_naver_id", "")) or ""

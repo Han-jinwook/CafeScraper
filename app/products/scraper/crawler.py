@@ -4193,8 +4193,10 @@ class NaverCafeCrawler:
                 }
             try:
                 if not force_dom_comment_parse:
-                    # 1) 댓글 JSON 우회(가장 안정) 시도
-                    api_comments = self._get_comments_via_commentview(club_id, article_id)
+                    # 1) API 우선: SPA(신형 카페) → CommentView.nhn(구형)
+                    api_comments = self._get_comments_via_spa_api(club_id, article_id)
+                    if not api_comments:
+                        api_comments = self._get_comments_via_commentview(club_id, article_id)
                     if api_comments:
                         for c in api_comments:
                             writer_id = c.get("writer_id", "unknown")

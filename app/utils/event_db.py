@@ -274,18 +274,24 @@ def update_commenter_target_comment_status(
     status = str(status or "")[:48]
     detail = (detail or "")[:2000]
     tried_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # `/` 유무로 DB 행과 불일치할 수 있어 후보 URL을 순서대로 시도
+    _cands = list(dict.fromkeys([url, url.rstrip("/")]))
     conn = sqlite3.connect(db_path, timeout=30.0)
     cur = conn.cursor()
     try:
-        cur.execute(
-            """
-            UPDATE commenter_targets
-            SET comment_status = ?, comment_detail = ?, comment_tried_at = ?
-            WHERE url = ?
-            """,
-            (status, detail, tried_at, url),
-        )
-        n = int(cur.rowcount or 0)
+        n = 0
+        for uq in _cands:
+            cur.execute(
+                """
+                UPDATE commenter_targets
+                SET comment_status = ?, comment_detail = ?, comment_tried_at = ?
+                WHERE url = ?
+                """,
+                (status, detail, tried_at, uq),
+            )
+            n += int(cur.rowcount or 0)
+            if n:
+                break
         conn.commit()
         return n
     finally:

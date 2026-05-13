@@ -1,12 +1,30 @@
-# CafeScraper: dist\CafeScraper 내용물 → 프로젝트 루트 CafeScraper_배포.zip (검증 포함)
-# build.bat에서 PyInstaller 성공 후 호출.
+# PyInstaller COLLECT name=CafeScraper -> dist\CafeScraper\
+# 배포 ZIP: 프로젝트 루트 version.txt 기준 -> cafescraper_V{semver}.zip (ASCII)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location -LiteralPath $root
 
-$distDir = Join-Path $root 'dist\cafescraper'
+$verFile = Join-Path $root 'version.txt'
+if (-not (Test-Path -LiteralPath $verFile)) {
+    Write-Error "version.txt 가 없습니다. 프로젝트 루트에 예: 1.3.1 한 줄로 두세요."
+    exit 2
+}
+$ver = (Get-Content -LiteralPath $verFile -Raw).Trim()
+if ([string]::IsNullOrWhiteSpace($ver)) {
+    Write-Error "version.txt 내용이 비어 있습니다."
+    exit 2
+}
+# 파일명에 쓰이면 안 되는 문자 제거(semver만 가정)
+$verSafe = $ver -replace '[^0-9A-Za-z._-]', ''
+if ($verSafe -ne $ver) {
+    Write-Error "version.txt 에는 배포 파일명에 쓸 수 있는 문자만 넣어주세요. (현재: '$ver')"
+    exit 2
+}
+
+$distDir = Join-Path $root 'dist\CafeScraper'
 $exePath = Join-Path $distDir 'CafeScraper.exe'
-$zipPath = Join-Path $root 'CafeScraper_배포.zip'
+$zipName = "cafescraper_V${verSafe}.zip"
+$zipPath = Join-Path $root $zipName
 $minZipBytes = 35MB
 
 if (-not (Test-Path -LiteralPath $exePath)) {
@@ -16,7 +34,7 @@ if (-not (Test-Path -LiteralPath $exePath)) {
 
 $items = @(Get-ChildItem -LiteralPath $distDir -Force)
 if ($items.Count -lt 2) {
-    Write-Error "dist\cafescraper 내용이 비정상적으로 적습니다. (항목 수: $($items.Count))"
+    Write-Error "dist\CafeScraper 내용이 비정상적으로 적습니다. (항목 수: $($items.Count))"
     exit 2
 }
 
@@ -28,8 +46,52 @@ if (Test-Path -LiteralPath $zipPath) {
     }
 }
 
-# 폴더 *내용*을 ZIP 루트에 두기 (압축 해제 후 바로 CafeScraper.exe 노출)
-Compress-Archive -LiteralPath ($items.FullName) -DestinationPath $zipPath -Force
+function Invoke-PackToZip {
+    param(
+        [string]$SourceDir,
+        [string]$DestZip
+    )
+    $childItems = @(Get-ChildItem -LiteralPath $SourceDir -Force)
+    Compress-Archive -LiteralPath ($childItems.FullName) -DestinationPath $DestZip -Force
+}
+
+# PyInstaller/AV sometimes locks _internal\*.zip briefly after COLLECT; wait + retries, then staging copy fallback.
+$maxAttempts = 6
+$sleepSec = 3
+$packed = $false
+Write-Host "Waiting ${sleepSec}s before ZIP (avoid file lock on fresh build)..."
+Start-Sleep -Seconds $sleepSec
+for ($a = 1; $a -le $maxAttempts; $a++) {
+    try {
+        Invoke-PackToZip -SourceDir $distDir -DestZip $zipPath
+        $packed = $true
+        break
+    } catch {
+        Write-Warning "ZIP attempt $a/$maxAttempts failed: $($_.Exception.Message)"
+        if ($a -lt $maxAttempts) { Start-Sleep -Seconds $sleepSec }
+    }
+}
+if (-not $packed) {
+    $stage = Join-Path $env:TEMP ("cafescraper_pack_" + [guid]::NewGuid().ToString('N'))
+    Write-Host "Falling back: copy to staging folder then ZIP: $stage"
+    try {
+        New-Item -ItemType Directory -Path $stage -Force | Out-Null
+        robocopy $distDir $stage /E /COPY:DAT /R:2 /W:3 /NFL /NDL /NJH /NJS | Out-Null
+        if ($LASTEXITCODE -ge 8) {
+            throw "robocopy failed with exit $LASTEXITCODE"
+        }
+        Invoke-PackToZip -SourceDir $stage -DestZip $zipPath
+        $packed = $true
+    } finally {
+        if (Test-Path -LiteralPath $stage) {
+            Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+if (-not $packed) {
+    Write-Error "ZIP failed after retries and staging copy. Close CafeScraper.exe, pause antivirus, or retry."
+    exit 5
+}
 
 $stat = Get-Item -LiteralPath $zipPath
 if ($stat.Length -lt $minZipBytes) {
@@ -56,4 +118,7 @@ try {
 }
 
 $mb = [math]::Round($stat.Length / 1MB, 2)
+Write-Host "VERSION=$verSafe"
 Write-Host "OK: $($stat.FullName) (${mb} MB)"
+Write-Host "DIST_FOLDER=$distDir"
+Write-Host "SHIP_ZIP=$zipPath"

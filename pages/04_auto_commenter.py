@@ -39,6 +39,10 @@ st.set_page_config(
 
 render_main_top_nav(active="commenter")
 
+if st.session_state.pop("_commenter_finished_ok", False):
+    st.success("댓글 일괄 작업이 끝났습니다. 아래 표·집계에 최종 결과가 반영되었습니다.")
+    st.balloons()
+
 # 메인 크롤링 구동 중에는 다른 메뉴 작업을 잠시 차단
 if st.session_state.get("crawl_running", False):
     st.warning("메인 크롤링이 진행 중입니다. 메인 페이지에서 중단 후 다시 시도해주세요.")
@@ -144,9 +148,12 @@ if "commenter_board_picker_version" not in st.session_state:
 if "commenter_board_picker_options_sig" not in st.session_state:
     st.session_state.commenter_board_picker_options_sig = ""
 if "commenter_cafe_url_after_reset_save_mode" not in st.session_state:
-    st.session_state.commenter_cafe_url_after_reset_save_mode = False
+    _saved_cafe_name = str(config.get("commenter_cafe_name", "") or "").strip()
+    _saved_cafe_url = str(config.get("commenter_cafe_url", "") or "").strip()
+    st.session_state.commenter_cafe_url_after_reset_save_mode = not (_saved_cafe_name or _saved_cafe_url)
 if "commenter_auto_login_after_reset_save_mode" not in st.session_state:
-    st.session_state.commenter_auto_login_after_reset_save_mode = False
+    _saved_login_id = str(config.get("commenter_naver_id", "") or "").strip()
+    st.session_state.commenter_auto_login_after_reset_save_mode = not _saved_login_id
 if "commenter_db_path_input" not in st.session_state:
     st.session_state.commenter_db_path_input = str(config.get("commenter_db_path", "") or "")
 if "commenter_db_reset_confirm" not in st.session_state:
@@ -197,6 +204,7 @@ def _commenter_apply_comment_result(url: str, status: str, detail: str) -> None:
     detail = (detail or "")[:500]
     status = str(status or "")
     u = str(url).strip()
+    u_norm = u.rstrip("/")
     for _key in ("target_df", "commenter_target_df_full"):
         _df = st.session_state.get(_key)
         if _df is None or getattr(_df, "empty", True):
@@ -204,7 +212,8 @@ def _commenter_apply_comment_result(url: str, status: str, detail: str) -> None:
         _commenter_ensure_comment_cols(_df)
         if "url" not in _df.columns:
             continue
-        _m = _df["url"].astype(str) == u
+        _urls = _df["url"].astype(str).str.strip()
+        _m = (_urls == u) | (_urls.str.rstrip("/") == u_norm)
         if _m.any():
             _df.loc[_m, "comment_status"] = status
             _df.loc[_m, "comment_detail"] = detail
@@ -626,12 +635,12 @@ with _col1:
         _auto_login_title = "🔐 자동로그인 설정 (완료)" if _auto_login_done else "🔐 자동로그인 설정"
         with st.expander(_auto_login_title, expanded=False):
             if st.session_state.pop("_commenter_pending_clear_auto_login_inputs", False):
-                st.session_state.pop("commenter_auto_login_enabled_input", None)
-                st.session_state.pop("commenter_naver_id_input", None)
-                st.session_state.pop("commenter_naver_pw_input", None)
+                st.session_state.commenter_auto_login_enabled_input = False
+                st.session_state.commenter_naver_id_input = ""
+                st.session_state.commenter_naver_pw_input = ""
             if "commenter_auto_login_enabled_input" not in st.session_state:
                 st.session_state.commenter_auto_login_enabled_input = bool(
-                    config.get("commenter_auto_login_enabled", False)
+                    config.get("commenter_auto_login_enabled", True)
                 )
             st.checkbox(
                 "브라우저 열 때 자동로그인 실행",
@@ -1247,6 +1256,8 @@ with st.container(border=True, key="commenter_settings_card_db"):
         "**댓글 대상** 테이블(`commenter_targets`)만 비웁니다. 같은 DB 파일에 이벤트 수집 테이블이 있어도 **건드리지 않습니다**. "
         "표에 남겨 둘 결과가 있으면 먼저 백업·다운로드 후 진행하세요."
     )
+    if st.session_state.pop("_commenter_pending_clear_db_reset_confirm", False):
+        st.session_state.commenter_db_reset_confirm = False
     st.checkbox(
         "위 안내를 확인했으며, 저장된 댓글 대상을 삭제합니다. (복구 불가)",
         key="commenter_db_reset_confirm",
@@ -1274,7 +1285,7 @@ with st.container(border=True, key="commenter_settings_card_db"):
             st.session_state.commenter_target_df_full = None
             _commenter_reset_run_state()
             st.session_state.comment_logs = []
-            st.session_state.commenter_db_reset_confirm = False
+            st.session_state._commenter_pending_clear_db_reset_confirm = True
             st.success("✅ 댓글 대상 DB를 초기화했습니다.")
             time.sleep(0.8)
             st.rerun()
@@ -1383,7 +1394,7 @@ with st.container(key="commenter_exec_btns"):
             try:
                 _ev_auto_on = bool(
                     st.session_state.get(
-                        "commenter_auto_login_enabled_input", config.get("commenter_auto_login_enabled", False)
+                        "commenter_auto_login_enabled_input", config.get("commenter_auto_login_enabled", True)
                     )
                 )
                 _ev_login_id = str(
@@ -1538,9 +1549,9 @@ if st.session_state.get("is_running", False):
                 st.error("댓글 템플릿이 비어 있습니다. 다시 시작해주세요.")
                 _commenter_reset_run_state()
             elif idx >= total:
-                st.success("작업 완료!")
-                st.balloons()
                 _commenter_reset_run_state()
+                st.session_state._commenter_finished_ok = True
+                st.rerun()
             else:
                 row = targets[idx]
 
@@ -1606,9 +1617,9 @@ if st.session_state.get("is_running", False):
                     # 세션 한도 체크
                     _done_count = idx + 1
                     if _done_count >= total:
-                        st.success("작업 완료!")
-                        st.balloons()
                         _commenter_reset_run_state()
+                        st.session_state._commenter_finished_ok = True
+                        st.rerun()
                     elif _done_count % COMMENTER_SESSION_LIMIT == 0:
                         _rest_min = COMMENTER_SESSION_REST_SEC // 60
                         log_msg(f"⏸ 세션 {_done_count}건 완료. {_rest_min}분 휴식 시작...")

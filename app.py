@@ -268,6 +268,19 @@ CRAWL_CHECKPOINT_SAVE_EVERY_ITEMS = 5
 # 기존 DB가 있어도 CREATE TABLE IF NOT EXISTS는 안전하므로 항상 보장
 init_db(DB_PATH)
 
+
+def _normalize_collect_mode(raw) -> str:
+    """수집 유형: 라디오 key는 한글 레이블로만 session_state에 들어갈 수 있음."""
+    s = str(raw or "").strip()
+    if s in ("posts_and_comments", "posts_only"):
+        return s
+    if s == "게시글 + 댓글":
+        return "posts_and_comments"
+    if s == "게시글만":
+        return "posts_only"
+    return "posts_and_comments"
+
+
 def save_to_sqlite(post_data: dict, comments: list, replace_comments: bool = True):
     """SQLite에 게시글 및 댓글 저장 (timeout 및 재시도 추가)"""
     max_retries = 3
@@ -1260,7 +1273,7 @@ with _t1:
                 st.session_state.naver_pw_input = ""
             auto_login_enabled = st.checkbox(
                 "브라우저 열 때 자동로그인 실행",
-                value=bool(config.get("auto_login_enabled", False)),
+                value=bool(config.get("auto_login_enabled", True)),
                 key="auto_login_enabled_input",
                 help="1단계 브라우저 열기 직후 저장된 계정으로 로그인을 시도합니다.",
             )
@@ -1432,10 +1445,9 @@ with _t1:
                 except Exception as e:
                     st.error(f"오류: {e}")
 
-        if not st.session_state.settings_collapsed:
-            st.markdown("<hr style='margin: 0.5rem 0; border: none; border-top: 1px dashed #e2e8f0;'>", unsafe_allow_html=True)
-            selected_urls_str = str(config.get("board_url", "") or "")
-            if st.session_state.extracted_boards:
+        st.markdown("<hr style='margin: 0.5rem 0; border: none; border-top: 1px dashed #e2e8f0;'>", unsafe_allow_html=True)
+        selected_urls_str = str(config.get("board_url", "") or "")
+        if st.session_state.extracted_boards:
                 st.markdown(f"##### 📋 게시판 선택 (총 {len(st.session_state.extracted_boards)}개)")
                 all_boards = st.session_state.extracted_boards
                 board_options = {f"{i+1:02d}. {b['name']}": b["url"] for i, b in enumerate(all_boards)}
@@ -1622,23 +1634,21 @@ with _t1:
 
                 selected_urls = list(dict.fromkeys([u for u in (st.session_state.get("selected_board_urls", []) or []) if u]))
                 selected_urls_str = "\n".join(selected_urls)
-            else:
-                # 추출 목록이 없을 때만 수동 입력 폴백
-                selected_urls_str = st.text_input(
-                    "게시판 URL (전체글보기 권장)",
-                    value=str(config.get("board_url", "") or ""),
-                )
-            board_url = selected_urls_str
+        else:
+            # 추출 목록이 없을 때만 수동 입력 폴백
+            selected_urls_str = st.text_input(
+                "게시판 URL (전체글보기 권장)",
+                value=str(config.get("board_url", "") or ""),
+            )
+        board_url = selected_urls_str
 with _t2:
     with st.container(border=True, key="settings_card_2"):
         render_settings_card_title("수집 세부설정", icon="📅")
         exclude_boards_text = ""
 
-        collect_mode = str(
-            st.session_state.get("collect_mode_input", config.get("collect_mode", "posts_and_comments")) or "posts_and_comments"
-        ).strip()
-        if collect_mode not in ("posts_and_comments", "posts_only"):
-            collect_mode = "posts_and_comments"
+        collect_mode = _normalize_collect_mode(
+            st.session_state.get("collect_mode_input", config.get("collect_mode", "posts_and_comments"))
+        )
         with st.expander("🧩 수집 조건", expanded=False):
             collect_mode_label = st.radio(
                 "수집 유형",
@@ -1671,9 +1681,6 @@ with _t2:
             st.button("▼" if st.session_state.settings_collapsed else "▲", key="btn_fold_2", on_click=toggle_settings)
 
         # 설정 접힘 시에도 아래 실행 제어·크롤이 동일 이름을 참조하므로 여기서 기본 정의
-        auto_start_page = bool(
-            st.session_state.get("auto_start_page_check", config.get("auto_start_page", True))
-        )
         speed_profile = "fast"
         delay_min_sec = 1
         delay_max_sec = 2
@@ -1682,97 +1689,81 @@ with _t2:
         fail_safe_enabled = True
         fail_safe_threshold = 40
         progress_log_every = 100
+
+        st.markdown("<hr style='margin: 0.5rem 0; border: none; border-top: 1px dashed #e2e8f0;'>", unsafe_allow_html=True)
+        st.markdown("##### 🔧 작업 모드")
+
+        auto_start_page = st.checkbox(
+            "종료일 기준 자동 시작페이지 사용",
+            value=bool(config.get("auto_start_page", True)),
+            help=(
+                "체크하면 종료일이 포함된 페이지(게시판 50개씩 보기 기준)를 자동으로 찾아 시작합니다. "
+                "1년 단위로 나눠 연속 수집할 때 특히 유용합니다."
+            ),
+            key="auto_start_page_check",
+        )
+
+        if auto_start_page:
+            if _is_browser_opened() and st.session_state.get("crawler"):
+                if st.button("🔍 추천 시작페이지 미리보기", key="preview_start_page_btn"):
+                    with st.spinner("해당 기간의 페이지를 찾는 중..."):
+                        try:
+                            end_dt = datetime.combine(end_date, datetime.max.time())
+                            page_no, dmin, dmax = st.session_state.crawler.recommend_start_page(board_url, end_dt)
+                            if dmin and dmax:
+                                st.session_state.preview_start_page = {"page": page_no, "dmin": dmin, "dmax": dmax}
+                            else:
+                                st.session_state.preview_start_page = {"page": page_no, "dmin": None, "dmax": None}
+                            st.rerun()
+                        except Exception as e:
+                            st.session_state.preview_start_page = None
+                            st.error(f"미리보기 실패: {e}")
+                if "preview_start_page" in st.session_state and st.session_state.preview_start_page:
+                    pv = st.session_state.preview_start_page
+                    if pv.get("dmin") and pv.get("dmax"):
+                        st.success(f"추천: **{pv['page']}페이지** (날짜 범위: {pv['dmin']} ~ {pv['dmax']})")
+                    else:
+                        st.info(f"추천: **{pv['page']}페이지** (날짜 범위 확인 실패)")
+        else:
+            start_page_manual = int(
+                st.number_input(
+                    "탐색 시작 페이지 (선택)",
+                    min_value=1,
+                    max_value=10000,
+                    value=max(1, int(config.get("start_page_manual", 1) or 1)),
+                    step=1,
+                    help="기본값 1. 이전 실행의 마지막 탐색 페이지 근처로 지정하면 범위 탐색이 빨라집니다.",
+                    key="start_page_manual_input",
+                )
+            )
+
+        # 자동 모드: start_page=1 전달 → 크롤러가 종료일 기준 자동 탐색
         if auto_start_page:
             start_page_manual = max(1, int(config.get("start_page_manual", 1) or 1))
             effective_start_page = 1
         else:
-            start_page_manual = int(
-                st.session_state.get(
-                    "start_page_manual_input",
-                    max(1, int(config.get("start_page_manual", 1) or 1)),
-                )
-            )
             effective_start_page = start_page_manual
 
-        if not st.session_state.settings_collapsed:
-            st.markdown("<hr style='margin: 0.5rem 0; border: none; border-top: 1px dashed #e2e8f0;'>", unsafe_allow_html=True)
-            st.markdown("##### 🔧 작업 모드")
-            speed_profile = "fast"
-            delay_min_sec = 1
-            delay_max_sec = 2
+        st.caption("※ 안전 장치: 연속 40회 실패 시 작업이 자동 중단됩니다.")
 
-            auto_start_page = st.checkbox(
-                "종료일 기준 자동 시작페이지 사용",
-                value=bool(config.get("auto_start_page", True)),
-                help=(
-                    "체크하면 종료일이 포함된 페이지(게시판 50개씩 보기 기준)를 자동으로 찾아 시작합니다. "
-                    "1년 단위로 나눠 연속 수집할 때 특히 유용합니다."
-                ),
-                key="auto_start_page_check",
-            )
+        # 내부 고정 설정 (사용자에게 노출하지 않음)
+        st.session_state.debug_mode = False
+        level_backfill = False  # 스마트 로직이 알아서 하므로 강제 옵션은 끔
 
-            if auto_start_page:
-                if _is_browser_opened() and st.session_state.get("crawler"):
-                    if st.button("🔍 추천 시작페이지 미리보기", key="preview_start_page_btn"):
-                        with st.spinner("해당 기간의 페이지를 찾는 중..."):
-                            try:
-                                end_dt = datetime.combine(end_date, datetime.max.time())
-                                page_no, dmin, dmax = st.session_state.crawler.recommend_start_page(board_url, end_dt)
-                                if dmin and dmax:
-                                    st.session_state.preview_start_page = {"page": page_no, "dmin": dmin, "dmax": dmax}
-                                else:
-                                    st.session_state.preview_start_page = {"page": page_no, "dmin": None, "dmax": None}
-                                st.rerun()
-                            except Exception as e:
-                                st.session_state.preview_start_page = None
-                                st.error(f"미리보기 실패: {e}")
-                    if "preview_start_page" in st.session_state and st.session_state.preview_start_page:
-                        pv = st.session_state.preview_start_page
-                        if pv.get("dmin") and pv.get("dmax"):
-                            st.success(f"추천: **{pv['page']}페이지** (날짜 범위: {pv['dmin']} ~ {pv['dmax']})")
-                        else:
-                            st.info(f"추천: **{pv['page']}페이지** (날짜 범위 확인 실패)")
-            else:
-                start_page_manual = int(
-                    st.number_input(
-                        "탐색 시작 페이지 (선택)",
-                        min_value=1,
-                        max_value=10000,
-                        value=max(1, int(config.get("start_page_manual", 1) or 1)),
-                        step=1,
-                        help="기본값 1. 이전 실행의 마지막 탐색 페이지 근처로 지정하면 범위 탐색이 빨라집니다.",
-                        key="start_page_manual_input",
-                    )
-                )
-
-            # 자동 모드: start_page=1 전달 → 크롤러가 종료일 기준 자동 탐색
-            effective_start_page = 1 if auto_start_page else start_page_manual
-
-            st.caption("※ 안전 장치: 연속 40회 실패 시 작업이 자동 중단됩니다.")
-
-            # 내부 고정 설정 (사용자에게 노출하지 않음)
-            st.session_state.debug_mode = False
-            level_backfill = False # 스마트 로직이 알아서 하므로 강제 옵션은 끔
-            quick_recovery_mode = False
-            retry_withdrawal = False
-            fail_safe_enabled = True
-            fail_safe_threshold = 40
-            progress_log_every = 100
-
-            st.markdown("---")
-            if st.button("💾 저장", use_container_width=True):
-                # 기존 키를 보존한 채, 화면에서 수정한 항목만 갱신
-                new_config = dict(config or {})
-                new_config.update({
-                    "collect_mode": collect_mode,
-                    "exclude_boards": "",
-                    "start_date": start_date.strftime("%Y-%m-%d"),
-                    "end_date": end_date.strftime("%Y-%m-%d"),
-                    "start_page_manual": int(effective_start_page if not auto_start_page else (config.get("start_page_manual", 1) or 1)),
-                    "auto_start_page": bool(auto_start_page),
-                })
-                save_config(new_config)
-                st.success("✅ 설정이 저장되었습니다.")
+        st.markdown("---")
+        if st.button("💾 저장", use_container_width=True):
+            # 기존 키를 보존한 채, 화면에서 수정한 항목만 갱신
+            new_config = dict(config or {})
+            new_config.update({
+                "collect_mode": collect_mode,
+                "exclude_boards": "",
+                "start_date": start_date.strftime("%Y-%m-%d"),
+                "end_date": end_date.strftime("%Y-%m-%d"),
+                "start_page_manual": int(effective_start_page if not auto_start_page else (config.get("start_page_manual", 1) or 1)),
+                "auto_start_page": bool(auto_start_page),
+            })
+            save_config(new_config)
+            st.success("✅ 설정이 저장되었습니다.")
 with _t3:
     with st.container(border=True, key="settings_card_3"):
         render_settings_card_title("데이터/DB", icon="💾")
@@ -1809,6 +1800,46 @@ with _t3:
                 st.info("DB 통계를 읽을 수 없습니다.")
             with c_tog3:
                 st.button("▼" if st.session_state.settings_collapsed else "▲", key="btn_fold_3", on_click=toggle_settings)
+
+        st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
+        st.warning(
+            "**게시글·댓글** 테이블을 비웁니다. 같은 파일의 **논문(papers)** 데이터는 건드리지 않습니다. 삭제 후 복구할 수 없습니다."
+        )
+        st.checkbox(
+            "위 안내를 확인했으며, 카페 수집 데이터를 삭제합니다. (복구 불가)",
+            key="main_cafe_db_reset_confirm",
+        )
+        if st.button(
+            "🗑️ 데이터 초기화",
+            type="primary",
+            use_container_width=True,
+            key="main_cafe_reset_db_btn",
+            disabled=(
+                bool(st.session_state.get("crawl_running"))
+                or (not bool(st.session_state.get("main_cafe_db_reset_confirm")))
+            ),
+            help="수집 실행 중에는 사용할 수 없습니다. 먼저 중단하세요.",
+        ):
+            try:
+                conn_r = sqlite3.connect(DB_PATH, timeout=30.0)
+                cur_r = conn_r.cursor()
+                cur_r.execute("DELETE FROM comments")
+                cur_r.execute("DELETE FROM posts")
+                cur_r.execute("DELETE FROM sqlite_sequence WHERE name = 'comments'")
+                conn_r.commit()
+                conn_r.close()
+                st.session_state.crawl_running = False
+                st.session_state.crawl_stop_requested = False
+                st.session_state.crawl_state = {}
+                _clear_crawl_checkpoint()
+                st.session_state.posts_editor_refresh = int(st.session_state.get("posts_editor_refresh", 0)) + 1
+                st.session_state.comments_editor_refresh = int(st.session_state.get("comments_editor_refresh", 0)) + 1
+                st.session_state.main_cafe_db_reset_confirm = False
+                st.success("✅ 카페 수집 데이터를 초기화했습니다.")
+                time.sleep(0.6)
+                st.rerun()
+            except Exception as e:
+                st.error(f"초기화 실패: {e}")
 
         if not st.session_state.settings_collapsed:
             st.markdown("<hr style='margin: 0.5rem 0; border: none; border-top: 1px dashed #e2e8f0;'>", unsafe_allow_html=True)
@@ -1864,6 +1895,22 @@ with _t3:
                             except Exception as e:
                                 st.error(f"복사/전환 실패: {e}")
 col_main = st.container()
+
+
+def _ui_effective_start_page() -> int:
+    """설정 카드(_t2)와 같은 규칙으로 시작 페이지 값 산출.
+    `_render_cafe_main_workspace` 안 어딘가에서 `effective_start_page = ...` 를 쓰면
+    그 이름이 함수 전체에서 로컬로 잡혀, 체크포인트 UI에서 전역 값을 읽지 못하고 UnboundLocalError가 난다."""
+    auto = bool(st.session_state.get("auto_start_page_check", config.get("auto_start_page", True)))
+    if auto:
+        return 1
+    return int(
+        st.session_state.get(
+            "start_page_manual_input",
+            max(1, int(config.get("start_page_manual", 1) or 1)),
+        )
+    )
+
 
 def _render_cafe_main_workspace():
     st.markdown("### 🚀 실행 제어")
@@ -1942,7 +1989,7 @@ def _render_cafe_main_workspace():
             if hasattr(st.session_state.crawler, "set_speed_profile"):
                 st.session_state.crawler.set_speed_profile(speed_profile)
             st.session_state.crawler.start_browser()
-            auto_login_on = bool(st.session_state.get("auto_login_enabled_input", config.get("auto_login_enabled", False)))
+            auto_login_on = bool(st.session_state.get("auto_login_enabled_input", config.get("auto_login_enabled", True)))
             auto_login_id = str(st.session_state.get("naver_id_input", config.get("naver_id", "")) or "")
             auto_login_pw = str(st.session_state.get("naver_pw_input", config.get("naver_pw", "")) or "")
             if auto_login_on:
@@ -1997,12 +2044,9 @@ def _render_cafe_main_workspace():
                     st.error("먼저 1단계에서 브라우저를 열고 로그인을 완료해주세요.")
                 else:
                     st.session_state.crawl_last_status_message = ""
-                    collect_mode = str(
+                    collect_mode = _normalize_collect_mode(
                         st.session_state.get("collect_mode_input", config.get("collect_mode", "posts_and_comments"))
-                        or "posts_and_comments"
-                    ).strip()
-                    if collect_mode not in ("posts_and_comments", "posts_only"):
-                        collect_mode = "posts_and_comments"
+                    )
 
                     start_dt = datetime.combine(start_date, datetime.min.time())
                     end_dt = datetime.combine(end_date, datetime.max.time())
@@ -2031,13 +2075,14 @@ def _render_cafe_main_workspace():
                         else:
                             board_names_queue.append(board_name_map.get(uu, ""))
                     # 일부 UI 분기(접힘/펼침)에서 값이 비어도 시작 시점에 기본값을 보장한다.
+                    start_page_for_run = _ui_effective_start_page()
                     try:
-                        effective_start_page = int(effective_start_page)
+                        start_page_for_run = int(start_page_for_run)
                     except Exception:
-                        if bool(auto_start_page):
-                            effective_start_page = 1
+                        if bool(st.session_state.get("auto_start_page_check", config.get("auto_start_page", True))):
+                            start_page_for_run = 1
                         else:
-                            effective_start_page = max(
+                            start_page_for_run = max(
                                 1,
                                 int(
                                     st.session_state.get(
@@ -2056,7 +2101,7 @@ def _render_cafe_main_workspace():
                         delay_min_sec=int(delay_min_sec),
                         delay_max_sec=int(delay_max_sec),
                         speed_profile=speed_profile,
-                        start_page_manual=int(effective_start_page),
+                        start_page_manual=int(start_page_for_run),
                         auto_start_page=bool(auto_start_page),
                     )
 
@@ -2075,7 +2120,7 @@ def _render_cafe_main_workspace():
                         "level_backfill_mode": False, # 스마트 로직 사용을 위해 False 고정
                         "quick_recovery_mode": quick_mode_on,
                         "retry_withdrawal": retry_withdrawal, # (추가) 탈퇴 재검사 옵션 전달
-                        "start_page_manual": int(effective_start_page),
+                        "start_page_manual": int(start_page_for_run),
                         "crawl_delay_min": max(1.0, float(delay_min_sec)),
                         "crawl_delay_max": max(max(1.0, float(delay_min_sec)), float(delay_max_sec)),
                         "speed_profile": speed_profile,
@@ -2193,7 +2238,7 @@ def _render_cafe_main_workspace():
             delay_min_sec=int(delay_min_sec),
             delay_max_sec=int(delay_max_sec),
             speed_profile=speed_profile,
-            start_page_manual=int(effective_start_page),
+            start_page_manual=int(_ui_effective_start_page()),
             auto_start_page=bool(auto_start_page),
         )
         saved_signature = st.session_state.crawl_state.get("run_signature", {})
@@ -2515,7 +2560,7 @@ def _render_cafe_main_workspace():
                         start_page=page_cursor,
                         max_pages=batch_size,
                     )
-                    effective_start_page = int(getattr(st.session_state.crawler, "last_effective_start_page", page_cursor) or page_cursor)
+                    batch_base_page = int(getattr(st.session_state.crawler, "last_effective_start_page", page_cursor) or page_cursor)
                     scan_oldest_date = str(getattr(st.session_state.crawler, "last_scan_oldest_date", "") or "").strip()
                     last_scanned_page = int(getattr(st.session_state.crawler, "last_scanned_page", 0) or 0)
                     if scan_oldest_date:
@@ -2528,7 +2573,7 @@ def _render_cafe_main_workspace():
                 
                     if not new_batch and not is_finished:
                         # 이번 배치 공탕 -> 다음 페이지로 계속 (재귀적 rerun 방지 위해 cursor만 증가)
-                        ctx["page_cursor"] = effective_start_page + batch_size
+                        ctx["page_cursor"] = batch_base_page + batch_size
                         _save_crawl_checkpoint()
                         st.rerun()
                 
@@ -2560,7 +2605,7 @@ def _render_cafe_main_workspace():
                     ctx["articles"] = new_batch
                     ctx["index"] = 0
                     ctx["batch_total"] = len(new_batch)
-                    ctx["page_cursor"] = effective_start_page + batch_size
+                    ctx["page_cursor"] = batch_base_page + batch_size
                     ctx["is_finished"] = is_finished
                     ctx["total_collected"] = total_collected + len(new_batch)
                 
@@ -2622,7 +2667,7 @@ def _render_cafe_main_workspace():
                 st.session_state.crawl_last_status_message = "⏹ 사용자 요청으로 중단되었습니다."
                 st.rerun()
             else:
-                collect_mode_ctx = str(ctx.get("collect_mode", "posts_and_comments") or "posts_and_comments").strip()
+                collect_mode_ctx = _normalize_collect_mode(ctx.get("collect_mode", "posts_and_comments"))
                 comment_mode_ctx = "all" if collect_mode_ctx == "posts_and_comments" else "none"
                 level_backfill_mode = bool(ctx["level_backfill_mode"])
                 crawl_delay_min = float(ctx["crawl_delay_min"])
@@ -2863,16 +2908,6 @@ def _render_cafe_main_workspace():
 
     # DB 관리 UI (데이터 조회 및 삭제)
     st.markdown("---")
-    open_data_manager = st.checkbox(
-        "📊 데이터 관리 열기 (기본 닫힘)",
-        value=False,
-        key="open_data_manager_toggle",
-        help="크롤링 설정/게시판 선택과 무관한 DB 관리 화면입니다. 열 때만 데이터를 로드합니다.",
-    )
-    if not open_data_manager:
-        st.caption("게시판 선택/크롤링만 사용할 때는 데이터 관리 로딩을 건너뜁니다.")
-        st.stop()
-
     st.header("📊 데이터 관리")
     st.caption("수집된 게시글/댓글 데이터를 검토하고 선택 삭제 및 상세 확인을 진행합니다.")
 
