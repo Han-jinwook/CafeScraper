@@ -1,4 +1,4 @@
-# PyInstaller COLLECT name=CafeScraper -> dist\CafeScraper\
+# PyInstaller COLLECT 폴더명 = cafescraper_V{semver} (cafescraper.spec가 version.txt에서 생성)
 # 배포 ZIP: 프로젝트 루트 version.txt 기준 -> cafescraper_V{semver}.zip (ASCII)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
@@ -21,20 +21,27 @@ if ($verSafe -ne $ver) {
     exit 2
 }
 
-$distDir = Join-Path $root 'dist\CafeScraper'
+$distFolder = "cafescraper_V${verSafe}"
+$distDir = [System.IO.Path]::Combine($root, 'dist', $distFolder)
 $exePath = Join-Path $distDir 'CafeScraper.exe'
 $zipName = "cafescraper_V${verSafe}.zip"
 $zipPath = Join-Path $root $zipName
 $minZipBytes = 35MB
 
 if (-not (Test-Path -LiteralPath $exePath)) {
-    Write-Error "dist\CafeScraper\CafeScraper.exe 가 없습니다. PyInstaller 단계를 확인하세요."
+    Write-Error "dist\$distFolder\CafeScraper.exe 가 없습니다. 먼저 build.bat ^(또는 pyinstaller cafescraper.spec^)을 실행하세요."
     exit 2
 }
 
-$items = @(Get-ChildItem -LiteralPath $distDir -Force)
-if ($items.Count -lt 2) {
-    Write-Error "dist\CafeScraper 내용이 비정상적으로 적습니다. (항목 수: $($items.Count))"
+# 배포 ZIP에는 사용자 DB·설정이 들어 있는 항목을 넣지 않음 (빌드 직전 복원된 dist 대비).
+# - data/: SQLite 등
+# - crawler_config.json: 로컬 계정/경로 (개발자 테스트 복원본이 그대로 들어가면 유출 위험)
+$items = @(Get-ChildItem -LiteralPath $distDir -Force | Where-Object {
+        $n = $_.Name
+        ($n -ine 'data') -and ($n -ine 'crawler_config.json') -and ($n -ine 'comment_templates.json')
+    })
+if ($items.Count -lt 1) {
+    Write-Error "dist\$distFolder 내용이 비정상적으로 적습니다. (data 제외 항목 수: $($items.Count))"
     exit 2
 }
 
@@ -48,11 +55,15 @@ if (Test-Path -LiteralPath $zipPath) {
 
 function Invoke-PackToZip {
     param(
-        [string]$SourceDir,
+        [Parameter(Mandatory = $true)]
+        [System.IO.FileSystemInfo[]]$Items,
+        [Parameter(Mandatory = $true)]
         [string]$DestZip
     )
-    $childItems = @(Get-ChildItem -LiteralPath $SourceDir -Force)
-    Compress-Archive -LiteralPath ($childItems.FullName) -DestinationPath $DestZip -Force
+    if ($Items.Count -lt 1) {
+        throw "No items to pack"
+    }
+    Compress-Archive -LiteralPath ($Items.FullName) -DestinationPath $DestZip -Force
 }
 
 # PyInstaller/AV sometimes locks _internal\*.zip briefly after COLLECT; wait + retries, then staging copy fallback.
@@ -63,7 +74,7 @@ Write-Host "Waiting ${sleepSec}s before ZIP (avoid file lock on fresh build)..."
 Start-Sleep -Seconds $sleepSec
 for ($a = 1; $a -le $maxAttempts; $a++) {
     try {
-        Invoke-PackToZip -SourceDir $distDir -DestZip $zipPath
+        Invoke-PackToZip -Items $items -DestZip $zipPath
         $packed = $true
         break
     } catch {
@@ -76,11 +87,12 @@ if (-not $packed) {
     Write-Host "Falling back: copy to staging folder then ZIP: $stage"
     try {
         New-Item -ItemType Directory -Path $stage -Force | Out-Null
-        robocopy $distDir $stage /E /COPY:DAT /R:2 /W:3 /NFL /NDL /NJH /NJS | Out-Null
+        robocopy $distDir $stage /E /XD data /XF crawler_config.json comment_templates.json /COPY:DAT /R:2 /W:3 /NFL /NDL /NJH /NJS | Out-Null
         if ($LASTEXITCODE -ge 8) {
             throw "robocopy failed with exit $LASTEXITCODE"
         }
-        Invoke-PackToZip -SourceDir $stage -DestZip $zipPath
+        $stageItems = @(Get-ChildItem -LiteralPath $stage -Force)
+        Invoke-PackToZip -Items $stageItems -DestZip $zipPath
         $packed = $true
     } finally {
         if (Test-Path -LiteralPath $stage) {

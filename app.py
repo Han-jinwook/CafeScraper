@@ -12,6 +12,7 @@ import re
 from pathlib import Path
 from app.products.scraper.crawler import NaverCafeCrawler
 from app.utils.sqlite_db import init_db
+from app.utils.app_version import read_app_version
 from app.utils.paths import get_config_path, get_logs_dir, get_project_root, resolve_db_path
 from app.utils.streamlit_input_history import inject_connect_history_suggestions
 from app.utils.streamlit_brand import render_logo_png
@@ -24,9 +25,10 @@ from app.utils.naver_login import (
 from selenium.webdriver.common.by import By
 import shutil
 
-# 페이지 설정
+# 페이지 설정 (브라우저 탭 제목 — 버전은 version.txt 와 동기)
+_APP_SEMVER = read_app_version()
 st.set_page_config(
-    page_title="[카페 몬스터] 카페 추출기 Pro V1.0",
+    page_title=f"[카페 몬스터] 카페 추출기 Pro v{_APP_SEMVER}",
     page_icon="☕",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -257,8 +259,6 @@ def save_config(config):
         json.dump(config, f, ensure_ascii=False, indent=4)
 
 config = load_config()
-# 상단 표시에 사용할 카페명 (없으면 기본값)
-DISPLAY_CAFE_NAME = str(config.get("cafe_name", "카페 몬스터") or "").strip() or "카페 몬스터"
 # DB 경로는 설정/환경변수로 변경 가능
 DB_PATH = str(resolve_db_path(config.get("db_path")))
 CRAWL_CHECKPOINT_PATH = os.path.join(str(get_logs_dir()), "crawl_checkpoint.json")
@@ -885,10 +885,9 @@ if "_extracted_boards_cafe_sig" not in st.session_state:
         str(config.get("cafe_url", "") or "")
     )
 if "cafe_name_input" not in st.session_state:
-    st.session_state.cafe_name_input = str(config.get("cafe_name", DISPLAY_CAFE_NAME) or "").strip() or DISPLAY_CAFE_NAME
+    st.session_state.cafe_name_input = ""
 if "cafe_url_input" not in st.session_state:
-    # 새로고침/재접속 시 마지막 저장 URL을 기본값으로 복원
-    st.session_state.cafe_url_input = str(config.get("cafe_url", "") or "")
+    st.session_state.cafe_url_input = ""
 if "selected_board_urls" not in st.session_state:
     cfg_selected_urls = config.get("selected_board_urls", [])
     if isinstance(cfg_selected_urls, list) and cfg_selected_urls:
@@ -902,8 +901,8 @@ if "board_picker_version" not in st.session_state:
     st.session_state.board_picker_version = 0
 if "board_picker_options_sig" not in st.session_state:
     st.session_state.board_picker_options_sig = ""
-if "cafe_url_after_reset_save_mode" not in st.session_state:
-    st.session_state.cafe_url_after_reset_save_mode = False
+if "cafe_connect_side_mode" not in st.session_state:
+    st.session_state.cafe_connect_side_mode = "save"
 if "auto_login_after_reset_save_mode" not in st.session_state:
     st.session_state.auto_login_after_reset_save_mode = False
 
@@ -927,7 +926,7 @@ def _render_cafe_dashboard_header() -> None:
                 st.markdown(
                     """
                 **1) 저장 버튼은 섹션별로 따로 동작합니다**
-                - **왼쪽 `카페 URL 옆 저장`**: `카페명 + 카페 URL`을 즉시 영구 저장합니다.
+                - **카페명·URL 오른쪽 단추**: 처음엔 **`저장`**. 저장 후에는 **`리셋`** 으로 바뀝니다. 리셋하면 입력칸·게시판 목록 선택 등이 비우고, 저장돼 있던 카페명·URL 설정도 초기화됩니다.
                 - **왼쪽 `게시판 목록 가져오기`**: 스캔한 게시판 목록은 자동 저장됩니다.
                 - **게시판 체크 선택/해제**: 선택값도 자동 저장됩니다.
                 - **가운데 `저장` 버튼**: 기간/필터/시작페이지 등 가운데 섹션 값만 저장합니다.
@@ -1202,9 +1201,9 @@ with _t1:
         cafe_name = st.text_input("카페명", key="cafe_name_input")
 
         try:
-            _cu_url, _cu_btn = st.columns([5, 1], gap="small", vertical_alignment="center")
+            _cu_url, _cu_side_col = st.columns([5, 1], gap="small", vertical_alignment="center")
         except TypeError:
-            _cu_url, _cu_btn = st.columns([5, 1], gap="small")
+            _cu_url, _cu_side_col = st.columns([5, 1], gap="small")
         with _cu_url:
             if st.session_state.pop("_pending_clear_cafe_url_input", False):
                 st.session_state.cafe_url_input = ""
@@ -1213,16 +1212,21 @@ with _t1:
             (config.get("cafe_name_history", []) or []) + [str(config.get("cafe_name", "") or "")],
             (config.get("cafe_url_history", []) or []) + [str(config.get("cafe_url", "") or "")],
         )
-        with _cu_btn:
-            _cu_save_mode = bool(st.session_state.get("cafe_url_after_reset_save_mode", False))
-            _cu_side_lbl = "저장" if _cu_save_mode else "리셋"
-            _cu_side_help = (
-                "카페명/카페 URL을 즉시 반영하고 설정 파일에도 영구 저장합니다."
-                if _cu_save_mode
-                else "게시판 목록·선택·미리보기 등 카페 관련 화면 데이터만 비웁니다."
-            )
-            if st.button(_cu_side_lbl, key="cafe_url_side_action_btn", use_container_width=True, help=_cu_side_help):
-                if _cu_save_mode:
+        _cafe_side = str(st.session_state.get("cafe_connect_side_mode") or "save")
+        _cafe_btn_lbl = "리셋" if _cafe_side == "reset" else "저장"
+        _cafe_btn_help = (
+            "카페명·URL 설정을 초기화하고 게시판 목록 등을 비웁니다 — 단추는 다시 `저장`으로 바뀝니다."
+            if _cafe_side == "reset"
+            else "카페명/카페 URL을 즉시 반영하고 설정 파일에 저장합니다."
+        )
+        with _cu_side_col:
+            if st.button(
+                _cafe_btn_lbl,
+                key="cafe_connect_side_btn",
+                use_container_width=True,
+                help=_cafe_btn_help,
+            ):
+                if _cafe_side == "save":
                     cfg_now = dict(load_config() or {})
                     saved_cafe_name = str(st.session_state.get("cafe_name_input", "") or "").strip()
                     saved_cafe_url = str(st.session_state.get("cafe_url_input", "") or "").strip()
@@ -1236,29 +1240,38 @@ with _t1:
                         cfg_now["cafe_url_history"] = ([saved_cafe_url] + [x for x in prev_url_hist if x != saved_cafe_url])[:20]
                     save_config(cfg_now)
                     config.update(cfg_now)
-                    st.session_state.cafe_url_after_reset_save_mode = False
                     st.session_state._extracted_boards_cafe_sig = _cafe_url_identity(
                         str(st.session_state.get("cafe_url_input", "") or "")
                     )
+                    st.session_state.cafe_connect_side_mode = "reset"
                     st.session_state._cafe_url_apply_ack = True
                     st.rerun()
                 else:
+                    cfg_clr = dict(load_config() or {})
+                    cfg_clr["cafe_name"] = ""
+                    cfg_clr["cafe_url"] = ""
+                    cfg_clr["extracted_boards"] = []
+                    cfg_clr["selected_board_urls"] = []
+                    cfg_clr["board_url"] = ""
+                    save_config(cfg_clr)
+                    config.update(cfg_clr)
                     st.session_state.extracted_boards = []
                     st.session_state.selected_board_urls = []
                     st.session_state.board_picker_version = int(st.session_state.get("board_picker_version", 0)) + 1
                     st.session_state.board_picker_options_sig = ""
                     st.session_state.pop("preview_start_page", None)
-                    # 위젯 key와 동일한 세션 키는 text_input 생성 이후 수정 불가 → 다음 런에서 선행 비우기
                     st.session_state._pending_clear_cafe_name_input = True
                     st.session_state._pending_clear_cafe_url_input = True
                     st.session_state._extracted_boards_cafe_sig = ""
-                    st.session_state.cafe_url_after_reset_save_mode = True
+                    st.session_state.cafe_connect_side_mode = "save"
                     st.session_state._cafe_session_reset_done = True
                     st.rerun()
 
         if st.session_state.get("_cafe_session_reset_done"):
             st.session_state._cafe_session_reset_done = False
-            st.success("카페 관련 데이터를 비웠고 **카페명/카페 URL 칸을 비웠습니다**. 새 값을 입력한 뒤 오른쪽 **저장**을 눌러 주세요.")
+            st.success(
+                "카페 연결 상태를 초기화했습니다. 카페명·URL은 비워져 있으며, 다시 채운 뒤 **`저장`** 을 눌러 주세요."
+            )
         if st.session_state.get("_cafe_url_apply_ack"):
             st.session_state._cafe_url_apply_ack = False
             st.success("카페명/카페 URL을 저장했습니다. URL을 바꿨다면 **게시판 목록 가져오기**를 다시 실행해 목록을 갱신하세요.")
@@ -1802,15 +1815,12 @@ with _t3:
                 st.button("▼" if st.session_state.settings_collapsed else "▲", key="btn_fold_3", on_click=toggle_settings)
 
         st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
-        st.warning(
-            "**게시글·댓글** 테이블을 비웁니다. 같은 파일의 **논문(papers)** 데이터는 건드리지 않습니다. 삭제 후 복구할 수 없습니다."
-        )
         st.checkbox(
-            "위 안내를 확인했으며, 카페 수집 데이터를 삭제합니다. (복구 불가)",
+            "카페 수집 게시글·댓글 데이터를 모두 삭제합니다. 필요하면 먼저 CSV/리포트를 내려받으세요.",
             key="main_cafe_db_reset_confirm",
         )
         if st.button(
-            "🗑️ 데이터 초기화",
+            "데이터 초기화",
             type="primary",
             use_container_width=True,
             key="main_cafe_reset_db_btn",

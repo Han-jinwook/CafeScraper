@@ -1,42 +1,24 @@
 @echo off
+
 chcp 65001 >nul
-echo ============================================
-echo   CafeScraper 배포 ZIP 생성
-echo ============================================
-echo.
 
-if not exist "dist\CafeScraper\CafeScraper.exe" (
-    echo [ERROR] dist\CafeScraper\CafeScraper.exe 가 없습니다.
-    echo         먼저 build.bat 를 실행하세요.
+REM 배포 ZIP은 scripts\pack_dist.ps1 과 동일 규칙^(버전 폴더 cafescraper_Vx.y.z, data 제외^)을 씁니다.
+
+cd /d "%~dp0"
+
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\pack_dist.ps1"
+
+set ERR=%ERRORLEVEL%
+
+if %ERR% neq 0 (
+
     pause
-    exit /b 1
+
+    exit /b %ERR%
+
 )
 
-:: ZIP 파일명 (날짜 포함)
-for /f "tokens=1-3 delims=/" %%a in ('date /t') do set TODAY=%%a%%b%%c
-set ZIPNAME=CafeScraper_%TODAY%.zip
-
-:: 기존 zip 삭제
-if exist "%ZIPNAME%" del "%ZIPNAME%"
-
-echo ZIP 압축 중... (1~2분 소요)
-powershell -Command "Compress-Archive -Path 'dist\CafeScraper\*' -DestinationPath '%ZIPNAME%' -Force"
-
-if errorlevel 1 (
-    echo [ERROR] 압축 실패!
-    pause
-    exit /b 1
-)
-
-for %%A in ("%ZIPNAME%") do set ZIPSIZE=%%~zA
-set /a ZIPSIZE_MB=%ZIPSIZE% / 1048576
-
-echo.
-echo ============================================
-echo   완료: %ZIPNAME% (%ZIPSIZE_MB% MB)
-echo ============================================
-echo.
-echo 이 ZIP 파일을 Google Drive/USB에 올리고
-echo 다른 PC에서 압축 풀고 CafeScraper.exe 실행!
-echo.
 pause
+
+exit /b 0
+

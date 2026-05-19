@@ -10,9 +10,28 @@ import time
 import urllib.error
 import urllib.request
 
+# PyInstaller: 함수 내부의 import 만 있으면 webview 패키지가 빠질 수 있어 정적 참조.
+try:
+    import webview as _wv
+except ImportError:
+    _wv = None  # type: ignore[misc, assignment]
+
 LOG_FILE = "cafescraper_launch.log"
+STREAMLIT_CHILD_LOG = "streamlit_child.log"
 FALLBACK_NOTE = "webview_fallback_reason.txt"
 CHILD_FLAG = "--_cafescraper_streamlit_child"
+
+
+def _window_title_base() -> str:
+    try:
+        from app.utils.app_version import read_app_version
+
+        v = read_app_version()
+        if v and v != "0.0.0":
+            return f"카페 몬스터 — CafeScraper v{v}"
+    except Exception:
+        pass
+    return "카페 몬스터 — CafeScraper"
 
 
 def _boot_log(exe_dir: str, msg: str) -> None:
@@ -128,6 +147,16 @@ def _popen_streamlit_child(port: int, exe_dir: str, env: dict) -> subprocess.Pop
     else:
         cmd = [sys.executable, os.path.abspath(__file__), CHILD_FLAG, str(port)]
     kw: dict = {"cwd": exe_dir, "env": env}
+    # 번들 실행 시 자식 Streamlit 로그를 파일로 남김(CREATE_NO_WINDOW 때문에 콘솔 없음).
+    if getattr(sys, "frozen", False):
+        try:
+            lf = open(os.path.join(exe_dir, STREAMLIT_CHILD_LOG), "a", encoding="utf-8", buffering=1)
+            lf.write(f"\n{'=' * 48}\n{time.strftime('%Y-%m-%d %H:%M:%S')} streamlit child argv={cmd}\n")
+            lf.flush()
+            kw["stdout"] = lf
+            kw["stderr"] = subprocess.STDOUT
+        except OSError:
+            pass
     if sys.platform == "win32":
         kw["creationflags"] = subprocess.CREATE_NO_WINDOW  # type: ignore[attr-defined]
     return subprocess.Popen(cmd, **kw)
@@ -146,15 +175,13 @@ def _terminate_process(proc: subprocess.Popen, exe_dir: str) -> None:
 
 
 def _try_webview(url: str, exe_dir: str, child_proc: subprocess.Popen) -> None:
-    try:
-        import webview
-    except ImportError as e:
-        _boot_log(exe_dir, f"pywebview ImportError: {e}")
+    if _wv is None:
+        _boot_log(exe_dir, "pywebview ImportError: webview module not available")
         try:
             with open(os.path.join(exe_dir, FALLBACK_NOTE), "w", encoding="utf-8") as f:
                 f.write(
                     "pywebview 모듈을 불러오지 못했습니다.\n"
-                    "ZIP에서 dist 폴더 전체를 같은 빌드로 압축 해제했는지 확인하세요.\n"
+                    "재빌드(Python 환경에 pywebview 설치 후 build) 및 dist 폴더 전체 유지 여부를 확인하세요.\n"
                 )
         except OSError:
             pass
@@ -165,8 +192,8 @@ def _try_webview(url: str, exe_dir: str, child_proc: subprocess.Popen) -> None:
         _terminate_process(child_proc, exe_dir)
         os._exit(_code)
 
-    win = webview.create_window(
-        "카페 몬스터 — CafeScraper",
+    win = _wv.create_window(
+        _window_title_base(),
         url,
         width=1480,
         height=920,
@@ -178,15 +205,25 @@ def _try_webview(url: str, exe_dir: str, child_proc: subprocess.Popen) -> None:
     except Exception:
         pass
 
+    gui_override = (os.environ.get("CAFESCRAPER_WEBVIEW_GUI") or "").strip().lower()
+
     try:
-        if sys.platform == "win32":
+        if gui_override:
+            _boot_log(exe_dir, f"webview.start gui={gui_override} (CAFESCRAPER_WEBVIEW_GUI)")
+            _wv.start(gui=gui_override)
+        elif sys.platform == "win32":
             try:
-                webview.start(gui="edgechromium")
+                _boot_log(exe_dir, "webview.start gui=edgechromium")
+                _wv.start(gui="edgechromium")
             except Exception as e1:
-                _boot_log(exe_dir, f"webview edgechromium 실패, 기본 시도: {e1!r}")
-                webview.start()
+                _boot_log(exe_dir, f"webview edgechromium 실패: {e1!r}, mshtml 시도")
+                try:
+                    _wv.start(gui="mshtml")
+                except Exception as e2:
+                    _boot_log(exe_dir, f"webview mshtml 실패: {e2!r}, 기본 백엔드 시도")
+                    _wv.start()
         else:
-            webview.start()
+            _wv.start()
         _boot_log(exe_dir, "webview.start() 반환")
         _cleanup_and_exit(0)
     except Exception as e:
@@ -229,6 +266,10 @@ def main() -> None:
     env["STREAMLIT_SERVER_ADDRESS"] = "127.0.0.1"
 
     child = _popen_streamlit_child(port, exe_dir, env)
+    try:
+        _boot_log(exe_dir, f"Streamlit 자식 PID={child.pid}")
+    except Exception:
+        pass
 
     try:
         _wait_streamlit_http(url)
@@ -268,6 +309,10 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    import multiprocessing
+
+    multiprocessing.freeze_support()
+
     if len(sys.argv) >= 3 and sys.argv[1] == CHILD_FLAG:
         _streamlit_child_entry(int(sys.argv[2]))
         sys.exit(0)

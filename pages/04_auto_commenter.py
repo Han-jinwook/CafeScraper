@@ -12,8 +12,12 @@ from pathlib import Path
 
 from selenium.webdriver.common.by import By
 
-from app.products.commenter.bot import NaverCafeCommenter
-from app.utils.paths import get_config_path, resolve_commenter_db_path
+from app.products.commenter.bot import (
+    NaverCafeCommenter,
+    apply_comment_template_placeholders,
+    sanitize_commenter_nickname,
+)
+from app.utils.paths import get_comment_templates_path, get_config_path, resolve_commenter_db_path
 from app.utils.event_db import (
     clear_commenter_targets,
     get_commenter_targets_count,
@@ -80,8 +84,21 @@ def save_config(cfg: dict) -> None:
         json.dump(cfg, f, ensure_ascii=False, indent=4)
 
 
+def _sanitize_commenter_db_path_cfg(raw: str | None) -> str | None:
+    """설정에 'D:\\...\\data\\file.db' 같은 예시 문자열이 들어 있으면 무시하고 기본 경로 규칙을 씀."""
+    if raw is None:
+        return None
+    t = str(raw).strip().replace("…", ".").replace("`", "").strip()
+    if not t:
+        return None
+    if "..." in t:
+        return None
+    return t
+
+
 config = load_config()
-COMMENTER_DB_PATH = str(resolve_commenter_db_path(config.get("commenter_db_path")))
+_cfg_commenter_db = _sanitize_commenter_db_path_cfg(config.get("commenter_db_path"))
+COMMENTER_DB_PATH = str(resolve_commenter_db_path(_cfg_commenter_db))
 init_event_db(COMMENTER_DB_PATH)
 
 # 댓글 간격: 30~120초 랜덤 (UI 입력 불필요, 고정 정책)
@@ -91,8 +108,6 @@ COMMENTER_GAP_MAX_SEC = 120
 COMMENTER_SESSION_LIMIT = 60
 # 세션 간 휴식 시간(초) — 1시간
 COMMENTER_SESSION_REST_SEC = 3600
-
-TEMPLATES_FILE = "comment_templates.json"
 
 # ----- 자동댓글러 전용 설정 키 (이벤트분석과 분리) -----
 if "commenter" not in st.session_state:
@@ -147,15 +162,15 @@ if "commenter_board_picker_version" not in st.session_state:
     st.session_state.commenter_board_picker_version = 0
 if "commenter_board_picker_options_sig" not in st.session_state:
     st.session_state.commenter_board_picker_options_sig = ""
-if "commenter_cafe_url_after_reset_save_mode" not in st.session_state:
-    _saved_cafe_name = str(config.get("commenter_cafe_name", "") or "").strip()
-    _saved_cafe_url = str(config.get("commenter_cafe_url", "") or "").strip()
-    st.session_state.commenter_cafe_url_after_reset_save_mode = not (_saved_cafe_name or _saved_cafe_url)
+if "commenter_cafe_connect_side_mode" not in st.session_state:
+    _cfg_cn = str(config.get("commenter_cafe_name", "") or "").strip()
+    _cfg_cu = str(config.get("commenter_cafe_url", "") or "").strip()
+    st.session_state.commenter_cafe_connect_side_mode = (
+        "reset" if (_cfg_cn or _cfg_cu) else "save"
+    )
 if "commenter_auto_login_after_reset_save_mode" not in st.session_state:
     _saved_login_id = str(config.get("commenter_naver_id", "") or "").strip()
     st.session_state.commenter_auto_login_after_reset_save_mode = not _saved_login_id
-if "commenter_db_path_input" not in st.session_state:
-    st.session_state.commenter_db_path_input = str(config.get("commenter_db_path", "") or "")
 if "commenter_db_reset_confirm" not in st.session_state:
     st.session_state.commenter_db_reset_confirm = False
 
@@ -276,37 +291,58 @@ def _commenter_overall_url_from_boards(boards: list) -> str:
     return ""
 
 
-def load_templates():
-    default_templates = [
-        "안녕하세요 {닉네임}님! 좋은 글 잘 보고 갑니다 ^^",
-        "{닉네임}님, 저도 비슷한 고민이 있었는데 도움 되네요.",
-        "반갑습니다 {닉네임}님! 혹시 실례가 안된다면 질문 드려도 될까요?",
-        "(직접 입력)",
-    ]
-    if os.path.exists(TEMPLATES_FILE):
+_COMMENTER_TEMPLATE_BUILTIN = "{인사} {작성자}님! 좋은 글 잘 보고 갑니다 ^^"
+_COMMENTER_TEMPLATE_DIRECT = "(직접 입력)"
+
+
+def load_templates() -> list:
+    """저장된 목록 + 기본 1문장 + (직접 입력). 저장 파일은 exe 옆(get_comment_templates_path)."""
+    p = get_comment_templates_path()
+    saved: list = []
+    if p.is_file():
         try:
-            with open(TEMPLATES_FILE, "r", encoding="utf-8") as f:
-                saved = json.load(f)
-                return saved + default_templates
+            raw = json.loads(p.read_text(encoding="utf-8"))
+            if isinstance(raw, list):
+                saved = [str(x).strip() for x in raw if str(x).strip()]
         except Exception:
-            pass
-    return default_templates
+            saved = []
+
+    seen: set[str] = set()
+    out: list[str] = []
+    for t in saved:
+        if t not in seen and t != _COMMENTER_TEMPLATE_DIRECT:
+            seen.add(t)
+            out.append(t)
+    if _COMMENTER_TEMPLATE_BUILTIN not in seen:
+        out.append(_COMMENTER_TEMPLATE_BUILTIN)
+        seen.add(_COMMENTER_TEMPLATE_BUILTIN)
+    if _COMMENTER_TEMPLATE_DIRECT not in seen:
+        out.append(_COMMENTER_TEMPLATE_DIRECT)
+    return out
 
 
 def save_new_template(content):
     if not content or content.strip() == "":
         return
-    current = []
-    if os.path.exists(TEMPLATES_FILE):
+    p = get_comment_templates_path()
+    current: list = []
+    if p.is_file():
         try:
-            with open(TEMPLATES_FILE, "r", encoding="utf-8") as f:
-                current = json.load(f)
+            raw = json.loads(p.read_text(encoding="utf-8"))
+            if isinstance(raw, list):
+                current = [str(x) for x in raw if str(x).strip()]
         except Exception:
             pass
-    if content not in current:
-        current.insert(0, content)
-        with open(TEMPLATES_FILE, "w", encoding="utf-8") as f:
-            json.dump(current, f, ensure_ascii=False, indent=2)
+    c = str(content).strip()
+    if c == _COMMENTER_TEMPLATE_DIRECT or c == _COMMENTER_TEMPLATE_BUILTIN:
+        return
+    if c not in current:
+        current.insert(0, c)
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
 
 
 if "template_list" not in st.session_state:
@@ -336,6 +372,63 @@ def _commenter_ui_busy() -> bool:
         st.session_state.get("commenter_collecting", False)
         or st.session_state.get("is_running", False)
     )
+
+
+def _render_commenter_db_section() -> None:
+    """타겟 수집 설정 카드 하단 expander 안에서 호출."""
+    _eff_commenter_db = str(COMMENTER_DB_PATH)
+
+    _env_ov = (os.getenv("CAFESCRAPER_COMMENTER_DB_PATH") or "").strip()
+    if _env_ov:
+        st.caption("`CAFESCRAPER_COMMENTER_DB_PATH` 가 설정되어 이 경로가 적용됩니다.")
+    else:
+        st.caption("앱 기본 규칙으로 정해진 파일 경로입니다 (읽기 전용 표시).")
+    st.text_area(
+        "DB 경로",
+        value=_eff_commenter_db,
+        height=76,
+        disabled=True,
+        key="commenter_db_path_display_ro",
+    )
+
+    st.metric("저장된 댓글 대상 글", f"{get_commenter_targets_count(_eff_commenter_db):,}건")
+
+    st.markdown("<div style='height: 6px;'></div>", unsafe_allow_html=True)
+    if st.session_state.pop("_commenter_pending_clear_db_reset_confirm", False):
+        st.session_state.commenter_db_reset_confirm = False
+    st.checkbox(
+        "자동댓글러 댓글 대상(commenter_targets) 데이터를 모두 삭제합니다. 필요하면 먼저 CSV/리포트를 내려받으세요.",
+        key="commenter_db_reset_confirm",
+    )
+    if st.button(
+        "데이터 초기화",
+        type="primary",
+        use_container_width=True,
+        key="commenter_reset_db_btn",
+        disabled=(
+            _commenter_ui_busy()
+            or (not bool(st.session_state.get("commenter_db_reset_confirm")))
+        ),
+    ):
+        try:
+            try:
+                if st.session_state.get("commenter") and getattr(st.session_state.commenter, "driver", None):
+                    st.session_state.commenter.close()
+            except Exception:
+                pass
+            st.session_state.commenter = None
+            init_event_db(_eff_commenter_db)
+            clear_commenter_targets(_eff_commenter_db)
+            st.session_state.target_df = None
+            st.session_state.commenter_target_df_full = None
+            _commenter_reset_run_state()
+            st.session_state.comment_logs = []
+            st.session_state._commenter_pending_clear_db_reset_confirm = True
+            st.success("✅ 댓글 대상 DB를 초기화했습니다.")
+            time.sleep(0.8)
+            st.rerun()
+        except Exception as e:
+            st.error(f"DB 초기화 실패: {e}")
 
 
 def _commenter_normalized_target_range():
@@ -384,6 +477,7 @@ def _collect_commenter_targets_into_session() -> None:
         if _start_d is None:
             st.warning("수집 기간을 확인해주세요.")
             return
+        st.session_state.commenter_collecting = True
         exclude_keyword = str(st.session_state.get("commenter_exclude_nicks", "") or "")
         start_dt = datetime.combine(_start_d, datetime.min.time())
         end_dt = datetime.combine(_end_d, datetime.max.time())
@@ -415,6 +509,10 @@ def _collect_commenter_targets_into_session() -> None:
                     _batch, _is_finished = (result or []), True
                 _batch = _batch or []
                 articles.extend(_batch)
+                status_ph.text(
+                    f"게시판 {b_idx}/{len(board_urls)} 목록 스캔 중… "
+                    f"(이번 배치 {len(_batch)}건 · 누적 {len(articles)}건)"
+                )
                 if _is_finished:
                     break
                 _eff_pg = int(
@@ -431,29 +529,10 @@ def _collect_commenter_targets_into_session() -> None:
                 if not board_name:
                     board_name = _commenter_board_label_for_url(board_url_each)
                 if crw._is_noise_board_label(board_name):
-                    board_name = ""
-                nickname = str(art.get("nickname") or "").strip() or "unknown"
-                member_id = str(art.get("member_id") or "").strip() or "unknown"
-                need_detail = (nickname == "unknown") or (not board_name)
-                if need_detail:
-                    try:
-                        detail = crw.scrape_article_detail(
-                            u,
-                            member_id,
-                            admin_nicks=[],
-                            comment_mode="none",
-                        )
-                        if detail:
-                            dn = str(detail.get("nickname") or "").strip()
-                            if dn and dn != "unknown":
-                                nickname = dn
-                            dbn = str(detail.get("board_name") or "").strip()
-                            if dbn and not crw._is_noise_board_label(dbn):
-                                board_name = dbn
-                    except Exception:
-                        pass
-                if crw._is_noise_board_label(board_name):
                     board_name = _commenter_board_label_for_url(board_url_each) or ""
+                nickname = str(art.get("nickname") or "").strip() or "unknown"
+                # 목록 단계에서는 상세 페이지(scrape_article_detail)를 부르지 않는다.
+                # 게시판마다 수십 페이지 × 글마다 브라우저 이동이면 사용자 화면이 “목록 수집 중”에서 사실상 멈춘 것처럼 보임.
                 by_url[u] = {
                     "post_id": art.get("post_id", ""),
                     "nickname": nickname,
@@ -473,10 +552,17 @@ def _collect_commenter_targets_into_session() -> None:
             mask = df["nickname"].apply(lambda x: not any(exc in str(x) for exc in excludes))
             df = df[mask]
         # 동일 닉네임 중복 제거 (디폴트: 첫 번째만 유지)
+        # 목록에서 닉을 못 읽으면 전부 "unknown" → 같은 키로 only 1행 남는 버그 방지: unknown은 URL로 구분
         allow_dup = st.session_state.get("commenter_allow_dup_nick", False)
         if not allow_dup and not df.empty:
             _before = len(df)
-            df = df.drop_duplicates(subset=["nickname"], keep="first")
+            _nk = df["nickname"].astype(str).str.strip()
+            _fallback = df["url"].astype(str).str.strip()
+            _dedup_key = _nk.mask(_nk.str.lower().eq("unknown"), _fallback)
+            _dedup_key = _dedup_key.mask(_dedup_key.eq("") | _dedup_key.isna(), _fallback)
+            df = df.assign(_commenter_nick_dedup=_dedup_key).drop_duplicates(
+                subset=["_commenter_nick_dedup"], keep="first"
+            ).drop(columns=["_commenter_nick_dedup"])
             _removed = _before - len(df)
             if _removed > 0:
                 st.info(f"동일 닉네임 중복 {_removed}건 제거됨 (설정에서 허용 가능)")
@@ -487,8 +573,8 @@ def _collect_commenter_targets_into_session() -> None:
             replace_commenter_targets(
                 COMMENTER_DB_PATH, df.to_dict("records") if not df.empty else []
             )
-        except Exception:
-            pass
+        except Exception as _db_exc:
+            st.warning(f"타겟 DB 저장에 실패했습니다(화면 표는 유지됨). 원인: {_db_exc}")
         if df.empty:
             st.warning("선택한 기간·게시판에서 수집된 글이 없습니다.")
         else:
@@ -524,10 +610,20 @@ def _render_commenter_dashboard_header() -> None:
                     f"""
                 타겟 글은 **브라우저로 게시판 목록을 직접 스크랩**합니다. (`event_posts` 조회 없음)
 
-                1. **카페 · 연결**: 카페 URL·자동로그인·게시판 목록·게시판 선택.
+                1. **카페 · 연결**: 카페명·URL 빈 상태에서 입력 후 **저장**(저장 후 단추는 **리셋**).
                 2. **타겟 수집 설정**: 수집 기간·제외 닉네임 → **💾 저장**.
                 3. **실행 제어**(설정 아래): 1단계(브라우저) → 2단계(목록 수집) → **데이터 관리**에서 현황 확인.
-                4. **댓글 · 실행**: 글 사이 **추가 대기(초)** — 최소 {COMMENTER_GAP_MIN_SEC}초, 템플릿 → **댓글 작성 시작**.
+                4. **댓글 · 실행**: 템플릿 확인 후 **댓글 작성 시작**.
+
+                **안전 사용 조건 (요약, 별도 설정 없음)**  
+                - 실제 Chrome·로그인 계정·글마다 **{COMMENTER_GAP_MIN_SEC}~{COMMENTER_GAP_MAX_SEC}초** 무작위 대기, **{COMMENTER_SESSION_LIMIT}건**마다 **{COMMENTER_SESSION_REST_SEC // 60}분** 휴식 — 무분별한 대량 봇 패턴을 줄이기 위한 **고정 정책**입니다.  
+                - **하루 댓글 약 300건 이하**를 권장합니다. **당일 300건을 다 썼으면 그날은 다시 실행하지 마세요.** (이어서 두 번째 묶음·야간 추가 실행 금지)  
+                - 인사말은 템플릿의 **`{{인사}}`** 또는 맨 앞 「안녕하세요」를 **댓글마다 내부 목록에서 무작위**로 바꿉니다(동일 문장 반복 완화).  
+                - 완전 무위험은 아닙니다. 같은 홍보 문구 반복·스팸 신고·카페 규칙 위반 시 **계정·카페 제재** 가능성이 있습니다. 캡차·비정상 접속이 늘면 **당일 중단**하세요.
+
+                **속도·휴식 (위 안전 조건과 동일)**  
+                - 글 한 편 처리 후 다음 글까지 **{COMMENTER_GAP_MIN_SEC}~{COMMENTER_GAP_MAX_SEC}초** 사이 **무작위 대기**.  
+                - **{COMMENTER_SESSION_LIMIT}건**마다 **{COMMENTER_SESSION_REST_SEC // 60}분** 휴식 후 이어감.
 
                 메인 카페 크롤링이 실행 중이면 이 화면을 사용할 수 없습니다.
                     """
@@ -550,9 +646,9 @@ with _col1:
             on_change=lambda: None,
         )
         try:
-            _ev_url_col, _ev_btn_col = st.columns([5, 1], gap="small", vertical_alignment="center")
+            _ev_url_col, _ev_side_col = st.columns([5, 1], gap="small", vertical_alignment="center")
         except TypeError:
-            _ev_url_col, _ev_btn_col = st.columns([5, 1], gap="small")
+            _ev_url_col, _ev_side_col = st.columns([5, 1], gap="small")
         with _ev_url_col:
             if st.session_state.pop("_commenter_pending_clear_cafe_url_input", False):
                 st.session_state.commenter_cafe_url_input = ""
@@ -565,22 +661,22 @@ with _col1:
             (config.get("commenter_cafe_name_history", []) or []) + [str(config.get("commenter_cafe_name", "") or "")],
             (config.get("commenter_cafe_url_history", []) or []) + [str(config.get("commenter_cafe_url", "") or "")],
         )
-        with _ev_btn_col:
-            _ev_save_mode = bool(st.session_state.get("commenter_cafe_url_after_reset_save_mode", False))
-            _ev_side_lbl = "저장" if _ev_save_mode else "리셋"
-            _ev_side_help = (
-                "카페명/카페 URL을 자동댓글러 설정에 저장합니다."
-                if _ev_save_mode
-                else "이벤트 게시판 목록/선택 데이터를 비웁니다."
-            )
+        _co_side = str(st.session_state.get("commenter_cafe_connect_side_mode") or "save")
+        _co_lbl = "리셋" if _co_side == "reset" else "저장"
+        _co_help = (
+            "저장한 카페·게시판 연결 초기화 — 단추는 다시 `저장`으로 바뀝니다."
+            if _co_side == "reset"
+            else "카페명/카페 URL을 자동댓글러 설정 파일에 저장합니다."
+        )
+        with _ev_side_col:
             if st.button(
-                _ev_side_lbl,
+                _co_lbl,
                 key="commenter_cafe_side_btn",
                 use_container_width=True,
-                help=_ev_side_help,
+                help=_co_help,
                 disabled=_commenter_ui_busy(),
             ):
-                if _ev_save_mode:
+                if _co_side == "save":
                     cfg_now = dict(load_config() or {})
                     saved_commenter_cafe_name = str(st.session_state.get("commenter_cafe_name_input", "") or "").strip()
                     saved_commenter_cafe_url = str(st.session_state.get("commenter_cafe_url_input", "") or "").strip()
@@ -608,22 +704,30 @@ with _col1:
                         )[:20]
                     save_config(cfg_now)
                     config.update(cfg_now)
-                    st.session_state.commenter_cafe_url_after_reset_save_mode = False
+                    st.session_state.commenter_cafe_connect_side_mode = "reset"
                     st.session_state._commenter_cafe_url_apply_ack = True
                     st.rerun()
                 else:
+                    cfg_clr = dict(load_config() or {})
+                    cfg_clr["commenter_cafe_name"] = ""
+                    cfg_clr["commenter_cafe_url"] = ""
+                    cfg_clr["commenter_extracted_boards"] = []
+                    cfg_clr["commenter_selected_board_urls"] = []
+                    cfg_clr["commenter_board_url"] = ""
+                    save_config(cfg_clr)
+                    config.update(cfg_clr)
                     st.session_state.commenter_extracted_boards = []
                     st.session_state.commenter_selected_board_urls = []
                     st.session_state.commenter_selected_board_url = ""
-                    st.session_state.commenter_cafe_url_after_reset_save_mode = True
                     st.session_state._commenter_pending_clear_cafe_name_input = True
                     st.session_state._commenter_pending_clear_cafe_url_input = True
+                    st.session_state.commenter_cafe_connect_side_mode = "save"
                     st.session_state._commenter_cafe_reset_done = True
                     st.rerun()
         if st.session_state.get("_commenter_cafe_reset_done"):
             st.session_state._commenter_cafe_reset_done = False
             st.success(
-                "카페 관련 데이터를 비웠고 카페명/카페 URL 칸을 비웠습니다. 새 값을 입력 후 오른쪽 저장을 눌러주세요."
+                "카페 연결 상태를 초기화했습니다. 카페명·URL 설정을 비웠고 입력칸도 비워졌습니다 — 다시 **`저장`** 을 진행해 주세요."
             )
         if st.session_state.get("_commenter_cafe_url_apply_ack"):
             st.session_state._commenter_cafe_url_apply_ack = False
@@ -1099,6 +1203,10 @@ with _col2:
             time.sleep(1)
             st.rerun()
 
+        st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
+        with st.expander("💾 DB 경로 · 댓글 대상 (접기/펼치기)", expanded=False):
+            _render_commenter_db_section()
+
 with _col3:
     with st.container(border=True, key="commenter_settings_card_3"):
         render_settings_card_title("댓글 · 실행", icon="💬")
@@ -1108,11 +1216,23 @@ with _col3:
         )
         with st.expander("⚙️ 댓글 설정 접기/펼치기", expanded=True):
             default_text = "" if selected_template == "(직접 입력)" else selected_template
+            _tl, _tr = st.columns([1, 1], gap="small")
+            with _tl:
+                st.markdown(
+                    '<p style="margin:0;padding:0.35rem 0 0 0;font-size:1rem;font-weight:600;">댓글 내용 입력</p>',
+                    unsafe_allow_html=True,
+                )
+            with _tr:
+                st.markdown(
+                    '<p style="margin:0;padding:0.4rem 0 0 0;text-align:right;font-size:0.82rem;'
+                    'line-height:1.35;color:#64748b;">{{작성자}} · {{인사}}(댓글마다 랜덤) 치환</p>',
+                    unsafe_allow_html=True,
+                )
             final_template = st.text_area(
                 "댓글 내용 입력",
                 value=default_text,
                 height=170,
-                help="{닉네임}, {제목} 치환 가능",
+                label_visibility="collapsed",
             )
 
             if st.button(
@@ -1184,114 +1304,24 @@ with _col3:
             if final_template.strip():
                 _show_preview = st.checkbox("💬 댓글 미리보기", key="commenter_preview_open")
                 if _show_preview and not st.session_state.get("is_running"):
-                    sample_nick = "홍길동"
-                    sample_title = "게시글 제목 예시"
+                    sample_author = "홍길동"
                     if st.session_state.target_df is not None and not st.session_state.target_df.empty:
-                        sample_nick = st.session_state.target_df.iloc[0]["nickname"]
-                        sample_title = st.session_state.target_df.iloc[0]["title"]
+                        sample_author = st.session_state.target_df.iloc[0]["nickname"]
 
-                    preview_text = final_template.replace("{닉네임}", str(sample_nick)).replace(
-                        "{제목}", str(sample_title)
+                    preview_text = apply_comment_template_placeholders(
+                        final_template, sample_author, ""
                     )
-                    _nick_h = html.escape(str(sample_nick))
                     _body_h = html.escape(str(preview_text))
                     st.markdown(
                         f'<div style="padding:0.65rem 0.85rem;background:#e8f4fc;border-radius:0.45rem;'
                         f'font-size:0.95rem;line-height:1.5;border-left:4px solid #2196f3;">'
-                        f"<strong>To. {_nick_h}</strong>: {_body_h}</div>",
+                        f"{_body_h}</div>",
                         unsafe_allow_html=True,
                     )
                 elif _show_preview:
                     st.caption("작업 진행 중에는 미리보기를 잠시 숨깁니다.")
 
-st.markdown("<div style='height:0.75rem'></div>", unsafe_allow_html=True)
-with st.container(border=True, key="commenter_settings_card_db"):
-    render_settings_card_title("DB 경로 / 초기화", icon="💾")
-    _commenter_env_db = (os.getenv("CAFESCRAPER_COMMENTER_DB_PATH") or "").strip()
-    if _commenter_env_db:
-        st.caption(
-            "환경변수 **`CAFESCRAPER_COMMENTER_DB_PATH`** 가 설정되어 있어 이 경로가 항상 우선합니다. "
-            "아래 입력란은 읽기 전용이며, 초기화도 해당 파일에 적용됩니다."
-        )
-        st.text_input(
-            "DB 파일 경로 (환경변수)",
-            value=_commenter_env_db,
-            disabled=True,
-            key="commenter_db_path_readonly_env",
-        )
-        _eff_commenter_db = str(Path(_commenter_env_db).expanduser().resolve())
-    else:
-        st.text_input(
-            "DB 경로",
-            key="commenter_db_path_input",
-            placeholder=r"D:\...\data\auto_commenter.db",
-            help="비우면 기본값(data/auto_commenter.db)입니다. 변경 후 💾 DB 경로 저장을 누르세요.",
-        )
-        _cfg_in = str(st.session_state.get("commenter_db_path_input", "") or "").strip()
-        _eff_commenter_db = str(resolve_commenter_db_path(_cfg_in if _cfg_in else None))
-
-    st.caption(f"실제 사용 경로: `{_eff_commenter_db}`")
-
-    _db_m1, _db_m2 = st.columns([1, 1])
-    with _db_m1:
-        st.metric("저장된 댓글 대상 글", f"{get_commenter_targets_count(_eff_commenter_db):,}건")
-    with _db_m2:
-        st.markdown("<div style='height: 1.85rem;'></div>", unsafe_allow_html=True)
-        if st.button(
-            "💾 DB 경로 저장",
-            use_container_width=True,
-            key="commenter_save_db_path_btn",
-            disabled=bool(_commenter_env_db),
-        ):
-            cfg_now = dict(load_config() or {})
-            cfg_now["commenter_db_path"] = str(st.session_state.get("commenter_db_path_input", "") or "").strip()
-            save_config(cfg_now)
-            config.update(cfg_now)
-            st.success("✅ DB 경로를 저장했습니다.")
-            time.sleep(0.6)
-            st.rerun()
-
-    st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
-    st.warning(
-        "**댓글 대상** 테이블(`commenter_targets`)만 비웁니다. 같은 DB 파일에 이벤트 수집 테이블이 있어도 **건드리지 않습니다**. "
-        "표에 남겨 둘 결과가 있으면 먼저 백업·다운로드 후 진행하세요."
-    )
-    if st.session_state.pop("_commenter_pending_clear_db_reset_confirm", False):
-        st.session_state.commenter_db_reset_confirm = False
-    st.checkbox(
-        "위 안내를 확인했으며, 저장된 댓글 대상을 삭제합니다. (복구 불가)",
-        key="commenter_db_reset_confirm",
-    )
-    if st.button(
-        "🗑️ 댓글 대상 DB 초기화",
-        type="primary",
-        use_container_width=True,
-        key="commenter_reset_db_btn",
-        disabled=(
-            _commenter_ui_busy()
-            or (not bool(st.session_state.get("commenter_db_reset_confirm")))
-        ),
-    ):
-        try:
-            try:
-                if st.session_state.get("commenter") and getattr(st.session_state.commenter, "driver", None):
-                    st.session_state.commenter.close()
-            except Exception:
-                pass
-            st.session_state.commenter = None
-            init_event_db(_eff_commenter_db)
-            clear_commenter_targets(_eff_commenter_db)
-            st.session_state.target_df = None
-            st.session_state.commenter_target_df_full = None
-            _commenter_reset_run_state()
-            st.session_state.comment_logs = []
-            st.session_state._commenter_pending_clear_db_reset_confirm = True
-            st.success("✅ 댓글 대상 DB를 초기화했습니다.")
-            time.sleep(0.8)
-            st.rerun()
-        except Exception as e:
-            st.error(f"DB 초기화 실패: {e}")
-
+st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
 # 실제 write_comment 루프는 파일 하단(표·메트릭 아래)에서 실행 →
 # 여기서 먼저 표가 그려지므로 직전까지 댓글결과가 보입니다.
 with st.container(key="commenter_running_progress_area"):
@@ -1362,16 +1392,6 @@ elif not _has_targets_now:
 else:
     st.success("현재 단계: 작성 준비 완료 — 템플릿 확인 후 **🚀 댓글 작성 시작**을 누르세요.")
 with st.container(key="commenter_exec_btns"):
-    if st.session_state.pop("_commenter_run_collect", False):
-        if st.session_state.get("is_running", False):
-            # 댓글 작업 중에는 수집을 시작하지 않도록 강제 차단 (로그 뒤죽박죽 방지)
-            st.session_state.commenter_collecting = False
-            st.warning("댓글 작업 진행 중에는 2단계 수집을 시작할 수 없습니다.")
-        else:
-            _collect_commenter_targets_into_session()
-            # 실행 제어 영역이 화면 하단에 있어, 수집 완료 후 위쪽 카드(댓글 시작 버튼)가
-            # 같은 런에서 이전 상태로 남을 수 있으므로 한 번 더 rerun으로 동기화.
-            st.rerun()
     step_c1, step_c2 = st.columns(2, gap="small")
     with step_c1:
         if st.button(
@@ -1417,18 +1437,28 @@ with st.container(key="commenter_exec_btns"):
                 st.warning(f"자동로그인 처리 중 오류: {_login_err}")
             st.rerun()
     with step_c2:
+        _step2_blocked = (
+            (not commenter_browser_opened)
+            or st.session_state.get("commenter_collecting", False)
+            or st.session_state.get("is_running", False)
+        )
+        _step2_help = (
+            "1단계로 브라우저를 먼저 열고, 선택한 게시판·수집 기간 저장 후 진행합니다. "
+            "(이전처럼 눌러도 반응 없으면 앱 새로고침 한 번 후 다시 시도해 주세요.)"
+        )
         if st.button(
             "2단계: 타겟 목록 수집",
             use_container_width=True,
-            disabled=not commenter_browser_opened
-            or st.session_state.get("commenter_collecting", False)
-            or st.session_state.get("is_running", False),
-            type="primary" if commenter_browser_opened else "secondary",
+            disabled=_step2_blocked,
+            type="primary" if commenter_browser_opened and not _step2_blocked else "secondary",
             key="commenter_target_collect_step2_btn",
+            help=_step2_help,
         ):
-            st.session_state.commenter_collecting = True
-            st.session_state._commenter_run_collect = True
-            st.rerun()
+            if st.session_state.get("is_running", False):
+                st.warning("댓글 작업 진행 중에는 2단계 수집을 시작할 수 없습니다.")
+            else:
+                _collect_commenter_targets_into_session()
+                st.rerun()
 
 
 st.markdown(
@@ -1489,7 +1519,11 @@ with st.container(border=True, key="commenter_target_table_box"):
 
     if st.session_state.target_df is not None and not st.session_state.target_df.empty:
         _commenter_ensure_comment_cols(st.session_state.target_df)
-        _show_df = st.session_state.target_df
+        _show_df = st.session_state.target_df.copy()
+        if "nickname" in _show_df.columns:
+            _show_df["nickname"] = _show_df["nickname"].map(
+                lambda x: sanitize_commenter_nickname(str(x))
+            )
         _pref_order = [
             "comment_status",
             "comment_detail",
@@ -1570,12 +1604,13 @@ if st.session_state.get("is_running", False):
                         )
                         log_msg(f"총 {total}개 글에 작업을 시작합니다.")
                     log_msg(
-                        f"[{idx + 1}/{total}] '{row['title']}' ({row.get('nickname')}) 방문 중..."
+                        f"[{idx + 1}/{total}] '{row['title']}' ({sanitize_commenter_nickname(str(row.get('nickname') or ''))}) 방문 중..."
                     )
+                    _nick_run = sanitize_commenter_nickname(str(row.get("nickname") or ""))
                     res = st.session_state.commenter.write_comment(
                         article_url=row["url"],
                         template=_tpl,
-                        nickname=str(row.get("nickname") or ""),
+                        nickname=_nick_run,
                         title=str(row.get("title") or ""),
                     )
                     _u_short = str(row.get("url") or "")[:110]

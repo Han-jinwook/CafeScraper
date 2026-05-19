@@ -6,6 +6,7 @@ import random
 import re
 import shutil
 import subprocess
+import sys
 import time
 import pickle
 from datetime import datetime, timedelta
@@ -23,6 +24,15 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
+
+
+def _safe_stdout_line(line: str) -> None:
+    """Windows(cp949 등) 콘솔에서 이모지 출력 시 UnicodeEncodeError 방지."""
+    try:
+        print(line)
+    except UnicodeEncodeError:
+        enc = getattr(sys.stdout, "encoding", None) or "utf-8"
+        print(line.encode(enc, errors="replace").decode(enc, errors="replace"))
 
 
 def _detect_installed_chrome_major_version() -> Optional[int]:
@@ -141,7 +151,7 @@ class NaverCafeCrawler:
         if self.status_callback:
             self.status_callback(message)
         else:
-            print(f"[INFO] {message}")
+            _safe_stdout_line(f"[INFO] {message}")
 
     def _extract_id_from_element(self, element) -> str:
         """요소에서 Naver ID (member_id)를 추출하는 통합 엔진"""
@@ -200,18 +210,27 @@ class NaverCafeCrawler:
         if not n:
             return ""
 
+        def _finalize(x: str) -> str:
+            x = (x or "").strip()
+            if not x:
+                return ""
+            x = re.sub(r"\s*\[\d+\]\s*$", "", x).strip()
+            x = re.sub(r"\s*멤버등급\s*[:：]\s*.+$", "", x, flags=re.IGNORECASE).strip()
+            return x
+
         # "X 님의 ..." 형태 제거
         m = re.match(r"^(.+?)\s*님의\s+.+$", n)
         if m:
-            return self._clean_text(m.group(1))
+            return _finalize(self._clean_text(m.group(1)))
 
         # "X 님 게시글/댓글 ..." 형태(드물게) 제거
         if any(token in n for token in ["더보기", "게시글", "댓글", "프로필", "보기"]):
             m2 = re.match(r"^(.+?)\s*님\s+.+$", n)
             if m2:
-                return self._clean_text(m2.group(1))
+                return _finalize(self._clean_text(m2.group(1)))
 
-        return n
+        # 카페 목록 작성자 셀: 등급 배지 "닉네임 [3]" (제목의 댓글수 [N]과 구분됨)
+        return _finalize(n)
 
     def _normalize_board_name(self, name: str) -> str:
         # 공백 제거 + 소문자 (예: "먹거리 / 맛집" == "먹거리/맛집")
@@ -2103,18 +2122,70 @@ class NaverCafeCrawler:
                     self._update_status(f"[디버그] ⚠️ SPA URL 감지, iframe 스킵: {current_url[:50]}...")
                 return True
             
-            # 표준 PC 버전: cafe_main iframe 전환
+            # 표준 PC 버전: cafe_main 우선, 실패 시 mainFrame·name·src 매칭 (실패 시 True로 위장하지 않음)
+            _pc_candidates: List[Tuple[Any, str]] = [
+                (By.ID, "cafe_main"),
+                (By.CSS_SELECTOR, "iframe#cafe_main"),
+                (By.NAME, "cafe_main"),
+                (By.CSS_SELECTOR, "iframe[name='cafe_main']"),
+                (By.ID, "mainFrame"),
+                (By.CSS_SELECTOR, "iframe#mainFrame"),
+            ]
+            for i, (by, loc) in enumerate(_pc_candidates):
+                wait_sec = 8.0 if i == 0 else 3.0
+                try:
+                    iframe = WebDriverWait(self.driver, wait_sec).until(
+                        EC.presence_of_element_located((by, loc))
+                    )
+                    self.driver.switch_to.frame(iframe)
+                    if self.debug_mode:
+                        self._update_status(f"[디버그] ✅ iframe 전환 성공 ({by}={loc})")
+                    return True
+                except Exception:
+                    continue
+
             try:
-                wait = WebDriverWait(self.driver, 5)
-                iframe = wait.until(EC.presence_of_element_located((By.ID, "cafe_main")))
-                self.driver.switch_to.frame(iframe)
-                if self.debug_mode:
-                    self._update_status(f"[디버그] ✅ iframe 전환 성공 (cafe_main)")
-                return True
-            except:
-                if self.debug_mode:
-                    self._update_status(f"[디버그] ⚠️ iframe 없음 (이미 본문 프레임?)")
-                return True
+                for fr in self.driver.find_elements(By.TAG_NAME, "iframe"):
+                    src = (fr.get_attribute("src") or "").lower()
+                    if not src:
+                        continue
+                    if "cafe.naver.com" not in src:
+                        continue
+                    if not (
+                        "articlelist" in src
+                        or "articleread" in src
+                        or "/cafes/" in src
+                        or "clubid=" in src
+                        or "menuid=" in src
+                    ):
+                        continue
+                    self.driver.switch_to.frame(fr)
+                    if self.debug_mode:
+                        self._update_status("[디버그] ✅ iframe 전환 성공 (src·카페 본문 매칭)")
+                    return True
+            except Exception:
+                pass
+
+            # 최상위 문서에 목록 앵커가 이미 있는 레이아웃(드문 케이스)
+            try:
+                _anchors = self.driver.find_elements(
+                    By.CSS_SELECTOR,
+                    "a[href*='articleid='], a[href*='/articles/']",
+                )
+                if len(_anchors) >= 3:
+                    if self.debug_mode:
+                        self._update_status("[디버그] iframe 없이 최상위 문서에 목록 링크 다수 발견")
+                    return True
+            except Exception:
+                pass
+
+            self._update_status(
+                "⚠️ 카페 목록 iframe(cafe_main 등)을 찾지 못했습니다. "
+                "로딩 지연·로그인 필요·페이지 구조 변경일 수 있습니다. 새로고침 후 다시 시도해 보세요."
+            )
+            if self.debug_mode:
+                self._update_status("[디버그] ❌ 표준 PC iframe 전환 실패 (모든 후보 소진)")
+            return False
         except Exception as e:
             if self.debug_mode:
                 self._update_status(f"[디버그] ❌ iframe 전환 실패: {e}")
@@ -3153,13 +3224,18 @@ class NaverCafeCrawler:
                                 pass
 
                         dval = None
-                        for ds in ["span[class*='Date']", "span.date", "td.td_date", ".date"]:
+                        for ds in ["time", "span[class*='Date']", "span.date", "td.td_date", ".date"]:
                             try:
                                 el = row_inner.find_element(By.CSS_SELECTOR, ds)
-                                dval = self._parse_date((el.text or "").strip())
+                                if el.tag_name.lower() == "time":
+                                    dv_attr = el.get_attribute("datetime")
+                                    if dv_attr:
+                                        dval = self._parse_date(str(dv_attr)[:10])
+                                if not dval:
+                                    dval = self._parse_date((el.text or "").strip())
                                 if dval:
                                     break
-                            except:
+                            except Exception:
                                 continue
                         if not dval:
                             m = re.search(r'(\d{4}\.\d{1,2}\.\d{1,2})', row_inner.text or "")
@@ -3227,6 +3303,141 @@ class NaverCafeCrawler:
             return 1, (p1_min.strftime("%Y-%m-%d") if p1_min else None), (p1_max.strftime("%Y-%m-%d") if p1_max else None)
         except Exception:
             return 1, None, None
+
+    def _fallback_collect_board_list_rows(
+        self,
+        range_start_d,
+        range_end_d,
+        exclude_norm: Set[str],
+        fallback_board_name: str,
+    ) -> Tuple[List[Dict[str, Any]], List[datetime]]:
+        """
+        행(li/tr) 단위 셀렉터·날짜 셀이 바뀌어 본편 루프가 0건일 때,
+        게시글 앵커만으로 목록을 복구한다.
+        """
+        collected: List[Dict[str, Any]] = []
+        dates_acc: List[datetime] = []
+        try:
+            self._switch_to_cafe_iframe()
+            anchors = self.driver.find_elements(
+                By.CSS_SELECTOR,
+                "a[href*='articleid='], a[href*='/articles/'], a[href*='ArticleRead.nhn']",
+            )
+            seen_post: Set[str] = set()
+            for a in anchors:
+                try:
+                    href = (a.get_attribute("href") or "").strip()
+                    if not href:
+                        continue
+                    if "ArticleList.nhn" in href and "articleid=" not in href:
+                        continue
+                    m = re.search(r"articleid=(\d+)", href) or re.search(r"/articles/(\d+)", href)
+                    if not m:
+                        continue
+                    pid = m.group(1)
+                    if pid in seen_post:
+                        continue
+
+                    raw = ""
+                    container = None
+                    try:
+                        xp_el = a
+                        for _depth in range(12):
+                            xp_el = xp_el.find_element(By.XPATH, "..")
+                            tag = (xp_el.tag_name or "").lower()
+                            cls = (xp_el.get_attribute("class") or "").lower()
+                            if tag in ("li", "tr", "article"):
+                                container = xp_el
+                                break
+                            if any(k in cls for k in ("article", "board-list", "articleitem", "inner")):
+                                container = xp_el
+                                break
+                        if container is not None:
+                            raw = (container.text or "").replace("\n", " ").strip()
+                    except Exception:
+                        container = None
+
+                    if not raw:
+                        raw = (a.text or "").replace("\n", " ").strip()
+
+                    date_val = None
+                    if container is not None:
+                        for ds in (
+                            "span[class*='Date']",
+                            "span.date",
+                            "td.td_date",
+                            ".date",
+                            "time",
+                        ):
+                            try:
+                                el = container.find_element(By.CSS_SELECTOR, ds)
+                                if el.tag_name.lower() == "time":
+                                    dv_attr = el.get_attribute("datetime")
+                                    if dv_attr:
+                                        date_val = self._parse_date(str(dv_attr).replace("T", " ")[:19])
+                                if not date_val:
+                                    date_val = self._parse_date((el.text or "").strip())
+                                if date_val:
+                                    break
+                            except Exception:
+                                continue
+                    if not date_val:
+                        date_match = re.search(r"(\d{4}\.\d{1,2}\.\d{1,2})", raw)
+                        if date_match:
+                            cand = self._parse_date(date_match.group(1))
+                            if cand and 2015 <= cand.year <= (datetime.now().year + 1):
+                                date_val = cand
+                    if not date_val:
+                        time_match = re.search(r"\b(?:[01]?\d|2[0-3]):[0-5]\d\b", raw or "")
+                        if time_match:
+                            date_val = self._parse_date(time_match.group(0))
+                    if not date_val:
+                        continue
+
+                    _dv = date_val.date() if isinstance(date_val, datetime) else date_val
+                    if _dv > range_end_d or _dv < range_start_d:
+                        continue
+
+                    bn_use = (fallback_board_name or "").strip()
+                    if bn_use and exclude_norm:
+                        if self._normalize_board_name(bn_use) in exclude_norm:
+                            continue
+
+                    seen_post.add(pid)
+
+                    title = (a.text or "").strip()
+                    list_comment_count = 0
+                    try:
+                        m_cnt = re.search(r"\[(\d+)\]\s*$", title)
+                        if m_cnt:
+                            list_comment_count = int(m_cnt.group(1))
+                            title = re.sub(r"\s*\[\d+\]\s*$", "", title).strip()
+                    except Exception:
+                        pass
+
+                    collected.append(
+                        {
+                            "post_id": pid,
+                            "member_id": "unknown",
+                            "url": href,
+                            "title": title or "(제목 없음)",
+                            "date": date_val.strftime("%Y-%m-%d"),
+                            "nickname": "unknown",
+                            "board_name": bn_use,
+                            "list_comment_count": int(list_comment_count),
+                        }
+                    )
+                    dates_acc.append(date_val if isinstance(date_val, datetime) else datetime.combine(_dv, datetime.min.time()))
+                except Exception:
+                    continue
+
+            if collected:
+                self._update_status(
+                    f"링크 폴백: 이 페이지에서 {len(collected)}건 복구 (목록 행 DOM 변경 추정)"
+                )
+        except Exception:
+            pass
+        return collected, dates_acc
 
     def scrape_board_list(
         self,
@@ -3322,10 +3533,15 @@ class NaverCafeCrawler:
                                 pass
 
                         dval_inner = None
-                        for ds_inner in ["span[class*='Date']", "span.date", "td.td_date", ".date"]:
+                        for ds_inner in ["time", "span[class*='Date']", "span.date", "td.td_date", ".date"]:
                             try:
                                 el_inner = row_inner.find_element(By.CSS_SELECTOR, ds_inner)
-                                dval_inner = self._parse_date(el_inner.text.strip())
+                                if el_inner.tag_name.lower() == "time":
+                                    dv_attr = el_inner.get_attribute("datetime")
+                                    if dv_attr:
+                                        dval_inner = self._parse_date(str(dv_attr)[:10])
+                                if not dval_inner:
+                                    dval_inner = self._parse_date(el_inner.text.strip())
                                 if dval_inner:
                                     break
                             except:
@@ -3524,9 +3740,12 @@ class NaverCafeCrawler:
                     "div[class*='ArticleItem'], "
                     "li[class*='article'], "
                     "li[class*='ArticleItem'], "
+                    "li[class*='Article'], "
                     "tr[class*='article'], "
                     "div.article-board table tbody tr, "
                     "table[class*='Article'] tbody tr, "
+                    "#article-list li, "
+                    ".article-board > ul > li, "
                     "table tbody tr"
                 )
                 rows = []
@@ -3562,6 +3781,19 @@ class NaverCafeCrawler:
                             pass
                 
                 if not rows:
+                    fb_empty, _fb_de = self._fallback_collect_board_list_rows(
+                        range_start_d,
+                        range_end_d,
+                        exclude_norm,
+                        _fallback_board_name,
+                    )
+                    if fb_empty:
+                        all_articles.extend(fb_empty)
+                        consecutive_no_date_pages = 0
+                        page += 1
+                        self._sleep_scaled(random.uniform(2, 4))
+                        continue
+
                     self._update_status(
                         f"⚠️ {page}페이지에서 게시글을 찾지 못했습니다. "
                         "(재확인 후에도 비어 있음, iframe 지연/일시 로딩 실패 가능)"
@@ -3636,13 +3868,20 @@ class NaverCafeCrawler:
                         
                         # 날짜 추출
                         date_val = None
-                        date_selectors = ["span[class*='Date']", "span.date", "td.td_date", ".date"]
+                        date_selectors = ["time", "span[class*='Date']", "span.date", "td.td_date", ".date"]
                         for ds in date_selectors:
                             try:
                                 el = row.find_element(By.CSS_SELECTOR, ds)
-                                date_val = self._parse_date(el.text.strip())
-                                if date_val: break
-                            except: continue
+                                if el.tag_name.lower() == "time":
+                                    dv_attr = el.get_attribute("datetime")
+                                    if dv_attr:
+                                        date_val = self._parse_date(str(dv_attr)[:10])
+                                if not date_val:
+                                    date_val = self._parse_date(el.text.strip())
+                                if date_val:
+                                    break
+                            except:
+                                continue
                         
                         # 날짜 컬럼 선택자가 실패하는 경우 제한적 폴백(YYYY.MM.DD만, 연도 범위 검증)
                         if not date_val:
@@ -3714,11 +3953,20 @@ class NaverCafeCrawler:
                         
                         # 링크/제목
                         link_el = None
-                        for ls in ["a[class*='ArticleLink']", "a.article", "a[href*='articleid']", "a[href*='/articles/']"]:
+                        for ls in [
+                            "a[class*='ArticleLink']",
+                            "a.article",
+                            "a[href*='articleid']",
+                            "a[href*='/articles/']",
+                            "a[class*='article-title']",
+                            "a[class*='ArticleTitle']",
+                        ]:
                             try:
                                 link_el = row.find_element(By.CSS_SELECTOR, ls)
-                                if link_el: break
-                            except: continue
+                                if link_el:
+                                    break
+                            except Exception:
+                                continue
                             
                         if not link_el:
                             _emit_row_dbg(idx, "", date_val, "no_link", raw_preview)
@@ -3798,30 +4046,62 @@ class NaverCafeCrawler:
                                 _emit_row_dbg(idx, match.group(1), date_val, "board_excluded", raw_preview)
                                 continue
                         
-                        # 작성자 정보 추출 (통합 ID 추출 엔진 적용)
                         member_id = "unknown"
                         nickname = "unknown"
                         nick_selectors = [
+                            "td.td_name a",
+                            "td.td_name",
+                            "td[class*='td_name']",
+                            "td[class*='name'] a",
+                            "td[class*='Nick']",
+                            "td[class*='nick']",
                             "a[class*='Nickname']",
                             "span[class*='Nickname']",
                             ".nick a",
                             ".nick span",
-                            "td.td_name a",
                             "a[class*='Writer']",
                             "span[class*='Writer']",
                             ".writer_nick a",
                             ".writer a",
                         ]
-                        
                         for nick_sel in nick_selectors:
                             try:
                                 nick_el = row.find_element(By.CSS_SELECTOR, nick_sel)
-                                nickname = self._extract_text_from_element(nick_el) or "unknown"
-                                # 리스트에서는 레이어 클릭이 가장 확실 (정규식 실패 시에만)
-                                member_id = self._extract_member_id_from_nick(nick_el, prefer_layer=True)
-                                if member_id != "unknown":
-                                    break
-                            except: continue
+                                cand = self._extract_text_from_element(nick_el) or ""
+                                if cand.strip().lower() in ("unknown", ""):
+                                    continue
+                                nickname = cand
+                                member_id = self._extract_member_id_from_nick(
+                                    nick_el, prefer_layer=False
+                                )
+                                break
+                            except Exception:
+                                continue
+                        if (nickname or "").strip().lower() in ("", "unknown"):
+                            try:
+                                if (row.tag_name or "").lower() == "tr":
+                                    tds = row.find_elements(By.CSS_SELECTOR, "td")
+                                    if len(tds) >= 4:
+                                        for td_idx in (3, 4, 2):
+                                            if td_idx >= len(tds):
+                                                continue
+                                            cell = tds[td_idx]
+                                            txt = self._extract_text_from_element(cell) or ""
+                                            txt = re.sub(r"\s*\[\d+\]\s*$", "", txt).strip()
+                                            low = txt.lower()
+                                            if (
+                                                not txt
+                                                or re.fullmatch(r"\d+", txt)
+                                                or re.search(r"\d{4}\.\d{1,2}\.\d{1,2}", txt)
+                                                or low in ("제목", "작성자", "작성일", "조회", "추천", "좋아요")
+                                            ):
+                                                continue
+                                            if len(txt) > 48:
+                                                continue
+                                            nickname = txt
+                                            break
+                            except Exception:
+                                pass
                         
                         all_articles.append({
                             "post_id": match.group(1),
@@ -3840,6 +4120,18 @@ class NaverCafeCrawler:
                 
                 if restart_from_page:
                     continue
+
+                if page_found_count == 0 and rows:
+                    fb_items, fb_dates = self._fallback_collect_board_list_rows(
+                        range_start_d,
+                        range_end_d,
+                        exclude_norm,
+                        _fallback_board_name,
+                    )
+                    if fb_items:
+                        all_articles.extend(fb_items)
+                        page_found_count += len(fb_items)
+                        page_dates.extend(fb_dates)
 
                 if page_dates:
                     consecutive_no_date_pages = 0
@@ -4446,7 +4738,7 @@ class VitaminDWikiCrawler:
         if self.status_callback:
             self.status_callback(message)
         else:
-            print(f"[INFO] {message}")
+            _safe_stdout_line(f"[INFO] {message}")
 
     def _sleep(self, mult: float = 1.0):
         if self.delay_sec <= 0:

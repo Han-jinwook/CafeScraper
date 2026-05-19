@@ -15,7 +15,73 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
 # 기존 크롤러의 강력한 브라우저/로그인 기능을 재사용하기 위해 임포트
-from app.products.scraper.crawler import NaverCafeCrawler
+from app.products.scraper.crawler import NaverCafeCrawler, _safe_stdout_line
+
+
+def sanitize_commenter_nickname(nick: str) -> str:
+    """
+    목록/표 셀에서 붙는 접미 제거: 등급 배지 [N], '멤버등급 : 일반멤버' 등.
+    (댓글·미리보기·표시용 — DB `nickname`과 동일 규칙 권장)
+    """
+    n = re.sub(r"\s+", " ", str(nick or "")).strip()
+    if not n:
+        return n
+    n = re.sub(r"\s*\[\d+\]\s*$", "", n).strip()
+    n = re.sub(r"\s*멤버등급\s*[:：]\s*.+$", "", n, flags=re.IGNORECASE).strip()
+    return n
+
+
+# 댓글마다 무작위 인사(템플릿의 {인사} 또는 맨 앞 「안녕하세요」 치환)
+COMMENTER_GREETING_VARIANTS: tuple[str, ...] = (
+    "안녕하세요",
+    "반갑습니다",
+    "안녕하십니까",
+    "반갑게 인사드립니다",
+    "안녕하세요~",
+)
+
+
+def pick_random_comment_greeting() -> str:
+    return random.choice(COMMENTER_GREETING_VARIANTS)
+
+
+def diversify_comment_greeting(text: str) -> str:
+    """
+    템플릿에 {인사}가 있으면 이미 치환된 상태로 넘어온다.
+    맨 앞 「안녕하세요」로 시작하는 예전 문장은 댓글마다 다른 인사로 바꾼다.
+    """
+    s = str(text or "")
+    if not s.strip():
+        return s
+    if "{인사}" in s:
+        return s
+    lead = s.lstrip()
+    for prefix in ("안녕하세요", "안녕하십니까"):
+        if lead.startswith(prefix):
+            rest = lead[len(prefix) :]
+            return pick_random_comment_greeting() + rest
+    return s
+
+
+def apply_comment_template_placeholders(template: str, nickname: str, title: str = "") -> str:
+    """
+    댓글 템플릿 토큰 치환.
+    - SQLite commenter_targets 컬럼명은 `nickname`이며, UI 표에서는 「작성자」로 표시.
+    - `{작성자}`·`{닉네임}` 모두 동일 값(닉 문자열)으로 치환(하위 호환).
+    - `{인사}` 는 댓글마다 하드코딩 목록에서 무작위 선택.
+    """
+    n = sanitize_commenter_nickname(nickname)
+    t = str(title or "").strip()
+    g = pick_random_comment_greeting()
+    out = (
+        str(template or "")
+        .replace("{인사}", g)
+        .replace("{작성자}", n)
+        .replace("{닉네임}", n)
+        .replace("{제목}", t)
+    )
+    return diversify_comment_greeting(out)
+
 
 class NaverCafeCommenter(NaverCafeCrawler):
     """
@@ -305,7 +371,7 @@ class NaverCafeCommenter(NaverCafeCrawler):
             return {"status": "fail", "message": "브라우저가 실행되지 않았습니다."}
 
         def _wc(msg: str) -> None:
-            print(f"[commenter/write] {msg}", flush=True)
+            _safe_stdout_line(f"[commenter/write] {msg}")
 
         last_fail_msg = ""
         for attempt in range(1, self.WRITE_MAX_ATTEMPTS + 1):
@@ -337,7 +403,7 @@ class NaverCafeCommenter(NaverCafeCrawler):
                 return {"status": "fail", "message": "Iframe 전환 실패 (삭제된 글?)"}
 
             # ── 3. 템플릿 치환 ──
-            final_text = template.replace("{닉네임}", nickname).replace("{제목}", title)
+            final_text = apply_comment_template_placeholders(template, nickname, title)
 
             # ── 4. 댓글 영역 클릭 + 에디터 활성화 대기 ──
             self._activate_comment_editor(_wc)
@@ -785,6 +851,6 @@ class NaverCafeCommenter(NaverCafeCrawler):
                         
         except Exception as e:
             self._update_status(f"❌ 에러 발생: {e}")
-            print(f"Error: {e}")
+            _safe_stdout_line(f"Error: {e}")
             
         return targets

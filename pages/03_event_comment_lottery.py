@@ -162,9 +162,9 @@ if "event_crawler" not in st.session_state:
 if "event_logs" not in st.session_state:
     st.session_state.event_logs = []
 if "event_cafe_name_input" not in st.session_state:
-    st.session_state.event_cafe_name_input = str(config.get("event_cafe_name", "") or "")
+    st.session_state.event_cafe_name_input = ""
 if "event_cafe_url_input" not in st.session_state:
-    st.session_state.event_cafe_url_input = str(config.get("event_cafe_url", "") or "")
+    st.session_state.event_cafe_url_input = ""
 if "event_extracted_boards" not in st.session_state or not st.session_state.event_extracted_boards:
     _cfg_boards = config.get("event_extracted_boards", [])
     if isinstance(_cfg_boards, list) and _cfg_boards:
@@ -190,8 +190,8 @@ if "event_board_picker_version" not in st.session_state:
     st.session_state.event_board_picker_version = 0
 if "event_board_picker_options_sig" not in st.session_state:
     st.session_state.event_board_picker_options_sig = ""
-if "event_cafe_url_after_reset_save_mode" not in st.session_state:
-    st.session_state.event_cafe_url_after_reset_save_mode = False
+if "event_cafe_connect_side_mode" not in st.session_state:
+    st.session_state.event_cafe_connect_side_mode = "save"
 if "event_auto_login_after_reset_save_mode" not in st.session_state:
     st.session_state.event_auto_login_after_reset_save_mode = False
 if "event_dup_collapsed" not in st.session_state:
@@ -810,7 +810,7 @@ def _render_event_dashboard_header() -> None:
                 - 세 조건은 **동시에 실행되지 않으며 1개만 선택**해서 실행합니다.
 
                 **기본 실행 순서**
-                1. 카페명/URL, 게시판, 수집 기간을 설정하고 **저장**
+                1. 카페명·URL은 빈 상태에서 입력 → **`저장`**, 저장 후 단추는 **`리셋`** (리셋 시 입력·게시판 초기화)
                 2. 1단계 브라우저 열기 → 로그인
                 3. 실행할 조건(1/2/3) 1개 선택 후 수집 시작
 
@@ -939,9 +939,9 @@ with _ev1:
             key="event_cafe_name_input",
         )
         try:
-            _ev_url_col, _ev_btn_col = st.columns([5, 1], gap="small", vertical_alignment="center")
+            _ev_url_col, _ev_side_col = st.columns([5, 1], gap="small", vertical_alignment="center")
         except TypeError:
-            _ev_url_col, _ev_btn_col = st.columns([5, 1], gap="small")
+            _ev_url_col, _ev_side_col = st.columns([5, 1], gap="small")
         with _ev_url_col:
             if st.session_state.pop("_event_pending_clear_cafe_url_input", False):
                 st.session_state.event_cafe_url_input = ""
@@ -953,41 +953,52 @@ with _ev1:
             (config.get("event_cafe_name_history", []) or []) + [str(config.get("event_cafe_name", "") or "")],
             (config.get("event_cafe_url_history", []) or []) + [str(config.get("event_cafe_url", "") or "")],
         )
-        with _ev_btn_col:
-            _ev_save_mode = bool(st.session_state.get("event_cafe_url_after_reset_save_mode", False))
-            _ev_side_lbl = "저장" if _ev_save_mode else "리셋"
-            _ev_side_help = (
-                "카페명/카페 URL을 이벤트 수집 설정에 저장합니다."
-                if _ev_save_mode
-                else "이벤트 게시판 목록/선택 데이터를 비웁니다."
-            )
-            if st.button(_ev_side_lbl, key="event_cafe_url_side_action_btn", use_container_width=True, help=_ev_side_help):
-                if _ev_save_mode:
+        _ev_cafe_side = str(st.session_state.get("event_cafe_connect_side_mode") or "save")
+        _ev_cafe_lbl = "리셋" if _ev_cafe_side == "reset" else "저장"
+        _ev_cafe_help = (
+            "저장했던 카페·게시판 연결 초기화 — 단추는 다시 `저장`으로 바뀝니다."
+            if _ev_cafe_side == "reset"
+            else "카페명/카페 URL을 이벤트 수집 설정 파일에 저장합니다."
+        )
+        with _ev_side_col:
+            if st.button(_ev_cafe_lbl, key="event_cafe_side_btn", use_container_width=True, help=_ev_cafe_help):
+                if _ev_cafe_side == "save":
                     cfg_now = dict(load_config() or {})
                     saved_event_cafe_name = str(st.session_state.get("event_cafe_name_input", "") or "").strip()
                     saved_event_cafe_url = str(st.session_state.get("event_cafe_url_input", "") or "").strip()
                     cfg_now["event_cafe_name"] = saved_event_cafe_name
                     cfg_now["event_cafe_url"] = saved_event_cafe_url
                     if saved_event_cafe_name:
-                        prev_event_name_hist = [str(x).strip() for x in (cfg_now.get("event_cafe_name_history", []) or []) if str(x).strip()]
-                        cfg_now["event_cafe_name_history"] = ([saved_event_cafe_name] + [x for x in prev_event_name_hist if x != saved_event_cafe_name])[:20]
+                        prev_event_name_hist = [
+                            str(x).strip()
+                            for x in (cfg_now.get("event_cafe_name_history", []) or [])
+                            if str(x).strip()
+                        ]
+                        cfg_now["event_cafe_name_history"] = (
+                            [saved_event_cafe_name] + [x for x in prev_event_name_hist if x != saved_event_cafe_name]
+                        )[:20]
                     if saved_event_cafe_url:
-                        prev_event_url_hist = [str(x).strip() for x in (cfg_now.get("event_cafe_url_history", []) or []) if str(x).strip()]
-                        cfg_now["event_cafe_url_history"] = ([saved_event_cafe_url] + [x for x in prev_event_url_hist if x != saved_event_cafe_url])[:20]
+                        prev_event_url_hist = [
+                            str(x).strip()
+                            for x in (cfg_now.get("event_cafe_url_history", []) or [])
+                            if str(x).strip()
+                        ]
+                        cfg_now["event_cafe_url_history"] = (
+                            [saved_event_cafe_url] + [x for x in prev_event_url_hist if x != saved_event_cafe_url]
+                        )[:20]
                     save_config(cfg_now)
                     config.update(cfg_now)
-                    st.session_state.event_cafe_url_after_reset_save_mode = False
+                    st.session_state.event_cafe_connect_side_mode = "reset"
                     st.session_state._event_cafe_url_apply_ack = True
                     st.rerun()
                 else:
                     st.session_state.event_extracted_boards = []
                     st.session_state.event_selected_board_urls = []
                     st.session_state.event_selected_board_url = ""
-                    st.session_state.event_cafe_url_after_reset_save_mode = True
                     st.session_state._event_pending_clear_cafe_name_input = True
                     st.session_state._event_pending_clear_cafe_url_input = True
+                    st.session_state.event_cafe_connect_side_mode = "save"
                     st.session_state._event_cafe_reset_done = True
-                    # config에서도 게시판 목록 제거 (복원 방지)
                     _cfg_reset = dict(load_config() or {})
                     _cfg_reset["event_extracted_boards"] = []
                     _cfg_reset["event_selected_board_urls"] = []
@@ -995,10 +1006,13 @@ with _ev1:
                     _cfg_reset["event_cafe_name"] = ""
                     _cfg_reset["event_cafe_url"] = ""
                     save_config(_cfg_reset)
+                    config.update(_cfg_reset)
                     st.rerun()
         if st.session_state.get("_event_cafe_reset_done"):
             st.session_state._event_cafe_reset_done = False
-            st.success("카페 관련 데이터를 비웠고 카페명/카페 URL 칸을 비웠습니다. 새 값을 입력 후 오른쪽 저장을 눌러주세요.")
+            st.success(
+                "카페 연결 상태를 초기화했습니다. 카페명·URL과 게시판 데이터를 비웠습니다 — 다시 입력 후 **`저장`** 을 눌러 주세요."
+            )
         if st.session_state.get("_event_cafe_url_apply_ack"):
             st.session_state._event_cafe_url_apply_ack = False
             st.success("카페 연결 정보를 저장했습니다.")
@@ -1852,9 +1866,6 @@ with _ev3:
             size_mb, mtime = 0.0, "-"
         st.caption(f"경로: `{db_full_path}`")
         st.caption(f"파일: {'존재함' if exists else '없음'} · 크기: {size_mb:.2f}MB · 수정: {mtime}")
-        st.caption(
-            "경로를 바꾸려면 `crawler_config.json`의 `event_db_path` 또는 환경변수 `CAFESCRAPER_EVENT_DB_PATH`를 사용한 뒤 앱을 다시 시작하세요."
-        )
 
         _ec1, _ec2, _ec3 = st.columns(3)
         _ec1.metric("저장 게시글", f"{get_event_posts_count(EVENT_DB_PATH):,}개")
@@ -1862,18 +1873,15 @@ with _ev3:
         _ec3.metric("등급별 방문수", f"{get_event_mentor_visits_count(EVENT_DB_PATH):,}행")
 
         st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
-        st.warning(
-            "이벤트 **게시글·댓글·분석·멘토 방문** 데이터를 모두 삭제합니다. 필요하면 먼저 CSV/리포트를 내려받으세요."
-        )
         st.checkbox(
-            "위 안내를 확인했으며, 이벤트 DB 데이터를 삭제합니다. (복구 불가)",
+            "이벤트 게시글·댓글·분석·멘토 방문 데이터를 모두 삭제합니다. 필요하면 먼저 CSV/리포트를 내려받으세요.",
             key="event_data_reset_confirm",
         )
         _event_busy = bool(
             st.session_state.get("event_running") or st.session_state.get("event_run_pending")
         )
         if st.button(
-            "🗑️ 데이터 초기화",
+            "데이터 초기화",
             type="primary",
             use_container_width=True,
             key="reset_event_db_btn",

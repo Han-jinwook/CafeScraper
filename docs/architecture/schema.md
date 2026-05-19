@@ -3,8 +3,8 @@
 | 항목 | 값 |
 |------|-----|
 | **제목** | 로컬 SQLite DB 스키마 |
-| **버전** | 1.3.5 (`version.txt`와 동기) |
-| **일시** | 2026-05-12 |
+| **버전** | 1.3.23 (`version.txt`와 동기) |
+| **일시** | 2026-05-18 |
 
 코드 기준: `app/utils/sqlite_db.py`, `app/utils/event_db.py`, `pages/02_paper_collection.py` (`ensure_papers_schema`).  
 스키마를 바꾼 뒤에는 이 문서의 **버전·일시**를 함께 갱신합니다.

@@ -21,6 +21,11 @@ def get_config_path() -> Path:
     return get_project_root() / "crawler_config.json"
 
 
+def get_comment_templates_path() -> Path:
+    """자동댓글러 저장 템플릿 JSON (exe/프로젝트 루트와 동일 규칙 — crawler_config 옆)."""
+    return get_project_root() / "comment_templates.json"
+
+
 def get_logs_dir() -> Path:
     """로그 폴더 경로."""
     return get_project_root() / "logs"
