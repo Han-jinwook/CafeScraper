@@ -230,15 +230,57 @@ def init_event_db(db_path: str) -> None:
 
 
 def replace_commenter_targets(db_path: str, rows: list[dict]) -> None:
-    """타겟 표 스냅샷을 DB에 덮어씀(수집 직후 호출)."""
+    """타겟 표 스냅샷을 DB에 덮어씀(수집 직후 호출).
+
+    기존 구현은 `DELETE` 후 전부 다시 넣어 **2단계 재수집**만 해도 댓글 성공·실패 기록이 초기화됨.
+    동일 기간을 다시 돌려도 결과를 잃지 않도록, **`comment_status`가 있는 URL**은
+    새 행에 합류할 때 상태·메시지·시도 시각을 이어 받는다."""
     conn = sqlite3.connect(db_path, timeout=30.0)
     cur = conn.cursor()
     try:
+        preserved: dict[str, tuple[str, str | None, str | None]] = {}
+        try:
+            cur.execute(
+                "SELECT url, comment_status, comment_detail, comment_tried_at FROM commenter_targets"
+            )
+            for ur, cs, cd, ct in cur.fetchall():
+                st = str(cs or "").strip()
+                if not st:
+                    continue
+                tup = (
+                    st,
+                    (str(cd).strip() if cd else None) or None,
+                    (str(ct).strip() if ct else None) or None,
+                )
+                u0 = str(ur or "").strip()
+                if not u0:
+                    continue
+                for key in dict.fromkeys([u0, u0.rstrip("/")]):
+                    preserved[key] = tup
+        except Exception:
+            pass
+
         cur.execute("DELETE FROM commenter_targets")
         for r in rows or []:
             u = str((r or {}).get("url") or "").strip()
             if not u:
                 continue
+
+            incoming_cs = str((r or {}).get("comment_status") or "").strip()
+            incoming_cd = str((r or {}).get("comment_detail") or "").strip()
+            incoming_ct = str((r or {}).get("comment_tried_at") or "").strip()
+
+            cs_out = incoming_cs or None
+            cd_out = (incoming_cd or None) if incoming_cd else None
+            ct_out = (incoming_ct or None) if incoming_ct else None
+
+            if not cs_out:
+                for key in dict.fromkeys([u, u.rstrip("/")]):
+                    if key in preserved:
+                        pcs, pcd, pct = preserved[key]
+                        cs_out, cd_out, ct_out = pcs, pcd, pct
+                        break
+
             cur.execute(
                 """
                 INSERT INTO commenter_targets (
@@ -254,9 +296,9 @@ def replace_commenter_targets(db_path: str, rows: list[dict]) -> None:
                     str((r or {}).get("title") or ""),
                     str((r or {}).get("date") or ""),
                     str((r or {}).get("board_name") or ""),
-                    (str((r or {}).get("comment_status") or "").strip() or None),
-                    (str((r or {}).get("comment_detail") or "").strip() or None),
-                    (str((r or {}).get("comment_tried_at") or "").strip() or None),
+                    cs_out,
+                    cd_out,
+                    ct_out,
                 ),
             )
         conn.commit()

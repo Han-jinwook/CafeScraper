@@ -7,7 +7,7 @@ import json
 import re
 import traceback
 import html
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from selenium.webdriver.common.by import By
@@ -204,6 +204,20 @@ if "commenter_allow_dup_nick" not in st.session_state:
     )
 
 
+def _safe_date_py(d):
+    """date_input / 저장값 혼합을 날짜로."""
+    if d is None:
+        return None
+    if isinstance(d, datetime):
+        return d.date()
+    if isinstance(d, date):
+        return d
+    try:
+        return _parse_cfg_date(d, datetime.now().date())
+    except Exception:
+        return None
+
+
 def _commenter_ensure_comment_cols(df: pd.DataFrame | None) -> None:
     if df is None or df.empty:
         return
@@ -213,6 +227,45 @@ def _commenter_ensure_comment_cols(df: pd.DataFrame | None) -> None:
         df["comment_detail"] = ""
     df["comment_status"] = df["comment_status"].fillna("").astype(str)
     df["comment_detail"] = df["comment_detail"].fillna("").astype(str)
+
+
+def _commenter_filter_targets_by_post_date(
+    base: pd.DataFrame,
+    *,
+    use_date: bool,
+    d_start,
+    d_end,
+) -> pd.DataFrame:
+    """전체 스냅샷에서 `date` 열 구간만 반영 (재수집 없음)."""
+    if base is None or getattr(base, "empty", True):
+        return pd.DataFrame()
+    if not use_date:
+        return base.copy()
+    df = base.copy()
+    _commenter_ensure_comment_cols(df)
+    ds = _safe_date_py(d_start)
+    de = _safe_date_py(d_end)
+    if ds is None or de is None or "date" not in df.columns:
+        return df
+    if de < ds:
+        ds, de = de, ds
+    d_series = pd.to_datetime(df["date"], errors="coerce").dt.normalize()
+    ds_pd = pd.Timestamp(ds).normalize()
+    de_pd = pd.Timestamp(de).normalize()
+    m = pd.notna(d_series) & (d_series >= ds_pd) & (d_series <= de_pd)
+    df = df.loc[m].copy()
+    _commenter_ensure_comment_cols(df)
+    return df
+
+
+if "commenter_dm_use_date_filter" not in st.session_state:
+    st.session_state.commenter_dm_use_date_filter = False
+if "commenter_dm_f_start" not in st.session_state:
+    _d0 = st.session_state.get("commenter_target_start_date")
+    st.session_state.commenter_dm_f_start = _safe_date_py(_d0) or (datetime.now() - timedelta(days=30)).date()
+if "commenter_dm_f_end" not in st.session_state:
+    _d1 = st.session_state.get("commenter_target_end_date")
+    st.session_state.commenter_dm_f_end = _safe_date_py(_d1) or datetime.now().date()
 
 
 def _commenter_apply_comment_result(url: str, status: str, detail: str) -> None:
@@ -246,7 +299,13 @@ def _commenter_full_dataframe() -> pd.DataFrame | None:
     return None
 
 
-if st.session_state.target_df is None:
+def _commenter_df_nonempty(df) -> bool:
+    return df is not None and not getattr(df, "empty", True)
+
+
+if not _commenter_df_nonempty(st.session_state.target_df) and not _commenter_df_nonempty(
+    st.session_state.commenter_target_df_full
+):
     try:
         _snap_rows = load_commenter_targets(COMMENTER_DB_PATH)
         if _snap_rows:
@@ -256,13 +315,21 @@ if st.session_state.target_df is None:
             st.session_state.commenter_target_df_full = _td.copy()
     except Exception:
         pass
-else:
-    if st.session_state.commenter_target_df_full is None and st.session_state.target_df is not None:
-        try:
-            _commenter_ensure_comment_cols(st.session_state.target_df)
-            st.session_state.commenter_target_df_full = st.session_state.target_df.copy()
-        except Exception:
-            pass
+elif _commenter_df_nonempty(st.session_state.commenter_target_df_full):
+    td0 = st.session_state.target_df
+    if td0 is None or getattr(td0, "empty", True):
+        st.session_state.target_df = st.session_state.commenter_target_df_full.copy()
+elif _commenter_df_nonempty(st.session_state.target_df) and not _commenter_df_nonempty(
+    st.session_state.commenter_target_df_full
+):
+    try:
+        _snap_rows = load_commenter_targets(COMMENTER_DB_PATH)
+        if _snap_rows:
+            _td = pd.DataFrame(_snap_rows)
+            _commenter_ensure_comment_cols(_td)
+            st.session_state.commenter_target_df_full = _td.copy()
+    except Exception:
+        pass
 
 
 def _inject_commenter_cafe_history_suggestions(cafe_names: list[str], cafe_urls: list[str]) -> None:
@@ -614,6 +681,8 @@ def _render_commenter_dashboard_header() -> None:
                 2. **타겟 수집 설정**: 수집 기간·제외 닉네임 → **💾 저장**.
                 3. **실행 제어**(설정 아래): 1단계(브라우저) → 2단계(목록 수집) → **데이터 관리**에서 현황 확인.
                 4. **댓글 · 실행**: 템플릿 확인 후 **댓글 작성 시작**.
+                5. **목록 재수집**(2단계): 같은 글(URL)에 대해서는 **`작성 완료` 등 댓글 시도 기록을 DB에서 이어 받습니다**(앱을 그냥 끈 경우보다 **재수집을 다시 했던 경우**에 기록이 사라져 보였던 버그가 있었습니다).
+                6. **📋 타겟 목록**: 글 **작성일**만 골라 표·실행 순서 줄이기 — 체크 후 시작·끝 날짜 **적용**(재수집 불필요), **전체**로 원복.
 
                 **안전 사용 조건 (요약, 별도 설정 없음)**  
                 - 실제 Chrome·로그인 계정·글마다 **{COMMENTER_GAP_MIN_SEC}~{COMMENTER_GAP_MAX_SEC}초** 무작위 대기, **{COMMENTER_SESSION_LIMIT}건**마다 **{COMMENTER_SESSION_REST_SEC // 60}분** 휴식 — 무분별한 대량 봇 패턴을 줄이기 위한 **고정 정책**입니다.  
@@ -1515,7 +1584,63 @@ with st.container(border=True, key="commenter_target_table_box"):
         '<p style="margin:0 0 0.35rem 0;font-size:1.05rem;font-weight:600;">📋 타겟 목록</p>',
         unsafe_allow_html=True,
     )
-    st.caption("comment_status가 fail인 행만 남기고 댓글 작성 시작 시 그 글만 순회합니다.")
+    _full_snap = st.session_state.commenter_target_df_full
+    _has_snap = _full_snap is not None and not getattr(_full_snap, "empty", True)
+    _dm_row = st.columns([1.05, 1.15, 1.15, 0.52, 0.52], gap="small")
+    with _dm_row[0]:
+        _dm_ud = st.checkbox(
+            "작성일 적용",
+            key="commenter_dm_use_date_filter",
+            disabled=not _has_snap,
+        )
+    with _dm_row[1]:
+        st.date_input(
+            "시작",
+            key="commenter_dm_f_start",
+            disabled=not _has_snap or not _dm_ud,
+        )
+    with _dm_row[2]:
+        st.date_input(
+            "끝",
+            key="commenter_dm_f_end",
+            disabled=not _has_snap or not _dm_ud,
+        )
+    with _dm_row[3]:
+        if st.button(
+            "적용",
+            use_container_width=True,
+            disabled=_commenter_ui_busy() or not _has_snap,
+            key="commenter_dm_apply_btn",
+        ):
+            base = st.session_state.commenter_target_df_full
+            if base is None or getattr(base, "empty", True):
+                st.warning(
+                    "목록 스냅샷이 비어 있습니다. **2단계 타겟 수집**을 다시 실행하거나 새로고침해 보세요 "
+                    "(DB에 데이터가 있으면 다음 실행 때 자동 복구됩니다)."
+                )
+            else:
+                _go_ud = bool(st.session_state.get("commenter_dm_use_date_filter"))
+                out = _commenter_filter_targets_by_post_date(
+                    base,
+                    use_date=_go_ud,
+                    d_start=st.session_state.get("commenter_dm_f_start"),
+                    d_end=st.session_state.get("commenter_dm_f_end"),
+                )
+                if _go_ud and out.empty:
+                    st.warning("해당 작성일 구간에 행이 없습니다.")
+                else:
+                    st.session_state.target_df = out
+            st.rerun()
+    with _dm_row[4]:
+        if st.button(
+            "전체",
+            use_container_width=True,
+            disabled=_commenter_ui_busy() or not _has_snap,
+            key="commenter_dm_show_all_btn",
+        ):
+            if st.session_state.commenter_target_df_full is not None:
+                st.session_state.target_df = st.session_state.commenter_target_df_full.copy()
+            st.rerun()
 
     if st.session_state.target_df is not None and not st.session_state.target_df.empty:
         _commenter_ensure_comment_cols(st.session_state.target_df)
