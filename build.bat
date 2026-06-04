@@ -56,7 +56,12 @@ echo [REMINDER] Bump version.txt + CHANGELOG before release: PATCH = last digit 
 
 echo.
 
-
+if exist "%~dp0.venv\Scripts\activate.bat" (
+    echo [BUILD] Activating virtual environment .venv...
+    call "%~dp0.venv\Scripts\activate.bat"
+) else (
+    echo [WARN] .venv virtual environment not found. Using system Python.
+)
 
 if not exist "%~dp0cafescraper.spec" (
 
