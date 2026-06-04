@@ -2932,7 +2932,9 @@ class NaverCafeCrawler:
                 return now.replace(hour=int(hh), minute=int(mm), second=0, microsecond=0)
 
             # 연도 포함 날짜(2/4자리 연도 + 구분자, 뒤에 시각이 붙어도 허용)
-            m_ymd = re.search(r"(\d{2,4})[./-](\d{1,2})[./-](\d{1,2})", s)
+            # YYYY.MM.DD. (끝 마침표 제거 대응)
+            s_clean = s.rstrip(".")
+            m_ymd = re.search(r"(\d{2,4})[./-](\d{1,2})[./-](\d{1,2})", s_clean)
             if m_ymd:
                 y = int(m_ymd.group(1))
                 mo = int(m_ymd.group(2))
