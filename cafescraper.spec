@@ -57,6 +57,10 @@ for pkg in ('PIL', 'lxml', 'bs4', 'pyperclip'):
     except Exception:
         pass
 
+from PyInstaller.utils.hooks import copy_metadata
+datas += copy_metadata('streamlit')
+
+
 # App layout at bundle root (_MEIPASS): app.py, pages/, app/, .streamlit/, …
 datas += [
     (os.path.join(SPEC_ROOT, 'app.py'), '.'),

@@ -1,4 +1,4 @@
-﻿import streamlit as st
+import streamlit as st
 import pandas as pd
 from datetime import datetime
 import sqlite3
@@ -169,12 +169,82 @@ def _format_elapsed(started_ts) -> str:
         return "-"
 
 
+import queue
+import threading
+import uuid
+
+@st.cache_resource
+def get_jobs_registry():
+    return {}
+
+JOBS = get_jobs_registry()
+
+def run_crawl_thread(crawler, start_url, initial_visited_urls, log_queue, stats, db_path):
+    try:
+        gen = crawler.crawl_auto(start_url=start_url, initial_visited_urls=initial_visited_urls)
+        for paper in gen:
+            if stats.get("stop_requested", False):
+                break
+            
+            if paper is not None:
+                max_retries = 3
+                retry_delay = 0.5
+                saved = False
+                for attempt in range(max_retries):
+                    try:
+                        conn = sqlite3.connect(db_path, timeout=30.0)
+                        cursor = conn.cursor()
+                        cursor.execute(
+                            """
+                            INSERT OR REPLACE INTO papers (url, title, summary, content, category, collected_date)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                paper.get("url", ""),
+                                paper.get("title", ""),
+                                paper.get("summary", ""),
+                                paper.get("content", ""),
+                                paper.get("category", ""),
+                                paper.get("collected_date", ""),
+                            ),
+                        )
+                        conn.commit()
+                        conn.close()
+                        saved = True
+                        break
+                    except sqlite3.OperationalError as e:
+                        if "locked" in str(e) and attempt < max_retries - 1:
+                            time.sleep(retry_delay)
+                            retry_delay *= 2
+                            continue
+                        log_queue.put(f"⚠️ DB 잠김 오류 (재시도): {e}")
+                    except Exception as e:
+                        log_queue.put(f"⚠️ 저장 오류: {e}")
+                        break
+                if saved:
+                    stats["processed"] += 1
+            
+            stats["fetch_stats"] = dict(getattr(crawler, "fetch_stats", {}) or {})
+            
+        if stats.get("stop_requested", False):
+            stats["status"] = "stopped"
+            log_queue.put("🛑 수집 중단됨")
+        else:
+            stats["status"] = "completed"
+            log_queue.put("✅ 전수 조사 완료")
+    except Exception as e:
+        stats["status"] = "error"
+        log_queue.put(f"❌ 오류 발생: {e}")
+        import traceback
+        log_queue.put(traceback.format_exc())
+    finally:
+        stats["status"] = "done"
+
 # ── 세션 초기화 ────────────────────────────────────────────────
 for _k, _v in [
     ("wiki_running", False),
     ("wiki_stop_requested", False),
-    ("wiki_generator", None),
-    ("wiki_crawler_obj", None),
+    ("wiki_job_id", None),
     ("wiki_stats", {}),
     ("wiki_started_ts", None),   # Unix timestamp(float) — ISO 파싱 이슈 방지
     ("wiki_fetch_stats", {}),    # 배치 완료 후 crawler.fetch_stats 스냅샷
@@ -302,144 +372,78 @@ with _pw2:
             disabled=st.session_state.wiki_running,
         )
         wiki_max_pages = st.number_input(
-            "최대 페이지(0=무제한)",
-            min_value=0,
-            max_value=500000,
-            value=int(config.get("wiki_max_pages", 0)),
-            step=100,
-            disabled=st.session_state.wiki_running,
-        )
-        skip_existing = st.checkbox(
-            "✅ 이미 수집한 URL 재방문 스킵(추천)",
-            value=bool(config.get("wiki_skip_existing", True)),
-            disabled=st.session_state.wiki_running,
-        )
+      # ── 실시간 현황 및 제어 (Fragment) ─────────────────────────────────────────
+@st.fragment(run_every=1.0)
+def render_crawl_section_ui():
+    # 1. 활성 백그라운드 스레드 탐색 및 세션 상태 복원
+    active_job_id = None
+    for jid, jdata in list(JOBS.items()):
+        thread = jdata.get("thread")
+        if thread and thread.is_alive():
+            active_job_id = jid
+            break
 
-with _pw3:
-    with st.container(border=True, key="papers_settings_card_3"):
-        render_settings_card_title("설정 · DB", icon="💾")
-        st.text_input(
-            "논문 DB 파일 경로 (비우면 기본 `data/paper_collection.db`)",
-            key="paper_db_path_input",
-            help="카페 수집(`cafe_data.db`)·이벤트·자동댓글러와 다른 파일을 쓰는 것을 권장합니다.",
-        )
-        if st.button("💾 설정 저장", use_container_width=True, disabled=st.session_state.wiki_running):
-            config["wiki_debug_mode"] = bool(st.session_state.wiki_debug_mode)
-            config["wiki_start_url"] = wiki_start_url
-            config["wiki_delay"] = float(wiki_delay)
-            config["wiki_max_pages"] = int(wiki_max_pages)
-            config["wiki_skip_existing"] = bool(skip_existing)
-            config["paper_db_path"] = str(st.session_state.get("paper_db_path_input", "") or "").strip()
-            save_config(config)
-            st.success("✅ 설정 저장 완료")
-            time.sleep(0.45)
-            st.rerun()
+    if active_job_id:
+        st.session_state.wiki_job_id = active_job_id
+        st.session_state.wiki_running = True
+    else:
+        # 실행 중으로 표시되어 있었으나 실제 스레드가 없으면 정지 처리
+        if st.session_state.wiki_running:
+            if st.session_state.wiki_job_id and st.session_state.wiki_job_id in JOBS:
+                job = JOBS[st.session_state.wiki_job_id]
+                # 마지막 남은 로그 drain
+                q = job["log_queue"]
+                while True:
+                    try:
+                        m = q.get_nowait()
+                        if not m.startswith("["):
+                            ts = datetime.now().strftime("%H:%M:%S")
+                            m = f"[{ts}] {m}"
+                        st.session_state.wiki_status_messages.append(m)
+                        st.session_state.wiki_last_msg = m
+                    except queue.Empty:
+                        break
+                # 최종 통계 반영
+                st.session_state.wiki_stats = dict(job["stats"])
+                st.session_state.wiki_fetch_stats = dict(job["stats"].get("fetch_stats", {}))
+            st.session_state.wiki_running = False
 
-        db_full_path = os.path.abspath(DB_PATH)
-        _t_card, _c_card, _d_card = get_papers_stats()
-        st.caption(f"경로: `{db_full_path}`")
-        st.caption(f"마지막 수집일: `{_d_card}`")
-        _pm1, _pm2 = st.columns(2)
-        _pm1.metric("논문", f"{int(_t_card):,}개")
-        _pm2.metric("카테고리", f"{int(_c_card):,}개")
-        if st.button("📂 DB 폴더 열기", use_container_width=True, key="open_db_folder_papers"):
+    # 2. 실행 중인 경우 로그 큐 drain
+    if st.session_state.wiki_running and st.session_state.wiki_job_id in JOBS:
+        job = JOBS[st.session_state.wiki_job_id]
+        q = job["log_queue"]
+        new_logs = []
+        while True:
             try:
-                subprocess.run(["explorer", "/select,", db_full_path])
-            except Exception:
-                st.info(f"경로: {db_full_path}")
+                new_logs.append(q.get_nowait())
+            except queue.Empty:
+                break
+        if new_logs:
+            for m in new_logs:
+                if not m.startswith("["):
+                    ts = datetime.now().strftime("%H:%M:%S")
+                    m = f"[{ts}] {m}"
+                st.session_state.wiki_status_messages.append(m)
+                st.session_state.wiki_last_msg = m
+            # 수집 중인 상태의 통계 업데이트
+            st.session_state.wiki_stats = dict(job["stats"])
+            st.session_state.wiki_fetch_stats = dict(job["stats"].get("fetch_stats", {}))
 
-st.markdown("---")
-
-# ── 수집 현황 통계 (상단 요약) ────────────────────────────────
-st.subheader("📊 수집 현황")
-_total, _cat_cnt, _last_date = get_papers_stats()
-sc1, sc2, sc3, sc4 = st.columns(4)
-sc1.metric("총 수집 논문", f"{_total:,}개")
-sc2.metric("카테고리 수", f"{_cat_cnt:,}개")
-sc3.metric("마지막 수집일", _last_date)
-sc4.metric(
-    "상태",
-    "🟢 수집 중..." if st.session_state.wiki_running else "⚫ 대기 중",
-)
-
-st.caption(
-    f"설정: 시작 URL=`{wiki_start_url}` · 딜레이={float(wiki_delay):.1f}s · "
-    + (f"최대 {int(wiki_max_pages):,}페이지" if int(wiki_max_pages) else "무제한")
-)
-st.markdown("---")
-
-# ── 실행 버튼 (시작 ↔ 중지 토글) ─────────────────────────────
-col_btn1, col_btn2 = st.columns([1, 1])
-
-with col_btn1:
-    if st.session_state.wiki_running:
-        if st.button("⏹ 수집 중... 중단하기", type="primary", use_container_width=True, key="stop_wiki_btn"):
-            st.session_state.wiki_stop_requested = True
-            add_log("🛑 중단 요청 접수. 현재 배치 완료 후 중단합니다.")
-            st.rerun()
-    else:
-        if st.button("🚀 전수 조사 시작", type="primary", use_container_width=True, key="start_wiki_btn"):
-            wiki_crawler = VitaminDWikiCrawler(
-                delay_sec=float(wiki_delay),
-                debug_mode=bool(st.session_state.wiki_debug_mode),
-            )
-            wiki_crawler.set_status_callback(add_log)
-            existing_urls = load_existing_paper_urls() if skip_existing else set()
-            # sitemap → RSS 자동 감지 크롤 (BFS 완전 제거)
-            gen = wiki_crawler.crawl_auto(
-                start_url=wiki_start_url,
-                initial_visited_urls=existing_urls,
-            )
-            st.session_state.wiki_crawler_obj = wiki_crawler
-            st.session_state.wiki_generator = gen
-            st.session_state.wiki_stats = {
-                "processed": 0,
-                "skipped": len(existing_urls),
-            }
-            st.session_state.wiki_started_ts = time.time()
-            st.session_state.wiki_fetch_stats = {}
-            st.session_state.wiki_running = True
-            st.session_state.wiki_stop_requested = False
-            st.session_state.wiki_status_messages = []
-            add_log(f"📚 sitemap 전수 조사 시작 (기존 {len(existing_urls):,}개 스킵 예정)")
-            st.rerun()
-
-with col_btn2:
-    if not st.session_state.wiki_running:
-        if st.button("🔄 현황 새로고침", use_container_width=True, key="refresh_wiki_btn"):
-            st.rerun()
-    else:
-        st.button("🔄 현황 새로고침", use_container_width=True, disabled=True, key="refresh_wiki_btn_dis")
-
-# ── 실시간 진행 현황판 ────────────────────────────────────────
-live_stats = st.empty()
-live_msg = st.empty()
-
-def _render_live_stats():
+    # 3. 데이터 및 통계 취합
     stats = st.session_state.get("wiki_stats", {})
     processed = int(stats.get("processed", 0))
     skipped = int(stats.get("skipped", 0))
     started_ts = st.session_state.get("wiki_started_ts")
 
-    # fetch_stats: 배치 후 스냅샷 우선, 없으면 crawler 직접 읽기(폴백)
     s = st.session_state.get("wiki_fetch_stats") or {}
-    if not s:
-        crawler = st.session_state.get("wiki_crawler_obj")
-        if crawler:
-            s = dict(getattr(crawler, "fetch_stats", {}) or {})
-
-    if not s and not processed and not started_ts:
-        return
-
-    # 상태 메시지에서 탐색 페이지 수 파싱 → 배치 블로킹 중에도 방문 페이지 표시
+    total_fail = sum(s.get(k, 0) for k in ("fail_404", "fail_403", "fail_429", "fail_other", "fail_timeout"))
+    
+    # 상태 메시지에서 탐색 페이지 수 파싱 → 방문 페이지 수 보완
     last_msg = st.session_state.get("wiki_last_msg", "")
     msg_pages = 0
     m_pages = re.search(r"탐색\s*([\d,]+)페이지", last_msg)
     if m_pages:
         msg_pages = int(m_pages.group(1).replace(",", ""))
-
-    total_fail = sum(s.get(k, 0) for k in ("fail_404", "fail_403", "fail_429", "fail_other", "fail_timeout"))
-    # fetch_stats 스냅샷과 메시지 파싱 중 더 큰 값 사용
     ok_cnt = max(s.get("ok", 0), msg_pages)
 
     if s.get("fail_403"):
@@ -453,7 +457,6 @@ def _render_live_stats():
     else:
         detail = "없음"
 
-    # 상태 메시지에서 대기 건수 파싱
     queue_remaining = ""
     m_queue = re.search(r"대기\s*([\d,]+)건", last_msg)
     if m_queue and st.session_state.wiki_running:
@@ -461,7 +464,102 @@ def _render_live_stats():
 
     elapsed = _format_elapsed(started_ts) if started_ts else "-"
 
-    with live_stats.container():
+    # 4. 화면 출력 (수집 현황 요약)
+    st.subheader("📊 수집 현황")
+    _total, _cat_cnt, _last_date = get_papers_stats()
+    sc1, sc2, sc3, sc4 = st.columns(4)
+    sc1.metric("총 수집 논문", f"{_total:,}개")
+    sc2.metric("카테고리 수", f"{_cat_cnt:,}개")
+    sc3.metric("마지막 수집일", _last_date)
+    sc4.metric(
+        "상태",
+        "🟢 수집 중..." if st.session_state.wiki_running else "⚫ 대기 중",
+    )
+
+    st.caption(
+        f"설정: 시작 URL=`{wiki_start_url}` · 딜레이={float(wiki_delay):.1f}s · "
+        + (f"최대 {int(wiki_max_pages):,}페이지" if int(wiki_max_pages) else "무제한")
+    )
+    st.markdown("---")
+
+    # 5. 제어 버튼
+    col_btn1, col_btn2 = st.columns([1, 1])
+
+    with col_btn1:
+        if st.session_state.wiki_running:
+            if st.button("⏹ 수집 중... 중단하기", type="primary", use_container_width=True, key="stop_wiki_btn"):
+                # 활성 작업에 중단 요청 전송
+                if st.session_state.wiki_job_id in JOBS:
+                    JOBS[st.session_state.wiki_job_id]["stats"]["stop_requested"] = True
+                    st.session_state.wiki_status_messages.append(f"[{datetime.now().strftime('%H:%M:%S')}] 🛑 중단 요청을 백그라운드로 보냈습니다.")
+                st.session_state.wiki_stop_requested = True
+                st.rerun()
+        else:
+            if st.button("🚀 전수 조사 시작", type="primary", use_container_width=True, key="start_wiki_btn"):
+                # 새 작업 ID 생성 및 초기화
+                job_id = str(uuid.uuid4())
+                log_q = queue.Queue()
+                
+                # 기존 수집 URL 로드
+                existing_urls = load_existing_paper_urls() if skip_existing else set()
+                
+                stats_obj = {
+                    "processed": 0,
+                    "skipped": len(existing_urls),
+                    "status": "running",
+                    "started_ts": time.time(),
+                    "stop_requested": False,
+                    "fetch_stats": {}
+                }
+                
+                crawler_obj = VitaminDWikiCrawler(
+                    delay_sec=float(wiki_delay),
+                    debug_mode=bool(st.session_state.wiki_debug_mode),
+                )
+                
+                # 콜백 함수: thread-safe queue에 직접 put
+                def make_log_callback(q):
+                    return lambda msg: q.put(msg)
+                
+                crawler_obj.set_status_callback(make_log_callback(log_q))
+                
+                # 백그라운드 스레드 생성 및 구동
+                t = threading.Thread(
+                    target=run_crawl_thread,
+                    args=(crawler_obj, wiki_start_url, existing_urls, log_q, stats_obj, DB_PATH),
+                    daemon=True
+                )
+                
+                JOBS[job_id] = {
+                    "crawler": crawler_obj,
+                    "log_queue": log_q,
+                    "stats": stats_obj,
+                    "thread": t
+                }
+                
+                st.session_state.wiki_job_id = job_id
+                st.session_state.wiki_running = True
+                st.session_state.wiki_started_ts = stats_obj["started_ts"]
+                st.session_state.wiki_stats = stats_obj
+                st.session_state.wiki_fetch_stats = {}
+                st.session_state.wiki_status_messages = [
+                    f"[{datetime.now().strftime('%H:%M:%S')}] 📚 sitemap 전수 조사 시작 (기존 {len(existing_urls):,}개 스킵 예정)"
+                ]
+                st.session_state.wiki_last_msg = ""
+                st.session_state.wiki_stop_requested = False
+                
+                t.start()
+                st.rerun()
+
+    with col_btn2:
+        if not st.session_state.wiki_running:
+            if st.button("🔄 현황 새로고침", use_container_width=True, key="refresh_wiki_btn"):
+                st.rerun()
+        else:
+            st.button("🔄 현황 새로고침", use_container_width=True, disabled=True, key="refresh_wiki_btn_dis")
+
+    # 6. 실시간 진행 현황판 렌더링
+    if started_ts or processed or ok_cnt:
         st.markdown(
             f"#### 🔄 진행 현황 {queue_remaining}" if st.session_state.wiki_running
             else "#### ✅ 완료 현황"
@@ -474,108 +572,31 @@ def _render_live_stats():
         c5.metric("실패 원인", detail)
         c6.metric("소요 시간", elapsed)
 
-
-# ── 수집 루프 (배치 처리) ─────────────────────────────────────
-if st.session_state.wiki_running:
-    _render_live_stats()
-
-    gen = st.session_state.wiki_generator
-    crawler_obj = st.session_state.wiki_crawler_obj
-    if crawler_obj:
-        crawler_obj.set_status_callback(add_log)
-
-    done = False
-    count = 0
-
-    while count < BATCH_SIZE:
-        if st.session_state.wiki_stop_requested:
-            break
-        try:
-            paper = next(gen)
-
-            if paper is None:
-                # heartbeat: 30페이지 처리마다 발행 → UI 갱신 트리거용
-                count += 1
-                # 배치 루프 안에서는 live_msg 갱신 금지 → Streamlit removeChild DOM 오류 방지
-                continue
-
-            try:
-                save_paper_to_sqlite(paper)
-            except Exception as e:
-                add_log(f"⚠️ 저장 실패: {paper.get('url', '')} ({e})")
-            st.session_state.wiki_stats["processed"] += 1
-            count += 1
-
-        except StopIteration:
-            done = True
-            break
-        except ValueError as e:
-            # "generator already executing": Streamlit rerun 충돌로 동시 호출 발생
-            # → 이번 배치를 조용히 종료하고 다음 rerun에서 재시도
-            if "already executing" in str(e):
-                add_log("⚠️ 배치 충돌 감지 — 자동 재시도 중...")
-                break
-            raise
-
-    # 배치 완료 후 fetch_stats 스냅샷 저장 (다음 rerun에서 정확히 표시)
-    if crawler_obj:
-        st.session_state.wiki_fetch_stats = dict(getattr(crawler_obj, "fetch_stats", {}) or {})
-
-    if done:
-        st.session_state.wiki_running = False
-        st.session_state.wiki_generator = None
-        p = st.session_state.wiki_stats.get("processed", 0)
-        add_log(f"✅ 전수 조사 완료 — 신규 저장 {p:,}개")
-        _render_live_stats()
-        live_msg.success(f"✅ 전수 조사 완료 — 신규 저장 {p:,}개")
-        st.rerun()
-    elif st.session_state.wiki_stop_requested:
-        st.session_state.wiki_running = False
-        st.session_state.wiki_stop_requested = False
-        st.session_state.wiki_generator = None
-        p = st.session_state.wiki_stats.get("processed", 0)
-        add_log(f"🛑 중단됨 — 신규 저장 {p:,}개")
-        _render_live_stats()
-        live_msg.warning(f"🛑 수집 중단됨 — 신규 저장 {p:,}개")
-        st.rerun()
-    else:
-        # 다음 배치를 위해 재실행
-        st.rerun()
-
-else:
-    # 비실행 중: 마지막 현황판 표시 (있는 경우)
-    _render_live_stats()
+    # 7. 상태 알림 메시지
     if st.session_state.wiki_last_msg:
         if "완료" in st.session_state.wiki_last_msg:
-            live_msg.success(f"✅ {st.session_state.wiki_last_msg}")
+            st.success(f"✅ {st.session_state.wiki_last_msg}")
         elif "중단" in st.session_state.wiki_last_msg:
-            live_msg.warning(f"🛑 {st.session_state.wiki_last_msg}")
+            st.warning(f"🛑 {st.session_state.wiki_last_msg}")
         elif "차단" in st.session_state.wiki_last_msg or "속도 제한" in st.session_state.wiki_last_msg:
-            live_msg.error(f"🚨 {st.session_state.wiki_last_msg}")
+            st.error(f"🚨 {st.session_state.wiki_last_msg}")
 
-# ── 실행 로그 ─────────────────────────────────────────────────
-if st.session_state.wiki_status_messages:
-    # 수집 중에는 expander를 접어두면 text_area DOM과 현황판 충돌(removeChild) 완화
-    _log_expanded = bool(st.session_state.wiki_debug_mode) and not st.session_state.wiki_running
-    with st.expander(
-        f"📋 실행 로그 ({len(st.session_state.wiki_status_messages)}줄)"
-        + (" — 디버그 모드 ON" if st.session_state.wiki_debug_mode else ""),
-        expanded=_log_expanded,
-    ):
-        log_text = "\n".join(reversed(st.session_state.wiki_status_messages[-300:]))
-        st.text_area(
-            "",
-            log_text,
-            height=280,
-            disabled=True,
-            label_visibility="collapsed",
-            key="wiki_log_area",
-        )
-        if st.button("🗑️ 로그 초기화", key="clear_wiki_log"):
-            st.session_state.wiki_status_messages = []
-            st.session_state.wiki_last_msg = ""
-            st.rerun()
+    # 8. 작업 로그 화면 출력 (st.code로 대체하여 리프레시 시 DOM 깨짐 해결)
+    if st.session_state.wiki_status_messages:
+        _log_expanded = bool(st.session_state.wiki_debug_mode) and not st.session_state.wiki_running
+        with st.expander(
+            f"📋 실행 로그 ({len(st.session_state.wiki_status_messages)}줄)"
+            + (" — 디버그 모드 ON" if st.session_state.wiki_debug_mode else ""),
+            expanded=_log_expanded,
+        ):
+            log_text = "\n".join(reversed(st.session_state.wiki_status_messages[-300:]))
+            st.code(log_text, language="log")
+            if st.button("🗑️ 로그 초기화", key="clear_wiki_log"):
+                st.session_state.wiki_status_messages = []
+                st.session_state.wiki_last_msg = ""
+                st.rerun()
 
+render_crawl_section_ui()
 st.markdown("---")
 
 # ── 데이터 관리 ───────────────────────────────────────────────

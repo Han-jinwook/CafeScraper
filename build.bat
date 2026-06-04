@@ -89,11 +89,16 @@ if errorlevel 1 (
 where pyinstaller >nul 2>&1
 
 if errorlevel 1 (
-
-    echo [ERROR] pyinstaller command not found. Install PyInstaller or fix PATH ^(same Python as pip^).
-
-    goto :fail_pause
-
+    python -m PyInstaller --version >nul 2>&1
+    if errorlevel 1 (
+        echo [ERROR] pyinstaller command not found. Install PyInstaller or fix PATH ^(same Python as pip^).
+        goto :fail_pause
+    ) else (
+        echo PyInstaller found via python -m PyInstaller
+        set "PYINSTALLER_CMD=python -m PyInstaller"
+    )
+) else (
+    set "PYINSTALLER_CMD=pyinstaller"
 )
 
 
@@ -248,7 +253,7 @@ echo.
 
 REM --clean clears Analysis cache so outputs refresh reliably.
 
-pyinstaller cafescraper.spec --noconfirm --clean
+%PYINSTALLER_CMD% cafescraper.spec --noconfirm --clean
 
 
 
