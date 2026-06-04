@@ -524,6 +524,7 @@ def _commenter_board_label_for_url(board_url: str) -> str:
 
 def _collect_commenter_targets_into_session() -> None:
     try:
+        st.session_state._commenter_collect_warning = None
         crw = st.session_state.commenter
         if not crw or not getattr(crw, "driver", None):
             st.warning("먼저 **1단계: 브라우저 열기**를 해주세요.")
@@ -538,11 +539,11 @@ def _collect_commenter_targets_into_session() -> None:
             )
         )
         if not board_urls:
-            st.warning("왼쪽에서 **게시판을 선택**해주세요.")
+            st.session_state._commenter_collect_warning = "⚠️ 왼쪽에서 **게시판을 선택**한 뒤 저장하고 진행해주세요."
             return
         _start_d, _end_d = _commenter_normalized_target_range()
         if _start_d is None:
-            st.warning("수집 기간을 확인해주세요.")
+            st.session_state._commenter_collect_warning = "⚠️ 수집 기간을 확인해주세요."
             return
         st.session_state.commenter_collecting = True
         exclude_keyword = str(st.session_state.get("commenter_exclude_nicks", "") or "")
@@ -1450,6 +1451,10 @@ commenter_browser_opened = bool(
     _commenter_crw is not None and getattr(_commenter_crw, "driver", None) is not None
 )
 _has_targets_now = bool(st.session_state.get("target_df") is not None and not st.session_state.target_df.empty)
+
+if st.session_state.get("commenter_selected_board_urls"):
+    st.session_state._commenter_collect_warning = None
+
 if st.session_state.get("is_running", False):
     st.info("현재 단계: 댓글 작성 중 — 중지는 오른쪽 카드의 **⏹ 댓글 작성 중지** 버튼")
 elif st.session_state.get("commenter_collecting", False):
@@ -1460,6 +1465,10 @@ elif not _has_targets_now:
     st.info("현재 단계: 브라우저 준비 완료 — 다음은 **2단계: 타겟 목록 수집**입니다.")
 else:
     st.success("현재 단계: 작성 준비 완료 — 템플릿 확인 후 **🚀 댓글 작성 시작**을 누르세요.")
+
+_collect_warn = st.session_state.get("_commenter_collect_warning")
+if _collect_warn:
+    st.warning(_collect_warn)
 with st.container(key="commenter_exec_btns"):
     step_c1, step_c2 = st.columns(2, gap="small")
     with step_c1:

@@ -4215,9 +4215,8 @@ class NaverCafeCrawler:
                 
             except Exception as e:
                 self._update_status(f"❌ {page}페이지 처리 중 오류: {e}")
-                # 에러가 나도 다음 페이지 시도해볼 수 있으나, 연속 에러 방지 위해 일단 break?
-                # 여기서는 배치 중단하고 현재까지 수집된 것 반환
-                break
+                # 예외를 그대로 밖으로 전파하여 수집 중지 및 UI 에러 표출 유도
+                raise e
             
         return all_articles, is_finished
 

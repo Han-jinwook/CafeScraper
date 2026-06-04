@@ -1,4 +1,4 @@
-﻿import html
+import html
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
@@ -2562,14 +2562,23 @@ def _render_cafe_main_workspace():
                     else:
                         live_status.info(f"🔍 게시글 목록 수집 시작 (페이지 {page_cursor} ~)...")
                 
-                    new_batch, is_finished = st.session_state.crawler.scrape_board_list(
-                        ctx["board_url"],
-                        ctx["start_dt"],
-                        ctx["end_dt"],
-                        exclude_boards=ctx.get("exclude_boards", []),
-                        start_page=page_cursor,
-                        max_pages=batch_size,
-                    )
+                    try:
+                        new_batch, is_finished = st.session_state.crawler.scrape_board_list(
+                            ctx["board_url"],
+                            ctx["start_dt"],
+                            ctx["end_dt"],
+                            exclude_boards=ctx.get("exclude_boards", []),
+                            start_page=page_cursor,
+                            max_pages=batch_size,
+                        )
+                    except Exception as e:
+                        update_logs(f"❌ 목록 수집 중 치명적인 오류 발생: {e}")
+                        st.session_state.crawler.set_status_callback(update_logs)
+                        st.session_state.crawl_running = False
+                        _save_crawl_checkpoint(force=True)
+                        st.session_state.crawl_last_status_type = "error"
+                        st.session_state.crawl_last_status_message = f"❌ 목록 수집 오류: {e}"
+                        st.rerun()
                     batch_base_page = int(getattr(st.session_state.crawler, "last_effective_start_page", page_cursor) or page_cursor)
                     scan_oldest_date = str(getattr(st.session_state.crawler, "last_scan_oldest_date", "") or "").strip()
                     last_scanned_page = int(getattr(st.session_state.crawler, "last_scanned_page", 0) or 0)

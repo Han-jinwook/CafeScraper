@@ -259,6 +259,7 @@ def main() -> None:
     _boot_log(exe_dir, f"Streamlit 자식 프로세스 예약 port={port} url={url}")
 
     env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
     env["STREAMLIT_SERVER_HEADLESS"] = "true"
     env["STREAMLIT_SERVER_PORT"] = str(port)
     env["STREAMLIT_BROWSER_GATHER_USAGE_STATS"] = "false"

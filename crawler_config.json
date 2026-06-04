@@ -536,8 +536,8 @@
     "event_apply_comment_include": true,
     "event_comment_max_tickets_per_comment": 5,
     "event_post_board_ticket_bonus_text": "",
-    "commenter_target_start_date": "2026-03-13",
-    "commenter_target_end_date": "2026-05-11",
+    "commenter_target_start_date": "2026-05-01",
+    "commenter_target_end_date": "2026-05-31",
     "commenter_exclude_nicks": "마법사멀린, 멀린, 해나라, 달나라",
     "commenter_db_path": "D:\\CafeScraper\\data\\auto_commenter.db",
     "commenter_between_posts_sec": 60,
@@ -919,8 +919,8 @@
         }
     ],
     "commenter_selected_board_urls": [
-        "https://cafe.naver.com/ArticleList.nhn?search.clubid=27870803&search.menuid=304&search.boardtype=L"
+        "https://cafe.naver.com/ArticleList.nhn?search.clubid=27870803&search.boardtype=L"
     ],
-    "commenter_board_url": "https://cafe.naver.com/ArticleList.nhn?search.clubid=27870803&search.menuid=304&search.boardtype=L",
+    "commenter_board_url": "https://cafe.naver.com/ArticleList.nhn?search.clubid=27870803&search.boardtype=L",
     "commenter_allow_dup_nick": true
 }
