@@ -84,23 +84,6 @@ def resolve_event_db_path(config_event_db_path: str | None = None) -> Path:
     return _safe_mkdir(p)
 
 
-def resolve_paper_db_path(config_paper_db_path: str | None = None) -> Path:
-    """
-    논문(위키 등) 수집 전용 SQLite DB.
-    우선순위: `CAFESCRAPER_PAPER_DB_PATH` → config → data/paper_collection.db
-    """
-    env_path = (os.getenv("CAFESCRAPER_PAPER_DB_PATH") or "").strip()
-    if env_path:
-        p = Path(env_path).expanduser().resolve()
-        return _safe_mkdir(p)
-
-    if config_paper_db_path and str(config_paper_db_path).strip():
-        p = Path(str(config_paper_db_path)).expanduser().resolve()
-        return _safe_mkdir(p)
-
-    p = (get_project_root() / "data" / "paper_collection.db").resolve()
-    return _safe_mkdir(p)
-
 
 def resolve_commenter_db_path(config_commenter_db_path: str | None = None) -> Path:
     """

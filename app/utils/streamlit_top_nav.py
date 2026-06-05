@@ -11,7 +11,6 @@ SETTINGS_CARD_TITLE_CLASS = "cafe-monster-settings-card-title"
 SETTINGS_CARD_TITLE_ICON_CLASS = "cafe-monster-settings-card-title-icon"
 
 PAGE_HOME = "app.py"
-PAGE_PAPERS = "pages/02_paper_collection.py"
 PAGE_EVENT = "pages/03_event_comment_lottery.py"
 PAGE_COMMENTER = "pages/04_auto_commenter.py"
 
@@ -20,7 +19,6 @@ PAGE_COMMENTER = "pages/04_auto_commenter.py"
 _NAV_PAGE_LINKS: tuple[tuple[str, str, str], ...] = (
     ("app", PAGE_HOME, "카페 수집"),
     ("event", PAGE_EVENT, "이벤트 댓글 분석"),
-    ("papers", PAGE_PAPERS, "논문 수집"),
     ("commenter", PAGE_COMMENTER, "자동 댓글러"),
 )
 
@@ -29,7 +27,7 @@ _TOP_NAV_CONTAINER_KEY = "cafe_monster_top_nav"
 
 def render_main_top_nav(*, active: str) -> None:
     """
-    active: "app" | "papers" | "event" | "commenter"
+    active: "app" | "event" | "commenter"
     """
     # 멀티페이지(pages/*.py)는 app.py 단일 진입과 달리 상단 헤더·첫 블록이 겹쳐
     # 탭 버튼 위가 잘려 보일 수 있어 본문 상단 패딩만 소폭 추가.
@@ -107,7 +105,7 @@ def render_main_top_nav(*, active: str) -> None:
     )
 
     with st.container(key=_TOP_NAV_CONTAINER_KEY):
-        cols = st.columns(4, gap="small")
+        cols = st.columns(3, gap="small")
         for col, (nav_key, page_path, label) in zip(cols, _NAV_PAGE_LINKS, strict=True):
             with col:
                 go = st.button(
