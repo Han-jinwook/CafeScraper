@@ -7,6 +7,8 @@ import json
 import re
 import traceback
 import html
+import uuid
+import threading
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -40,6 +42,42 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed",
 )
+
+@st.cache_resource
+def get_commenter_collect_jobs():
+    return {}
+
+COMMENTER_COLLECT_JOBS = get_commenter_collect_jobs()
+
+# Check background collection job status
+if st.session_state.get("commenter_collecting", False):
+    job_id = st.session_state.get("commenter_collect_job_id")
+    if job_id and job_id in COMMENTER_COLLECT_JOBS:
+        job = COMMENTER_COLLECT_JOBS[job_id]
+        thread = job.get("thread")
+        if thread and thread.is_alive():
+            st.session_state.commenter_collect_progress = job.get("progress", 0.0)
+            st.session_state.commenter_collect_status_text = job.get("status_text", "수집 시작 중…")
+        else:
+            # Thread finished
+            df = job.get("result_df")
+            if df is not None:
+                st.session_state.target_df = df
+                st.session_state.commenter_target_df_full = df.copy()
+            
+            # Transfer warnings/info/errors to streamlit
+            if "info_msg" in job:
+                st.session_state._commenter_collect_info_msg = job["info_msg"]
+            if "warn_msg" in job:
+                st.session_state._commenter_collect_warn_msg = job["warn_msg"]
+            if "success_msg" in job:
+                st.session_state._commenter_collect_success_msg = job["success_msg"]
+            if "error_msg" in job:
+                st.session_state._commenter_collect_error_msg = job["error_msg"]
+                
+            st.session_state.commenter_collecting = False
+            st.session_state.commenter_collect_job_id = None
+            st.rerun()
 
 render_main_top_nav(active="commenter")
 
@@ -126,6 +164,12 @@ if "commenter_collecting" not in st.session_state:
     st.session_state.commenter_collecting = False
 if "commenter_target_df_full" not in st.session_state:
     st.session_state.commenter_target_df_full = None
+if "commenter_collect_job_id" not in st.session_state:
+    st.session_state.commenter_collect_job_id = None
+if "commenter_collect_progress" not in st.session_state:
+    st.session_state.commenter_collect_progress = 0.0
+if "commenter_collect_status_text" not in st.session_state:
+    st.session_state.commenter_collect_status_text = ""
 
 if "commenter_cafe_name_input" not in st.session_state:
     st.session_state.commenter_cafe_name_input = str(config.get("commenter_cafe_name", "") or "")
@@ -522,6 +566,130 @@ def _commenter_board_label_for_url(board_url: str) -> str:
     return ""
 
 
+def _commenter_board_label_for_url_static(board_url: str, boards: list) -> str:
+    """왼쪽에서 가져온 게시판 목록 URL → 표시 이름 (목록 DOM에 board_name이 없을 때)."""
+    needle = str(board_url).strip()
+    for b in boards:
+        if str((b or {}).get("url") or "").strip() == needle:
+            return str((b or {}).get("name") or "").strip()
+    return ""
+
+
+def _commenter_collect_thread_func(
+    job_id, crw, board_urls, start_dt, end_dt, exclude_keyword, allow_dup, db_path, extracted_boards
+):
+    job = COMMENTER_COLLECT_JOBS[job_id]
+    try:
+        by_url = {}
+        for b_idx, board_url_each in enumerate(board_urls, start=1):
+            job["status_text"] = f"게시판 {b_idx}/{len(board_urls)} 목록 수집 중…"
+            job["progress"] = (b_idx - 1) / max(1, len(board_urls))
+            
+            articles = []
+            _page_cursor = 1
+            _board_batch = 50
+            _board_page_cap = 8000
+            _board_guard = 0
+            _is_finished = False
+            while _page_cursor <= _board_page_cap and _board_guard < 400:
+                _board_guard += 1
+                result = crw.scrape_board_list(
+                    board_url_each,
+                    start_dt,
+                    end_dt,
+                    exclude_boards=[],
+                    start_page=_page_cursor,
+                    max_pages=_board_batch,
+                )
+                if isinstance(result, tuple) and len(result) == 2:
+                    _batch, _is_finished = result
+                else:
+                    _batch, _is_finished = (result or []), True
+                _batch = _batch or []
+                articles.extend(_batch)
+                job["status_text"] = (
+                    f"게시판 {b_idx}/{len(board_urls)} 목록 스캔 중… "
+                    f"(이번 배치 {len(_batch)}건 · 누적 {len(articles)}건)"
+                )
+                if _is_finished:
+                    break
+                _eff_pg = int(
+                    getattr(crw, "last_effective_start_page", _page_cursor) or _page_cursor
+                )
+                _page_cursor = _eff_pg + _board_batch
+                
+            for art in articles:
+                u = str(art.get("url") or "").strip()
+                if not u or u in by_url:
+                    continue
+                board_name = str(art.get("board_name") or "").strip()
+                if crw._is_noise_board_label(board_name):
+                    board_name = ""
+                if not board_name:
+                    board_name = _commenter_board_label_for_url_static(board_url_each, extracted_boards)
+                if crw._is_noise_board_label(board_name):
+                    board_name = _commenter_board_label_for_url_static(board_url_each, extracted_boards) or ""
+                nickname = str(art.get("nickname") or "").strip() or "unknown"
+                by_url[u] = {
+                    "post_id": art.get("post_id", ""),
+                    "nickname": nickname,
+                    "title": art.get("title", ""),
+                    "date": art.get("date", ""),
+                    "url": u,
+                    "board_name": board_name,
+                }
+                
+        job["progress"] = 1.0
+        job["status_text"] = "데이터 가공 중…"
+        
+        df = pd.DataFrame(list(by_url.values()))
+        if not df.empty:
+            df["_sort_d"] = pd.to_datetime(df["date"], errors="coerce")
+            df = df.sort_values("_sort_d", ascending=False).drop(columns=["_sort_d"])
+        excludes = [x.strip() for x in exclude_keyword.split(",") if x.strip()]
+        if excludes and not df.empty:
+            mask = df["nickname"].apply(lambda x: not any(exc in str(x) for exc in excludes))
+            df = df[mask]
+            
+        if not allow_dup and not df.empty:
+            _before = len(df)
+            _nk = df["nickname"].astype(str).str.strip()
+            _fallback = df["url"].astype(str).str.strip()
+            _dedup_key = _nk.mask(_nk.str.lower().eq("unknown"), _fallback)
+            _dedup_key = _dedup_key.mask(_dedup_key.eq("") | _dedup_key.isna(), _fallback)
+            df = df.assign(_commenter_nick_dedup=_dedup_key).drop_duplicates(
+                subset=["_commenter_nick_dedup"], keep="first"
+            ).drop(columns=["_commenter_nick_dedup"])
+            _removed = _before - len(df)
+            if _removed > 0:
+                job["info_msg"] = f"동일 닉네임 중복 {_removed}건 제거됨 (설정에서 허용 가능)"
+                
+        if "comment_status" not in df.columns:
+            df["comment_status"] = ""
+        if "comment_detail" not in df.columns:
+            df["comment_detail"] = ""
+        df["comment_status"] = df["comment_status"].fillna("").astype(str)
+        df["comment_detail"] = df["comment_detail"].fillna("").astype(str)
+        
+        job["result_df"] = df
+        try:
+            replace_commenter_targets(
+                db_path, df.to_dict("records") if not df.empty else []
+            )
+        except Exception as _db_exc:
+            job["warn_msg"] = f"타겟 DB 저장에 실패했습니다(화면 표는 유지됨). 원인: {_db_exc}"
+            
+        if df.empty:
+            job["warn_msg"] = "선택한 기간·게시판에서 수집된 글이 없습니다."
+        else:
+            job["success_msg"] = f"{len(df)}건 수집 완료"
+            
+        job["status"] = "completed"
+    except Exception as e:
+        job["status"] = "error"
+        job["error_msg"] = f"수집 실패: {e}"
+
+
 def _collect_commenter_targets_into_session() -> None:
     try:
         st.session_state._commenter_collect_warning = None
@@ -545,117 +713,48 @@ def _collect_commenter_targets_into_session() -> None:
         if _start_d is None:
             st.session_state._commenter_collect_warning = "⚠️ 수집 기간을 확인해주세요."
             return
-        st.session_state.commenter_collecting = True
+            
+        # Start background job
+        job_id = str(uuid.uuid4())
         exclude_keyword = str(st.session_state.get("commenter_exclude_nicks", "") or "")
+        allow_dup = st.session_state.get("commenter_allow_dup_nick", False)
+        extracted_boards = list(st.session_state.get("commenter_extracted_boards") or [])
+        
         start_dt = datetime.combine(_start_d, datetime.min.time())
         end_dt = datetime.combine(_end_d, datetime.max.time())
-        by_url: dict[str, dict] = {}
-        prog = st.progress(0.0)
-        status_ph = st.empty()
-        for b_idx, board_url_each in enumerate(board_urls, start=1):
-            status_ph.text(f"게시판 {b_idx}/{len(board_urls)} 목록 수집 중…")
-            prog.progress((b_idx - 1) / max(1, len(board_urls)))
-            articles: list = []
-            _page_cursor = 1
-            _board_batch = 50
-            _board_page_cap = 8000
-            _board_guard = 0
-            _is_finished = False
-            while _page_cursor <= _board_page_cap and _board_guard < 400:
-                _board_guard += 1
-                result = crw.scrape_board_list(
-                    board_url_each,
-                    start_dt,
-                    end_dt,
-                    exclude_boards=[],
-                    start_page=_page_cursor,
-                    max_pages=_board_batch,
-                )
-                if isinstance(result, tuple) and len(result) == 2:
-                    _batch, _is_finished = result
-                else:
-                    _batch, _is_finished = (result or []), True
-                _batch = _batch or []
-                articles.extend(_batch)
-                status_ph.text(
-                    f"게시판 {b_idx}/{len(board_urls)} 목록 스캔 중… "
-                    f"(이번 배치 {len(_batch)}건 · 누적 {len(articles)}건)"
-                )
-                if _is_finished:
-                    break
-                _eff_pg = int(
-                    getattr(crw, "last_effective_start_page", _page_cursor) or _page_cursor
-                )
-                _page_cursor = _eff_pg + _board_batch
-            for art in articles:
-                u = str(art.get("url") or "").strip()
-                if not u or u in by_url:
-                    continue
-                board_name = str(art.get("board_name") or "").strip()
-                if crw._is_noise_board_label(board_name):
-                    board_name = ""
-                if not board_name:
-                    board_name = _commenter_board_label_for_url(board_url_each)
-                if crw._is_noise_board_label(board_name):
-                    board_name = _commenter_board_label_for_url(board_url_each) or ""
-                nickname = str(art.get("nickname") or "").strip() or "unknown"
-                # 목록 단계에서는 상세 페이지(scrape_article_detail)를 부르지 않는다.
-                # 게시판마다 수십 페이지 × 글마다 브라우저 이동이면 사용자 화면이 “목록 수집 중”에서 사실상 멈춘 것처럼 보임.
-                by_url[u] = {
-                    "post_id": art.get("post_id", ""),
-                    "nickname": nickname,
-                    "title": art.get("title", ""),
-                    "date": art.get("date", ""),
-                    "url": u,
-                    "board_name": board_name,
-                }
-        prog.progress(1.0)
-        status_ph.empty()
-        df = pd.DataFrame(list(by_url.values()))
-        if not df.empty:
-            df["_sort_d"] = pd.to_datetime(df["date"], errors="coerce")
-            df = df.sort_values("_sort_d", ascending=False).drop(columns=["_sort_d"])
-        excludes = [x.strip() for x in exclude_keyword.split(",") if x.strip()]
-        if excludes and not df.empty:
-            mask = df["nickname"].apply(lambda x: not any(exc in str(x) for exc in excludes))
-            df = df[mask]
-        # 동일 닉네임 중복 제거 (디폴트: 첫 번째만 유지)
-        # 목록에서 닉을 못 읽으면 전부 "unknown" → 같은 키로 only 1행 남는 버그 방지: unknown은 URL로 구분
-        allow_dup = st.session_state.get("commenter_allow_dup_nick", False)
-        if not allow_dup and not df.empty:
-            _before = len(df)
-            _nk = df["nickname"].astype(str).str.strip()
-            _fallback = df["url"].astype(str).str.strip()
-            _dedup_key = _nk.mask(_nk.str.lower().eq("unknown"), _fallback)
-            _dedup_key = _dedup_key.mask(_dedup_key.eq("") | _dedup_key.isna(), _fallback)
-            df = df.assign(_commenter_nick_dedup=_dedup_key).drop_duplicates(
-                subset=["_commenter_nick_dedup"], keep="first"
-            ).drop(columns=["_commenter_nick_dedup"])
-            _removed = _before - len(df)
-            if _removed > 0:
-                st.info(f"동일 닉네임 중복 {_removed}건 제거됨 (설정에서 허용 가능)")
-        _commenter_ensure_comment_cols(df)
-        st.session_state.target_df = df
-        st.session_state.commenter_target_df_full = df.copy()
-        try:
-            replace_commenter_targets(
-                COMMENTER_DB_PATH, df.to_dict("records") if not df.empty else []
-            )
-        except Exception as _db_exc:
-            st.warning(f"타겟 DB 저장에 실패했습니다(화면 표는 유지됨). 원인: {_db_exc}")
-        if df.empty:
-            st.warning("선택한 기간·게시판에서 수집된 글이 없습니다.")
-        else:
-            st.success(f"{len(df)}건 수집 완료")
+        
+        COMMENTER_COLLECT_JOBS[job_id] = {
+            "status": "running",
+            "progress": 0.0,
+            "status_text": "수집 대기 중…",
+            "thread": None
+        }
+        
+        t = threading.Thread(
+            target=_commenter_collect_thread_func,
+            args=(
+                job_id,
+                crw,
+                board_urls,
+                start_dt,
+                end_dt,
+                exclude_keyword,
+                allow_dup,
+                COMMENTER_DB_PATH,
+                extracted_boards
+            ),
+            daemon=True
+        )
+        COMMENTER_COLLECT_JOBS[job_id]["thread"] = t
+        
+        st.session_state.commenter_collecting = True
+        st.session_state.commenter_collect_job_id = job_id
+        st.session_state.commenter_collect_progress = 0.0
+        st.session_state.commenter_collect_status_text = "수집 시작 중…"
+        
+        t.start()
     except Exception as e:
-        ph = locals().get("status_ph")
-        if ph is not None:
-            try:
-                ph.empty()
-            except Exception:
-                pass
-        st.error(f"수집 실패: {e}")
-    finally:
+        st.error(f"수집 시작 실패: {e}")
         st.session_state.commenter_collecting = False
 
 
@@ -1459,6 +1558,10 @@ if st.session_state.get("is_running", False):
     st.info("현재 단계: 댓글 작성 중 — 중지는 오른쪽 카드의 **⏹ 댓글 작성 중지** 버튼")
 elif st.session_state.get("commenter_collecting", False):
     st.info("현재 단계: 타겟 수집 중 — 수집 완료 후 댓글 작성 시작이 자동으로 활성화됩니다.")
+    _prog_val = st.session_state.get("commenter_collect_progress", 0.0)
+    _status_txt = st.session_state.get("commenter_collect_status_text", "수집 중…")
+    st.progress(_prog_val)
+    st.caption(f"📊 {_status_txt}")
 elif not commenter_browser_opened:
     st.info("현재 단계: 대기 — **1단계 브라우저 열기**부터 진행하세요.")
 elif not _has_targets_now:
@@ -1469,6 +1572,15 @@ else:
 _collect_warn = st.session_state.get("_commenter_collect_warning")
 if _collect_warn:
     st.warning(_collect_warn)
+
+if st.session_state.get("_commenter_collect_info_msg"):
+    st.info(st.session_state.pop("_commenter_collect_info_msg"))
+if st.session_state.get("_commenter_collect_warn_msg"):
+    st.warning(st.session_state.pop("_commenter_collect_warn_msg"))
+if st.session_state.get("_commenter_collect_success_msg"):
+    st.success(st.session_state.pop("_commenter_collect_success_msg"))
+if st.session_state.get("_commenter_collect_error_msg"):
+    st.error(st.session_state.pop("_commenter_collect_error_msg"))
 with st.container(key="commenter_exec_btns"):
     step_c1, step_c2 = st.columns(2, gap="small")
     with step_c1:
@@ -1810,3 +1922,7 @@ st.markdown(
     "<hr style='border:none;border-top:1px solid #e2e8f0;margin:0.3rem 0 0.4rem 0;'/>",
     unsafe_allow_html=True,
 )
+
+if st.session_state.get("commenter_collecting", False):
+    time.sleep(1.0)
+    st.rerun()
