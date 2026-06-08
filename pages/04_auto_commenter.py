@@ -218,6 +218,18 @@ if "commenter_auto_login_after_reset_save_mode" not in st.session_state:
 if "commenter_db_reset_confirm" not in st.session_state:
     st.session_state.commenter_db_reset_confirm = False
 
+if "commenter_auto_login_expanded" not in st.session_state:
+    st.session_state.commenter_auto_login_expanded = False
+if "commenter_naver_id_input" not in st.session_state:
+    st.session_state.commenter_naver_id_input = str(config.get("commenter_naver_id", "") or "")
+if "commenter_naver_pw_input" not in st.session_state:
+    st.session_state.commenter_naver_pw_input = str(config.get("commenter_naver_pw", "") or "")
+if "commenter_auto_login_enabled_input" not in st.session_state:
+    st.session_state.commenter_auto_login_enabled_input = bool(config.get("commenter_auto_login_enabled", True))
+
+def on_commenter_auto_login_change():
+    st.session_state.commenter_auto_login_expanded = True
+
 
 def _parse_cfg_date(val, fallback):
     if not val:
@@ -501,6 +513,37 @@ def _render_commenter_db_section() -> None:
         disabled=True,
         key="commenter_db_path_display_ro",
     )
+
+    # [NEW] Downloads Folder & DB Directory Opener Button (CafeScraper comment page)
+    c_open_com1, c_open_com2 = st.columns(2)
+    with c_open_com1:
+        if st.button("📁 DB 저장폴더 열기", use_container_width=True, key="open_comment_db_dir"):
+            try:
+                dir_path = os.path.dirname(os.path.abspath(_eff_commenter_db))
+                import subprocess
+                if sys.platform == "win32":
+                    os.startfile(dir_path)
+                elif sys.platform == "darwin":
+                    subprocess.Popen(["open", dir_path])
+                else:
+                    subprocess.Popen(["xdg-open", dir_path])
+                st.toast("📂 DB 저장폴더를 열었습니다.")
+            except Exception as e:
+                st.error(f"폴더 열기 실패: {e}")
+    with c_open_com2:
+        if st.button("📥 다운로드 폴더 열기", use_container_width=True, key="open_comment_download_dir"):
+            try:
+                download_path = os.path.join(os.path.expanduser("~"), "Downloads")
+                import subprocess
+                if sys.platform == "win32":
+                    os.startfile(download_path)
+                elif sys.platform == "darwin":
+                    subprocess.Popen(["open", download_path])
+                else:
+                    subprocess.Popen(["xdg-open", download_path])
+                st.toast("📂 다운로드 폴더를 열었습니다.")
+            except Exception as e:
+                st.error(f"다운로드 폴더 열기 실패: {e}")
 
     st.metric("저장된 댓글 대상 글", f"{get_commenter_targets_count(_eff_commenter_db):,}건")
 
@@ -906,7 +949,7 @@ with _col1:
         _saved_login_pw = str(config.get("commenter_naver_pw", "") or "")
         _auto_login_done = bool(_saved_login_id and _saved_login_pw)
         _auto_login_title = "🔐 자동로그인 설정 (완료)" if _auto_login_done else "🔐 자동로그인 설정"
-        with st.expander(_auto_login_title, expanded=False):
+        with st.expander(_auto_login_title, expanded=st.session_state.commenter_auto_login_expanded):
             if st.session_state.pop("_commenter_pending_clear_auto_login_inputs", False):
                 st.session_state.commenter_auto_login_enabled_input = False
                 st.session_state.commenter_naver_id_input = ""
@@ -918,6 +961,7 @@ with _col1:
             st.checkbox(
                 "브라우저 열 때 자동로그인 실행",
                 key="commenter_auto_login_enabled_input",
+                on_change=on_commenter_auto_login_change,
                 help="브라우저 열기 직후 저장된 계정으로 로그인을 시도합니다.",
             )
             _ev_al_input_col, _ev_al_btn_col = st.columns([4, 1], gap="small")
@@ -930,14 +974,14 @@ with _col1:
                     "네이버 아이디",
                     key="commenter_naver_id_input",
                     placeholder="아이디 입력",
-                    on_change=lambda: None,
+                    on_change=on_commenter_auto_login_change,
                 )
                 st.text_input(
                     "네이버 비밀번호",
                     key="commenter_naver_pw_input",
                     type="password",
                     placeholder="비밀번호 입력",
-                    on_change=lambda: None,
+                    on_change=on_commenter_auto_login_change,
                 )
             with _ev_al_btn_col:
                 st.markdown("<div style='margin-top: 88px;'></div>", unsafe_allow_html=True)
@@ -963,11 +1007,13 @@ with _col1:
                         save_config(cfg_now)
                         config.update(cfg_now)
                         st.session_state.commenter_auto_login_after_reset_save_mode = False
+                        st.session_state.commenter_auto_login_expanded = False
                         st.session_state._commenter_auto_login_save_ack = True
                         st.rerun()
                     else:
                         st.session_state._commenter_pending_clear_auto_login_inputs = True
                         st.session_state.commenter_auto_login_after_reset_save_mode = True
+                        st.session_state.commenter_auto_login_expanded = True
                         st.session_state._commenter_auto_login_reset_ack = True
                         st.rerun()
             if st.session_state.get("_commenter_auto_login_reset_ack"):

@@ -162,9 +162,21 @@ if "event_crawler" not in st.session_state:
 if "event_logs" not in st.session_state:
     st.session_state.event_logs = []
 if "event_cafe_name_input" not in st.session_state:
-    st.session_state.event_cafe_name_input = ""
+    st.session_state.event_cafe_name_input = str(config.get("event_cafe_name", "") or "")
 if "event_cafe_url_input" not in st.session_state:
-    st.session_state.event_cafe_url_input = ""
+    st.session_state.event_cafe_url_input = str(config.get("event_cafe_url", "") or "")
+
+if "event_auto_login_expanded" not in st.session_state:
+    st.session_state.event_auto_login_expanded = False
+if "event_naver_id_input" not in st.session_state:
+    st.session_state.event_naver_id_input = str(config.get("event_naver_id", "") or "")
+if "event_naver_pw_input" not in st.session_state:
+    st.session_state.event_naver_pw_input = str(config.get("event_naver_pw", "") or "")
+if "event_auto_login_enabled_input" not in st.session_state:
+    st.session_state.event_auto_login_enabled_input = bool(config.get("event_auto_login_enabled", True))
+
+def on_event_auto_login_change():
+    st.session_state.event_auto_login_expanded = True
 if "event_extracted_boards" not in st.session_state or not st.session_state.event_extracted_boards:
     _cfg_boards = config.get("event_extracted_boards", [])
     if isinstance(_cfg_boards, list) and _cfg_boards:
@@ -191,9 +203,14 @@ if "event_board_picker_version" not in st.session_state:
 if "event_board_picker_options_sig" not in st.session_state:
     st.session_state.event_board_picker_options_sig = ""
 if "event_cafe_connect_side_mode" not in st.session_state:
-    st.session_state.event_cafe_connect_side_mode = "save"
+    _cfg_cn = str(config.get("event_cafe_name", "") or "").strip()
+    _cfg_cu = str(config.get("event_cafe_url", "") or "").strip()
+    st.session_state.event_cafe_connect_side_mode = (
+        "reset" if (_cfg_cn or _cfg_cu) else "save"
+    )
 if "event_auto_login_after_reset_save_mode" not in st.session_state:
-    st.session_state.event_auto_login_after_reset_save_mode = False
+    _saved_event_login_id = str(config.get("event_naver_id", "") or "").strip()
+    st.session_state.event_auto_login_after_reset_save_mode = not _saved_event_login_id
 if "event_dup_collapsed" not in st.session_state:
     st.session_state.event_dup_collapsed = False
 if "event_dup_report" not in st.session_state:
@@ -1103,7 +1120,7 @@ with _ev1:
         _saved_event_login_pw = str(config.get("event_naver_pw", "") or "")
         _event_auto_login_done = bool(_saved_event_login_id and _saved_event_login_pw)
         _event_auto_login_title = "🔐 자동로그인 설정 (완료)" if _event_auto_login_done else "🔐 자동로그인 설정"
-        with st.expander(_event_auto_login_title, expanded=False):
+        with st.expander(_event_auto_login_title, expanded=st.session_state.event_auto_login_expanded):
             if st.session_state.pop("_event_pending_clear_auto_login_inputs", False):
                 st.session_state.pop("event_auto_login_enabled_input", None)
                 st.session_state.pop("event_naver_id_input", None)
@@ -1113,6 +1130,7 @@ with _ev1:
             event_auto_login_enabled = st.checkbox(
                 "브라우저 열 때 자동로그인 실행",
                 key="event_auto_login_enabled_input",
+                on_change=on_event_auto_login_change,
                 help="이벤트 수집용 브라우저 열기 직후 저장된 계정으로 로그인을 시도합니다.",
             )
             _ev_al_input_col, _ev_al_btn_col = st.columns([4, 1], gap="small")
@@ -1125,12 +1143,14 @@ with _ev1:
                     "네이버 아이디",
                     key="event_naver_id_input",
                     placeholder="아이디 입력",
+                    on_change=on_event_auto_login_change,
                 )
                 event_naver_pw = st.text_input(
                     "네이버 비밀번호",
                     key="event_naver_pw_input",
                     type="password",
                     placeholder="비밀번호 입력",
+                    on_change=on_event_auto_login_change,
                 )
             with _ev_al_btn_col:
                 st.markdown("<div style='margin-top: 88px;'></div>", unsafe_allow_html=True)
@@ -1145,11 +1165,13 @@ with _ev1:
                         save_config(cfg_now)
                         config.update(cfg_now)
                         st.session_state.event_auto_login_after_reset_save_mode = False
+                        st.session_state.event_auto_login_expanded = False
                         st.session_state._event_auto_login_save_ack = True
                         st.rerun()
                     else:
                         st.session_state._event_pending_clear_auto_login_inputs = True
                         st.session_state.event_auto_login_after_reset_save_mode = True
+                        st.session_state.event_auto_login_expanded = True
                         st.session_state._event_auto_login_reset_ack = True
                         st.rerun()
             if st.session_state.get("_event_auto_login_reset_ack"):

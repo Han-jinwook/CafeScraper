@@ -3178,9 +3178,25 @@ class NaverCafeCrawler:
         def _read_page_date_range(page_no: int) -> tuple[Optional[datetime], Optional[datetime], int, str]:
             page_url = self._build_board_page_url(board_url, page_no, user_display=50)
             try:
-                if self.driver.current_url != page_url:
+                _is_on_cafe = False
+                try:
+                    if "cafe.naver.com" in self.driver.current_url:
+                        _is_on_cafe = True
+                except:
+                    pass
+
+                if _is_on_cafe:
+                    try:
+                        self._switch_to_cafe_iframe()
+                        self.driver.execute_script("location.href = arguments[0];", page_url)
+                        self._sleep_scaled(1.5)
+                    except Exception:
+                        self.driver.switch_to.default_content()
+                        self.driver.get(page_url)
+                        self._sleep_scaled(2.2)
+                else:
                     self.driver.get(page_url)
-                    self._sleep_scaled(1.8)
+                    self._sleep_scaled(2.2)
                 self._switch_to_cafe_iframe()
                 self.driver.execute_script("window.scrollTo(0, 900);")
                 self._sleep_scaled(0.7)
@@ -3483,9 +3499,25 @@ class NaverCafeCrawler:
             """
             page_url = self._build_board_page_url(board_url, page_no, user_display=50)
             try:
-                if self.driver.current_url != page_url:
+                _is_on_cafe = False
+                try:
+                    if "cafe.naver.com" in self.driver.current_url:
+                        _is_on_cafe = True
+                except:
+                    pass
+
+                if _is_on_cafe:
+                    try:
+                        self._switch_to_cafe_iframe()
+                        self.driver.execute_script("location.href = arguments[0];", page_url)
+                        self._sleep_scaled(1.5)
+                    except Exception:
+                        self.driver.switch_to.default_content()
+                        self.driver.get(page_url)
+                        self._sleep_scaled(2.2)
+                else:
                     self.driver.get(page_url)
-                    self._sleep_scaled(1.8)
+                    self._sleep_scaled(2.2)
                 self._switch_to_cafe_iframe()
                 self.driver.execute_script("window.scrollTo(0, 900);")
                 self._sleep_scaled(0.7)
@@ -3712,9 +3744,25 @@ class NaverCafeCrawler:
             
             try:
                 # 페이지 이동 (undetected는 알아서 부드럽게 처리)
-                if self.driver.current_url != target_page_url:
+                _is_on_cafe = False
+                try:
+                    if "cafe.naver.com" in self.driver.current_url:
+                        _is_on_cafe = True
+                except:
+                    pass
+
+                if _is_on_cafe:
+                    try:
+                        self._switch_to_cafe_iframe()
+                        self.driver.execute_script("location.href = arguments[0];", target_page_url)
+                        self._sleep_scaled(1.8)
+                    except Exception:
+                        self.driver.switch_to.default_content()
+                        self.driver.get(target_page_url)
+                        self._sleep_scaled(2.5)
+                else:
                     self.driver.get(target_page_url)
-                    self._sleep_scaled(2.5)  # 로딩 대기
+                    self._sleep_scaled(2.5)
                 
                 self._switch_to_cafe_iframe()
                 
@@ -4123,7 +4171,7 @@ class NaverCafeCrawler:
                 if restart_from_page:
                     continue
 
-                if page_found_count == 0 and rows:
+                if page_found_count == 0 and rows and not page_dates:
                     fb_items, fb_dates = self._fallback_collect_board_list_rows(
                         range_start_d,
                         range_end_d,
@@ -4148,24 +4196,21 @@ class NaverCafeCrawler:
                         page_min_date = min(_bd)
                         page_max_date = max(_bd)
                         if page_max_date < range_start_d:
-                            consecutive_before_start_pages += 1
                             self._update_status(
-                                f"⏱️ 시작일 이전 페이지 감지 "
-                                f"({page_min_date.strftime('%Y년 %m월 %d일')} ~ {page_max_date.strftime('%Y년 %m월 %d일')}, "
-                                f"{consecutive_before_start_pages}/2)"
+                                f"⏱️ 게시판의 최신 글 날짜({page_max_date.strftime('%Y-%m-%d')})가 수집 시작일({range_start_d.strftime('%Y-%m-%d')})보다 과거이므로 이 게시판 수집을 완료합니다."
                             )
-                            if consecutive_before_start_pages >= 2:
-                                self._update_status(
-                                    f"⏱️ 시작일 이전 구간이 연속 확인되어 종료합니다. "
-                                    f"(마지막 기준: {page_min_date.strftime('%Y년 %m월 %d일')})"
-                                )
-                                should_continue = False
-                                is_finished = True
+                            should_continue = False
+                            is_finished = True
+                            break
+                        elif page_min_date < range_start_d:
+                            self._update_status(
+                                f"⏱️ 게시판 글 날짜가 수집 시작일보다 과거에 도달하여 수집을 완료합니다. (최저 날짜: {page_min_date.strftime('%Y-%m-%d')})"
+                            )
+                            should_continue = False
+                            is_finished = True
                         else:
                             consecutive_before_start_pages = 0
                     else:
-                        # 페이지 내 날짜가 전부 range_end_d 초과(최신 댓글 범프)인 경우
-                        # 종료 카운터를 올리지 않고 계속 탐색
                         consecutive_before_start_pages = 0
                 else:
                     consecutive_no_date_pages += 1

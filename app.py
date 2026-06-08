@@ -965,6 +965,19 @@ def _inject_cafe_connect_history_suggestions(cafe_names: list[str], cafe_urls: l
 if "settings_collapsed" not in st.session_state:
     st.session_state.settings_collapsed = True
 
+if "auto_login_expanded" not in st.session_state:
+    st.session_state.auto_login_expanded = False
+
+if "naver_id_input" not in st.session_state:
+    st.session_state.naver_id_input = str(config.get("naver_id", "") or "")
+if "naver_pw_input" not in st.session_state:
+    st.session_state.naver_pw_input = str(config.get("naver_pw", "") or "")
+if "auto_login_enabled_input" not in st.session_state:
+    st.session_state.auto_login_enabled_input = bool(config.get("auto_login_enabled", True))
+
+def on_auto_login_change():
+    st.session_state.auto_login_expanded = True
+
 def toggle_settings():
     st.session_state.settings_collapsed = not st.session_state.settings_collapsed
 
@@ -1279,31 +1292,31 @@ with _t1:
         _cur_cafe_sig = _cafe_url_identity(cafe_url)
         st.session_state._extracted_boards_cafe_sig = _cur_cafe_sig or st.session_state.get("_extracted_boards_cafe_sig")
 
-        with st.expander("🔐 자동로그인 설정", expanded=False):
+        with st.expander("🔐 자동로그인 설정", expanded=st.session_state.auto_login_expanded):
             if st.session_state.pop("_pending_clear_auto_login_inputs", False):
                 st.session_state.auto_login_enabled_input = False
                 st.session_state.naver_id_input = ""
                 st.session_state.naver_pw_input = ""
             auto_login_enabled = st.checkbox(
                 "브라우저 열 때 자동로그인 실행",
-                value=bool(config.get("auto_login_enabled", True)),
                 key="auto_login_enabled_input",
+                on_change=on_auto_login_change,
                 help="1단계 브라우저 열기 직후 저장된 계정으로 로그인을 시도합니다.",
             )
             _al_input_col, _al_btn_col = st.columns([4, 1], gap="small")
             with _al_input_col:
                 naver_id = st.text_input(
                     "네이버 아이디",
-                    value=str(config.get("naver_id", "") or ""),
                     key="naver_id_input",
                     placeholder="아이디 입력",
+                    on_change=on_auto_login_change,
                 )
                 naver_pw = st.text_input(
                     "네이버 비밀번호",
-                    value=str(config.get("naver_pw", "") or ""),
                     key="naver_pw_input",
                     type="password",
                     placeholder="비밀번호 입력",
+                    on_change=on_auto_login_change,
                 )
             if auto_login_enabled and (not naver_id or not naver_pw):
                 st.warning("자동로그인을 켜려면 아이디/비밀번호를 모두 입력해주세요.")
@@ -1320,11 +1333,13 @@ with _t1:
                         save_config(cfg_now)
                         config.update(cfg_now)
                         st.session_state.auto_login_after_reset_save_mode = False
+                        st.session_state.auto_login_expanded = False
                         st.session_state._auto_login_save_ack = True
                         st.rerun()
                     else:
                         st.session_state._pending_clear_auto_login_inputs = True
                         st.session_state.auto_login_after_reset_save_mode = True
+                        st.session_state.auto_login_expanded = True
                         st.session_state._auto_login_reset_ack = True
                         st.rerun()
             if st.session_state.get("_auto_login_reset_ack"):
@@ -1815,6 +1830,36 @@ with _t3:
                 st.button("▼" if st.session_state.settings_collapsed else "▲", key="btn_fold_3", on_click=toggle_settings)
 
         st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
+        
+        # [NEW] Downloads Folder Opener Button
+        c_open1, c_open2 = st.columns(2)
+        with c_open1:
+            if st.button("📁 DB 저장폴더 열기", use_container_width=True, key="open_main_db_dir"):
+                try:
+                    dir_path = os.path.dirname(os.path.abspath(DB_PATH))
+                    if sys.platform == "win32":
+                        os.startfile(dir_path)
+                    elif sys.platform == "darwin":
+                        subprocess.Popen(["open", dir_path])
+                    else:
+                        subprocess.Popen(["xdg-open", dir_path])
+                    st.toast("📂 DB 저장폴더를 열었습니다.")
+                except Exception as e:
+                    st.error(f"폴더 열기 실패: {e}")
+        with c_open2:
+            if st.button("📥 다운로드 폴더 열기", use_container_width=True, key="open_main_download_dir"):
+                try:
+                    download_path = os.path.join(os.path.expanduser("~"), "Downloads")
+                    if sys.platform == "win32":
+                        os.startfile(download_path)
+                    elif sys.platform == "darwin":
+                        subprocess.Popen(["open", download_path])
+                    else:
+                        subprocess.Popen(["xdg-open", download_path])
+                    st.toast("📂 다운로드 폴더를 열었습니다.")
+                except Exception as e:
+                    st.error(f"다운로드 폴더 열기 실패: {e}")
+
         st.checkbox(
             "카페 수집 게시글·댓글 데이터를 모두 삭제합니다. 필요하면 먼저 CSV/리포트를 내려받으세요.",
             key="main_cafe_db_reset_confirm",
