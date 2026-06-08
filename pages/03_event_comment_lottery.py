@@ -1,4 +1,4 @@
-﻿import streamlit as st
+import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 import sqlite3
@@ -463,11 +463,87 @@ def _run_mentor_only_on_main_thread(payload: dict, *, event_db_path: str) -> Non
         )
         st.rerun()
         return
+
     update_logs("조건(3) 등급별 방문수 수집을 시작합니다.")
+
+    # ── [실시간 모니터링 UI 플레이스홀더 설정] ──
+    prog = st.progress(0.0)
+    _metrics_placeholder = st.empty()
+    _detail_placeholder = st.empty()
+
+    state = {
+        "progress_ratio": 0.0,
+        "current_phase": "수집 시작 대기 중…",
+        "rows_collected": 0,
+        "accumulated_rows": 0,
+        "current_grade": ""
+    }
+
+    # 등급 토큰 파싱
+    grades = cr.parse_mentor_grade_tokens(grades_raw)
+    total_grades = len(grades) if grades else 1
+
+    def update_mentor_ui():
+        elapsed = time.time() - t0
+        prog.progress(max(0.0, min(1.0, state["progress_ratio"])))
+        
+        with _metrics_placeholder.container():
+            _mc1, _mc2, _mc3, _mc4 = st.columns([1, 1, 1, 1.4])
+            _g_disp = f"'{state['current_grade']}'" if state["current_grade"] else "순회 대기"
+            _mc1.metric("등급별 방문수", _g_disp)
+            _mc2.metric("실시간 수집 행", f"{state['rows_collected']:,}건")
+            _mc3.metric("경과 시간", _fmt_event_duration(elapsed))
+            _mc4.markdown(
+                f"<div style='background:linear-gradient(180deg,#f8fbff 0%,#f3f7fc 100%);"
+                f"border:1px solid #dbe5f2;border-radius:12px;padding:12px 14px;"
+                f"box-shadow:0 2px 8px rgba(15,23,42,0.04);min-height:90px;"
+                f"display:flex;flex-direction:column;justify-content:center;'>"
+                f"<div style='font-size:0.86rem;color:#64748b;font-weight:700;'>예상 남은 시간</div>"
+                f"<div style='font-size:1.25rem;line-height:1.35;color:#0f172a;font-weight:800;'>"
+                f"등급·페이지 수에 따라 상이</div></div>",
+                unsafe_allow_html=True,
+            )
+        _detail_placeholder.markdown(
+            f"<div style='font-size:0.95rem;color:#334155;font-weight:600;padding:2px 0 6px 0;'>"
+            f"{state['current_phase']}</div>",
+            unsafe_allow_html=True,
+        )
+
+    # 초기 렌더링
+    update_mentor_ui()
+
+    def custom_mentor_callback(msg: str | None):
+        if not msg:
+            return
+        
+        # 일반 로그는 standard update_logs 실행
+        update_logs(msg)
+        
+        # 특수 상태 메시지 파싱
+        if msg.startswith("__MENTOR_PROGRESS_PHASE__"):
+            phase_text = msg.split(":", 1)[1]
+            state["current_phase"] = phase_text
+            update_mentor_ui()
+        elif msg.startswith("__MENTOR_PROGRESS_ROWS__"):
+            rows_cnt = int(msg.split(":", 1)[1])
+            state["rows_collected"] = state["accumulated_rows"] + rows_cnt
+            update_mentor_ui()
+        elif "필터 적용 시도" in msg:
+            for g in grades:
+                if f"'{g}'" in msg:
+                    state["current_grade"] = g
+                    g_idx = grades.index(g)
+                    state["progress_ratio"] = g_idx / total_grades
+                    break
+            update_mentor_ui()
+        elif "페이지 순회 종료" in msg:
+            state["accumulated_rows"] = state["rows_collected"]
+            update_mentor_ui()
+
     err = None
     res = None
     try:
-        cr.set_status_callback(update_logs)
+        cr.set_status_callback(custom_mentor_callback)
         cr.set_stop_check_callback(lambda: bool(st.session_state.get("event_stop_requested", False)))
         res = cr.scrape_mentor_visit_counts(cafe_url, grades_raw)
     except Exception as e:
@@ -482,6 +558,12 @@ def _run_mentor_only_on_main_thread(payload: dict, *, event_db_path: str) -> Non
             cr.set_status_callback(update_logs)
         except Exception:
             pass
+
+    if not err:
+        state["progress_ratio"] = 1.0
+        state["current_phase"] = "수집 완료!"
+        update_mentor_ui()
+
     _finalize_mentor_only_run(err=err, res=res, t0=t0, event_db_path=event_db_path)
     st.rerun()
 
