@@ -101,4 +101,3 @@ def resolve_commenter_db_path(config_commenter_db_path: str | None = None) -> Pa
 
     p = (get_project_root() / "data" / "auto_commenter.db").resolve()
     return _safe_mkdir(p)
-

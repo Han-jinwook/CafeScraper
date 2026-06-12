@@ -2116,11 +2116,7 @@ class NaverCafeCrawler:
                 if self.debug_mode:
                     self._update_status("[디버그] ManageMember: iframe 미발견 — 최상위 문서에서 계속")
 
-            # SPA 형식은 iframe 없음 (이미 URL 정규화했으므로 여기는 안 올 것)
-            if "/ca-fe/" in current_url or "/f-e/" in current_url:
-                if self.debug_mode:
-                    self._update_status(f"[디버그] ⚠️ SPA URL 감지, iframe 스킵: {current_url[:50]}...")
-                return True
+            # PC 버전에서는 SPA 주소(ca-fe/f-e)이더라도 top-level 아래에 cafe_main iframe이 존재하므로 iframe 스킵하지 않음
             
             # 표준 PC 버전: cafe_main 우선, 실패 시 mainFrame·name·src 매칭 (실패 시 True로 위장하지 않음)
             _pc_candidates: List[Tuple[Any, str]] = [
@@ -3111,23 +3107,30 @@ class NaverCafeCrawler:
 
     def _convert_to_legacy_board_url(self, url: str) -> str:
         """
-        SPA URL(f-e)을 Legacy URL(ArticleList.nhn)로 변환하여
+        SPA URL(f-e/ca-fe)을 Legacy URL(ArticleList.nhn)로 변환하여
         userDisplay=50 등의 파라미터가 잘 먹히도록 함.
         """
         try:
-            # https://cafe.naver.com/f-e/cafes/27870803/menus/0
-            if "/f-e/cafes/" in url and "/menus/" in url:
-                m = re.search(r"/cafes/(\d+)/menus/(\d+)", url)
-                if m:
-                    club_id = m.group(1)
-                    menu_id = m.group(2)
-                    
-                    # menu_id가 0이면(전체글보기), menuid 파라미터를 빼야 정상 동작할 수 있음
-                    # 또는 search.menuid를 넣지 않고 clubid만으로 전체보기가 됨
+            # https://cafe.naver.com/f-e/cafes/27870803/menus/0 또는 /ca-fe/cafes/...
+            if "/cafes/" in url:
+                m_menu = re.search(r"/cafes/(\d+)/menus/(\d+)", url)
+                if m_menu:
+                    club_id = m_menu.group(1)
+                    menu_id = m_menu.group(2)
                     base = f"https://cafe.naver.com/ArticleList.nhn?search.clubid={club_id}&search.boardtype=L"
                     if menu_id != "0":
                         base += f"&search.menuid={menu_id}"
-                    
+                    return base
+                
+                m_articles = re.search(r"/cafes/(\d+)", url)
+                if m_articles:
+                    club_id = m_articles.group(1)
+                    parsed = urlparse(url)
+                    q = {k.lower(): v[0] for k, v in parse_qs(parsed.query).items()}
+                    menu_id = q.get("menuid") or q.get("search.menuid") or "0"
+                    base = f"https://cafe.naver.com/ArticleList.nhn?search.clubid={club_id}&search.boardtype=L"
+                    if menu_id != "0":
+                        base += f"&search.menuid={menu_id}"
                     return base
         except:
             pass
@@ -3136,28 +3139,59 @@ class NaverCafeCrawler:
     def _build_board_page_url(self, board_url: str, page_no: int, user_display: int = 50) -> str:
         """
         게시판 페이지 URL 생성.
-        - Legacy(ArticleList.nhn): search.page 우선
-        - 기타 URL: page 파라미터 사용
-        - userDisplay=50 항상 강제
+        - 원래 요청이 legacy(ArticleList.nhn) 형식이거나, legacy로 변환 가능한 경우에는 
+          브라우저 상태와 관계없이 항상 legacy URL 패턴을 반환하여 iframe 내부 오작동 및 흰 화면(Blank Page) 문제를 방지합니다.
         """
         try:
+            club_id = None
+            menu_id = "0"
+            
             parsed = urlparse(str(board_url))
             q_items = parse_qsl(parsed.query, keep_blank_values=True)
-            q: Dict[str, str] = {str(k): str(v) for k, v in q_items}
+            q = {str(k).lower(): str(v) for k, v in q_items}
+            
+            if "search.clubid" in q:
+                club_id = q["search.clubid"]
+            elif "clubid" in q:
+                club_id = q["clubid"]
+                
+            if "search.menuid" in q:
+                menu_id = q["search.menuid"]
+            elif "menuid" in q:
+                menu_id = q["menuid"]
+                
+            if not club_id:
+                m_club = re.search(r"/cafes/(\d+)", board_url) or re.search(r"/ca-fe/cafes/(\d+)", board_url)
+                if m_club:
+                    club_id = m_club.group(1)
+            
+            m_menu = re.search(r"/menus/(\d+)", board_url)
+            if m_menu:
+                menu_id = m_menu.group(1)
+                
+            is_spa_mode = False
+            # 원래 전달받은 board_url이 명시적으로 SPA 형식인 경우에만 SPA URL을 생성합니다.
+            if club_id and (f"/f-e/cafes/{club_id}" in board_url or f"/ca-fe/cafes/{club_id}" in board_url):
+                is_spa_mode = True
 
+            if is_spa_mode and club_id:
+                if not menu_id or menu_id == "0":
+                    return f"https://cafe.naver.com/ca-fe/cafes/{club_id}/articles?page={page_no}"
+                return f"https://cafe.naver.com/f-e/cafes/{club_id}/menus/{menu_id}?viewType=L&page={page_no}"
+                
+            # Legacy iframe 모드용 URL 생성
             q["userDisplay"] = str(int(user_display))
             if "ArticleList.nhn" in (parsed.path or ""):
                 q["search.page"] = str(int(page_no))
-                # 일부 환경 호환을 위해 page도 함께 유지
                 q["page"] = str(int(page_no))
             else:
                 q["page"] = str(int(page_no))
-
             new_query = urlencode(q, doseq=True)
             return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
         except:
             sep = "&" if "?" in str(board_url) else "?"
             return f"{board_url}{sep}page={int(page_no)}&userDisplay={int(user_display)}"
+
 
     def recommend_start_page(
         self,

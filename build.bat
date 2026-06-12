@@ -63,6 +63,9 @@ if exist "%~dp0.venv\Scripts\activate.bat" (
     echo [WARN] .venv virtual environment not found. Using system Python.
 )
 
+echo [BUILD] Patching Streamlit index.html in virtual environment to prevent ghost sidebar/skeleton...
+python -c "import os; import streamlit; p = os.path.join(os.path.dirname(streamlit.__file__), 'static', 'index.html'); content = open(p, 'r', encoding='utf-8').read() if os.path.exists(p) else ''; style = '<style>[data-testid=\'stSidebar\'],section[data-testid=\'stSidebar\'],div[data-testid=\'stSidebar\'],[data-testid=\'collapsedControl\'],[data-testid=\'stSidebarNav\'],[data-testid=\'stSidebarNavItems\'],[data-testid=\'stSkeleton\']{display:none !important;min-width:0 !important;width:0 !important;}</style>'; new_content = content.replace('</head>', style + '</head>') if style not in content and '</head>' in content else content; open(p, 'w', encoding='utf-8').write(new_content) if new_content != content else None"
+
 if not exist "%~dp0cafescraper.spec" (
 
     echo [ERROR] cafescraper.spec is missing in project root. PyInstaller needs it — check git/sparse-checkout.

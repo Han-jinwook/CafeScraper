@@ -403,6 +403,163 @@ def load_commenter_targets(db_path: str) -> list[dict[str, Any]]:
         conn.close()
 
 
+def init_booster_db(db_path: str) -> None:
+    """조회수 부스터용 DB 및 테이블 초기화."""
+    conn = sqlite3.connect(db_path, timeout=30.0)
+    cur = conn.cursor()
+    try:
+        cur.execute("PRAGMA journal_mode=WAL;")
+        cur.execute("PRAGMA synchronous=NORMAL;")
+        cur.execute("PRAGMA busy_timeout=30000;")
+    except Exception:
+        pass
+    
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS booster_targets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            post_id TEXT,
+            url TEXT UNIQUE,
+            nickname TEXT,
+            title TEXT,
+            date TEXT,
+            board_name TEXT,
+            current_view_count INTEGER DEFAULT 0,
+            boosted_count INTEGER DEFAULT 0,
+            last_boosted_at TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+
+def replace_booster_targets(db_path: str, rows: list[dict]) -> None:
+    """새로 수집된 타겟글로 스냅샷을 교체하되, 기존에 성공한 결과(boosted_count, last_boosted_at)는 보존."""
+    conn = sqlite3.connect(db_path, timeout=30.0)
+    cur = conn.cursor()
+    try:
+        # 1. 기존 결과 백업
+        cur.execute("SELECT url, boosted_count, last_boosted_at FROM booster_targets")
+        history = {row[0]: (row[1], row[2]) for row in cur.fetchall() if row[0]}
+        
+        # 2. 기존 테이블 비우기
+        cur.execute("DELETE FROM booster_targets")
+        try:
+            cur.execute("DELETE FROM sqlite_sequence WHERE name = 'booster_targets'")
+        except Exception:
+            pass
+            
+        # 3. 새로운 로우 삽입 (백업 데이터 결합)
+        for r in rows:
+            url = str(r.get("url") or "").strip()
+            prev_boost = history.get(url)
+            boosted_count = prev_boost[0] if prev_boost else 0
+            last_boosted_at = prev_boost[1] if prev_boost else ""
+            
+            cur.execute(
+                """
+                INSERT INTO booster_targets (
+                    post_id, url, nickname, title, date, board_name,
+                    current_view_count, boosted_count, last_boosted_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(r.get("post_id") or ""),
+                    url,
+                    str(r.get("nickname") or ""),
+                    str(r.get("title") or ""),
+                    str(r.get("date") or ""),
+                    str(r.get("board_name") or ""),
+                    int(r.get("current_view_count") or r.get("view_count") or 0),
+                    boosted_count,
+                    last_boosted_at
+                )
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def update_booster_target_status(db_path: str, url: str, view_count: int, is_success: bool = True) -> None:
+    """특정 게시글의 조회수 부스팅 성공 시 boosted_count 증가 및 정보 갱신."""
+    conn = sqlite3.connect(db_path, timeout=30.0)
+    cur = conn.cursor()
+    try:
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        if is_success:
+            cur.execute(
+                """
+                UPDATE booster_targets
+                SET current_view_count = ?,
+                    boosted_count = boosted_count + 1,
+                    last_boosted_at = ?
+                WHERE url = ?
+                """,
+                (view_count, now_str, url)
+            )
+        else:
+            cur.execute(
+                """
+                UPDATE booster_targets
+                SET current_view_count = ?
+                WHERE url = ?
+                """,
+                (view_count, url)
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def load_booster_targets(db_path: str) -> list[dict[str, Any]]:
+    """저장된 타겟 글 목록을 행 dict 리스트로 로드."""
+    conn = sqlite3.connect(db_path, timeout=30.0)
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT post_id, url, nickname, title, date, board_name,
+                   current_view_count, boosted_count, last_boosted_at
+            FROM booster_targets
+            ORDER BY id ASC
+            """
+        )
+        cols = (
+            "post_id",
+            "url",
+            "nickname",
+            "title",
+            "date",
+            "board_name",
+            "current_view_count",
+            "boosted_count",
+            "last_boosted_at",
+        )
+        out: list[dict[str, Any]] = []
+        for row in cur.fetchall():
+            out.append(dict(zip(cols, row)))
+        return out
+    finally:
+        conn.close()
+
+
+def clear_booster_targets(db_path: str) -> None:
+    """타겟 테이블 삭제."""
+    conn = sqlite3.connect(db_path, timeout=30.0)
+    cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM booster_targets")
+        try:
+            cur.execute("DELETE FROM sqlite_sequence WHERE name = 'booster_targets'")
+        except Exception:
+            pass
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def _hash_content(s: str) -> str:
     s = (s or "").strip().encode("utf-8", errors="ignore")
     return hashlib.sha1(s).hexdigest()[:16]

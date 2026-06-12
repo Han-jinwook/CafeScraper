@@ -99,13 +99,35 @@ def render_main_top_nav(*, active: str) -> None:
                 opacity: 1 !important;
                 cursor: default !important;
             }}
+
+            /* 전 페이지 공통: 드롭다운(selectbox) 호버 시 입력(I-beam) 커서가 아닌 포인터 적용 */
+            div[data-baseweb="select"],
+            div[data-baseweb="select"] * {{
+                cursor: pointer !important;
+            }}
+            /* 호버 시 옅은 배경색으로 시각적 피드백 */
+            div[data-baseweb="select"]:hover > div {{
+                background-color: #f0f2f6 !important;
+                transition: background-color 0.2s ease;
+            }}
+
+            /* 드롭다운 옵션 목록에서 선택된 항목 하이라이트 */
+            li[role="option"][aria-selected="true"] {{
+                background-color: #eef4ff !important;
+                color: #1e3a8a !important;
+                font-weight: 700 !important;
+            }}
+            /* 옵션 목록 호버 피드백 */
+            li[role="option"]:hover {{
+                background-color: #f8fafc !important;
+            }}
         </style>
         """,
         unsafe_allow_html=True,
     )
 
     with st.container(key=_TOP_NAV_CONTAINER_KEY):
-        cols = st.columns(3, gap="small")
+        cols = st.columns(4, gap="small")
         for col, (nav_key, page_path, label) in zip(cols, _NAV_PAGE_LINKS, strict=True):
             with col:
                 go = st.button(

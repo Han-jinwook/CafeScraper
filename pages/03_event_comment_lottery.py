@@ -2690,7 +2690,7 @@ if st.session_state.event_run_pending and st.session_state.event_running:
                         if post_nick_filter_rt == "exclude":
                             if post_author_norm and post_author_norm in post_nick_set:
                                 excluded_post_total += 1
-                                update_logs(f"⏭️ 게시글 스킵(제외 목록·작성자): {(art.get('title') or '')[:30]}...")
+                                update_logs(f"⏭️ 게시글 스킵(제외 목록·작성자): {(art.get('title') or '')[:20]}... (작성자: {post_author_nick})")
                                 continue
                             if (not post_author_norm) or (post_author_norm == "unknown"):
                                 try:
@@ -2705,7 +2705,7 @@ if st.session_state.event_run_pending and st.session_state.event_running:
                                     if detail_author_norm and detail_author_norm in post_nick_set:
                                         excluded_post_total += 1
                                         update_logs(
-                                            f"⏭️ 게시글 스킵(제외 목록·상세작성자): {(art.get('title') or '')[:30]}..."
+                                            f"⏭️ 게시글 스킵(제외 목록·상세작성자): {(art.get('title') or '')[:20]}... (작성자: {detail_author})"
                                         )
                                         continue
                                 except Exception:
@@ -2717,7 +2717,7 @@ if st.session_state.event_run_pending and st.session_state.event_running:
                                 and post_author_norm not in post_nick_set
                             ):
                                 excluded_post_total += 1
-                                update_logs(f"⏭️ 게시글 스킵(포함 목록 외·작성자): {(art.get('title') or '')[:30]}...")
+                                update_logs(f"⏭️ 게시글 스킵(포함 목록 외·작성자): {(art.get('title') or '')[:20]}... (작성자: {post_author_nick})")
                                 continue
                             if (not post_author_norm) or (post_author_norm == "unknown"):
                                 try:
@@ -2732,7 +2732,7 @@ if st.session_state.event_run_pending and st.session_state.event_running:
                                     if detail_author_norm and detail_author_norm not in post_nick_set:
                                         excluded_post_total += 1
                                         update_logs(
-                                            f"⏭️ 게시글 스킵(포함 목록 외·상세작성자): {(art.get('title') or '')[:30]}..."
+                                            f"⏭️ 게시글 스킵(포함 목록 외·상세작성자): {(art.get('title') or '')[:20]}... (작성자: {detail_author})"
                                         )
                                         continue
                                 except Exception:
@@ -2897,15 +2897,17 @@ if st.session_state.event_run_pending and st.session_state.event_running:
                                 if post_nick_filter_rt == "exclude":
                                     if detail_author_norm and detail_author_norm in post_nick_set:
                                         excluded_post_total += 1
+                                        _detail_author_nick = str((detail or {}).get("nickname") or "")
                                         update_logs(
-                                            f"⏭️ 게시글 스킵(제외 목록·상세작성자): {(art.get('title') or '')[:30]}..."
+                                            f"⏭️ 게시글 스킵(제외 목록·상세작성자): {(art.get('title') or '')[:20]}... (작성자: {_detail_author_nick})"
                                         )
                                         continue
                                 else:
                                     if detail_author_norm and detail_author_norm not in post_nick_set:
                                         excluded_post_total += 1
+                                        _detail_author_nick = str((detail or {}).get("nickname") or "")
                                         update_logs(
-                                            f"⏭️ 게시글 스킵(포함 목록 외·상세작성자): {(art.get('title') or '')[:30]}..."
+                                            f"⏭️ 게시글 스킵(포함 목록 외·상세작성자): {(art.get('title') or '')[:20]}... (작성자: {_detail_author_nick})"
                                         )
                                         continue
                             save_event_post_analysis(
