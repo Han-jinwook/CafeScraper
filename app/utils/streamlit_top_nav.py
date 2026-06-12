@@ -127,7 +127,7 @@ def render_main_top_nav(*, active: str) -> None:
     )
 
     with st.container(key=_TOP_NAV_CONTAINER_KEY):
-        cols = st.columns(4, gap="small")
+        cols = st.columns(len(_NAV_PAGE_LINKS), gap="small")
         for col, (nav_key, page_path, label) in zip(cols, _NAV_PAGE_LINKS, strict=True):
             with col:
                 go = st.button(
