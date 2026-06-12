@@ -511,12 +511,12 @@ def _run_mentor_only_on_main_thread(payload: dict, *, event_db_path: str) -> Non
             _mc2.metric("실시간 수집 행", f"{state['rows_collected']:,}건")
             _mc3.metric("경과 시간", _fmt_event_duration(elapsed))
             _mc4.markdown(
-                f"<div style='background:linear-gradient(180deg,#f8fbff 0%,#f3f7fc 100%);"
-                f"border:1px solid #dbe5f2;border-radius:12px;padding:12px 14px;"
-                f"box-shadow:0 2px 8px rgba(15,23,42,0.04);min-height:90px;"
+                f"<div style='background-color:#ffffff;"
+                f"border:1px solid #cbd5e1;border-radius:8px;padding:12px 14px;"
+                f"box-shadow:none;min-height:90px;"
                 f"display:flex;flex-direction:column;justify-content:center;'>"
-                f"<div style='font-size:0.86rem;color:#64748b;font-weight:700;'>예상 남은 시간</div>"
-                f"<div style='font-size:1.25rem;line-height:1.35;color:#0f172a;font-weight:800;'>"
+                f"<div style='font-size:0.85rem;color:#475569;font-weight:600;'>예상 남은 시간</div>"
+                f"<div style='font-size:1.25rem;line-height:1.35;color:#0f172a;font-weight:700;'>"
                 f"등급·페이지 수에 따라 상이</div></div>",
                 unsafe_allow_html=True,
             )
@@ -2402,12 +2402,12 @@ if st.session_state.event_run_pending and st.session_state.event_running:
                         _mc2.metric("댓글 조회", f"{_seen:,}개", delta=f"저장 {_saved:,}개")
                     _mc3.metric("경과 시간", _fmt_duration(elapsed))
                 _mc4.markdown(
-                    f"<div style='background:linear-gradient(180deg,#f8fbff 0%,#f3f7fc 100%);"
-                    f"border:1px solid #dbe5f2;border-radius:12px;padding:12px 14px;"
-                    f"box-shadow:0 2px 8px rgba(15,23,42,0.04);min-height:90px;"
+                    f"<div style='background-color:#ffffff;"
+                    f"border:1px solid #cbd5e1;border-radius:8px;padding:12px 14px;"
+                    f"box-shadow:none;min-height:90px;"
                     f"display:flex;flex-direction:column;justify-content:center;'>"
-                    f"<div style='font-size:0.86rem;color:#64748b;font-weight:700;'>예상 남은 시간</div>"
-                    f"<div style='font-size:1.25rem;line-height:1.35;color:#0f172a;font-weight:800;'>"
+                    f"<div style='font-size:0.85rem;color:#475569;font-weight:600;'>예상 남은 시간</div>"
+                    f"<div style='font-size:1.25rem;line-height:1.35;color:#0f172a;font-weight:700;'>"
                     f"{eta_str}{eta_total_str}</div></div>",
                     unsafe_allow_html=True,
                 )

@@ -16,7 +16,11 @@ from app.utils.app_version import read_app_version
 from app.utils.paths import get_config_path, get_logs_dir, get_project_root, resolve_db_path
 from app.utils.streamlit_input_history import inject_connect_history_suggestions
 from app.utils.streamlit_brand import render_logo_png
-from app.utils.streamlit_top_nav import render_main_top_nav, render_settings_card_title
+from app.utils.streamlit_top_nav import (
+    render_main_top_nav,
+    render_settings_card_title,
+    inject_settings_three_cards_css,
+)
 from app.utils.naver_login import (
     _has_naver_login_cookie,
     _is_captcha_like_page,
@@ -37,57 +41,49 @@ st.set_page_config(
 # 커스텀 CSS: 판매용 UI 톤 정리(기능 영향 없음)
 st.markdown("""
 <style>
+    /* 전체 배경을 연한 회색으로 지정 */
+    [data-testid="stAppViewContainer"] {
+        background-color: #f1f4f9 !important;
+    }
+
     /* 사이드바 완전 숨김 */
     [data-testid="stSidebar"] { display: none !important; }
     [data-testid="collapsedControl"] { display: none !important; }
 
-    /* 본문 가로폭·패딩: render_main_top_nav()가 `.block-container`로 전 페이지 통일 */
-
-    /* 제목/소제목 간격 정리 */
-    h1, h2, h3 {
-        letter-spacing: -0.01em;
-    }
-    h2 {
-        margin-top: 0.2rem !important;
-        margin-bottom: 0.35rem !important;
-    }
-    h3 {
-        margin-top: 0.8rem !important;
-        margin-bottom: 0.35rem !important;
+    /* Streamlit 기본 타이포그래피 마진 존중 (H1, H2, H3 오버라이드 최소화) */
+    h1, h2, h3, h4 {
+        color: #1e3a8a !important; /* 딥 네이비 포인트 */
+        font-weight: 700 !important;
     }
 
     /* 구분선 톤 다운 */
     hr {
-        margin: 0.45rem 0 0.55rem 0 !important;
-        border-color: #e7e9ef !important;
+        margin: 0.8rem 0 !important;
+        border-color: #cbd5e1 !important;
     }
 
-    /* metric 카드 안정감 */
+    /* metric 카드: 깔끔한 평면 디자인 */
     div[data-testid="stMetric"] {
-        background: linear-gradient(180deg, #f8fbff 0%, #f3f7fc 100%);
-        border: 1px solid #dbe5f2;
-        border-radius: 12px;
-        padding: 12px 14px;
-        box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
-        min-height: 110px;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
+        background-color: #ffffff !important;
+        border: 1px solid #cbd5e1 !important;
+        border-radius: 8px !important;
+        padding: 12px 14px !important;
+        box-shadow: none !important;
+        min-height: 90px !important;
+        display: flex !important;
+        flex-direction: column !important;
+        justify-content: center !important;
     }
-    /* 항목(라벨)과 데이터(값) 시각 분리 */
     div[data-testid="stMetricLabel"] p {
-        font-size: 0.86rem !important;
-        color: #64748b !important;
-        font-weight: 700 !important;
-        letter-spacing: -0.01em;
+        font-size: 0.85rem !important;
+        color: #475569 !important;
+        font-weight: 600 !important;
     }
     div[data-testid="stMetricValue"] {
-        font-size: 1.75rem !important;
-        line-height: 1.2 !important;
+        font-size: 1.6rem !important;
         color: #0f172a !important;
-        font-weight: 800 !important;
+        font-weight: 700 !important;
     }
-    /* 긴 시간 텍스트도 말줄임(...) 없이 보이게 */
     div[data-testid="stMetricValue"],
     div[data-testid="stMetricValue"] * {
         white-space: normal !important;
@@ -96,139 +92,106 @@ st.markdown("""
         word-break: keep-all !important;
     }
 
-    /* 버튼 통일 */
-    div.stButton > button {
-        min-height: 42px;
-        border-radius: 9px;
-        font-weight: 600;
+    /* 입력창 및 텍스트 영역 테두리 명확화 */
+    .stTextInput input, 
+    .stDateInput input, 
+    .stNumberInput input, 
+    .stTextArea textarea {
+        border: 1px solid #cbd5e1 !important;
+        border-radius: 6px !important;
+        background-color: #ffffff !important;
+        color: #0f172a !important;
+        padding: 0.5rem 0.75rem !important;
+    }
+    .stTextInput input:focus, 
+    .stDateInput input:focus, 
+    .stNumberInput input:focus, 
+    .stTextArea textarea:focus {
+        border-color: #2563eb !important; /* 블루 포인트 */
+        box-shadow: 0 0 0 1px #2563eb !important;
+        outline: none !important;
     }
 
-    /* 탭 헤더 균형 */
-    button[data-baseweb="tab"] {
+    /* selectbox (드롭다운) 테두리 명확화 및 포인터 커서 */
+    div[data-baseweb="select"] {
+        border: 1px solid #cbd5e1 !important;
+        border-radius: 6px !important;
+        background-color: #ffffff !important;
+    }
+    div[data-baseweb="select"] > div {
+        border: none !important;
+        background-color: transparent !important;
+        cursor: pointer !important;
+    }
+    div[data-baseweb="select"] svg {
+        cursor: pointer !important;
+    }
+    div[data-baseweb="select"]:focus-within {
+        border-color: #2563eb !important;
+        box-shadow: 0 0 0 1px #2563eb !important;
+    }
+    div[data-baseweb="select"]:hover > div {
+        background-color: #f8fafc !important;
+    }
+
+    /* 버튼 스타일 단순화 */
+    div.stButton > button {
+        min-height: 40px;
+        border-radius: 6px;
         font-weight: 600;
+        border: 1px solid #cbd5e1 !important;
+        background-color: #ffffff !important;
+        color: #1e3a8a !important;
+        transition: all 0.2s ease;
+    }
+    div.stButton > button:hover {
+        background-color: #eef2f6 !important;
+        border-color: #2563eb !important;
+        color: #2563eb !important;
+    }
+    /* st.button의 primary 타입인 경우 딥 네이비 배경 적용 */
+    div.stButton > button[kind="primary"] {
+        background-color: #1e3a8a !important;
+        color: #ffffff !important;
+        border-color: #1e3a8a !important;
+    }
+    div.stButton > button[kind="primary"]:hover {
+        background-color: #1d4ed8 !important;
+        border-color: #1d4ed8 !important;
+    }
+
+    /* 탭 헤더 스타일 */
+    button[data-baseweb="tab"] {
+        font-weight: 600 !important;
+        color: #475569 !important;
+    }
+    button[data-baseweb="tab"][aria-selected="true"] {
+        color: #1e3a8a !important;
+        border-bottom-color: #1e3a8a !important;
     }
 
     /* 에디터/테이블 외곽 정리 */
     div[data-testid="stDataFrame"],
     div[data-testid="stDataEditor"] {
-        border: 1px solid #e5e8ee;
-        border-radius: 10px;
+        border: 1px solid #cbd5e1 !important;
+        border-radius: 8px !important;
         overflow: hidden;
     }
 
-    /* 게시글/댓글 테이블 스크롤바: 두껍게 + 상시 노출 */
+    /* 스크롤바 디자인 단순화 */
     div[data-testid="stDataFrame"] [style*="overflow"],
     div[data-testid="stDataEditor"] [style*="overflow"] {
-        overflow: scroll !important;
-        scrollbar-gutter: stable both-edges;
-        scrollbar-width: auto;
-        scrollbar-color: #9aa4b2 #eef2f7;
-    }
-    div[data-testid="stDataFrame"] *::-webkit-scrollbar,
-    div[data-testid="stDataEditor"] *::-webkit-scrollbar {
-        width: 14px;
-        height: 14px;
-    }
-    div[data-testid="stDataFrame"] *::-webkit-scrollbar-thumb,
-    div[data-testid="stDataEditor"] *::-webkit-scrollbar-thumb {
-        background: #9aa4b2;
-        border-radius: 999px;
-        border: 3px solid #eef2f7;
-    }
-    div[data-testid="stDataFrame"] *::-webkit-scrollbar-track,
-    div[data-testid="stDataEditor"] *::-webkit-scrollbar-track {
-        background: #eef2f7;
-        border-radius: 999px;
-    }
-    div[data-testid="stDataFrame"] *::-webkit-scrollbar-corner,
-    div[data-testid="stDataEditor"] *::-webkit-scrollbar-corner {
-        background: #eef2f7;
+        overflow: auto !important;
     }
 
-    /* 게시글 선택 행 하이라이트 (지원 브라우저에서 :has 동작) */
-    div[data-testid="stDataEditor"] [role="row"]:has(input[type="checkbox"]:checked) {
-        background-color: #fff6cf !important;
-    }
-    div[data-testid="stDataEditor"] [role="row"]:has(input[type="checkbox"]:checked) [role="gridcell"] {
-        background-color: #fff6cf !important;
-    }
-    /* data_editor DOM 변형 대응: 체크된 셀 + 같은 행의 뒤쪽 셀 하이라이트 */
-    div[data-testid="stDataEditor"] [role="gridcell"]:has(input[type="checkbox"]:checked),
-    div[data-testid="stDataEditor"] [role="gridcell"]:has(input[type="checkbox"]:checked) ~ [role="gridcell"] {
-        background-color: #fff2b3 !important;
-    }
-    /* streamlit 1.39 계열 체크박스(aria-checked) 대응 */
-    div[data-testid="stDataEditor"] [role="row"]:has([aria-checked="true"]) {
-        background-color: #fff2b3 !important;
-    }
-    div[data-testid="stDataEditor"] [role="row"]:has([aria-checked="true"]) [role="gridcell"] {
-        background-color: #fff2b3 !important;
-    }
-    div[data-testid="stDataEditor"] [role="gridcell"]:has([aria-checked="true"]),
-    div[data-testid="stDataEditor"] [role="gridcell"]:has([aria-checked="true"]) ~ [role="gridcell"] {
-        background-color: #fff2b3 !important;
-    }
-
-    /* 선택 컬럼(첫 번째 헤더) 아이콘/텍스트 완전 숨김 */
-    div[data-testid="stDataEditor"] [role="columnheader"]:first-child * {
-        display: none !important;
-    }
-    /* 선택 컬럼(첫 번째 열) 폭 최소화 */
-    div[data-testid="stDataEditor"] [role="columnheader"]:first-child,
-    div[data-testid="stDataEditor"] [role="row"] [role="gridcell"]:first-child {
-        min-width: 28px !important;
-        width: 28px !important;
-        max-width: 28px !important;
-        padding-left: 2px !important;
-        padding-right: 2px !important;
-    }
-    /* aria-colindex 기반으로도 동일 강제 (렌더러 차이 대응) */
-    div[data-testid="stDataEditor"] [role="columnheader"][aria-colindex="1"],
-    div[data-testid="stDataEditor"] [role="row"] [role="gridcell"][aria-colindex="1"] {
-        min-width: 28px !important;
-        width: 28px !important;
-        max-width: 28px !important;
-        padding-left: 2px !important;
-        padding-right: 2px !important;
-    }
-    div[data-testid="stDataEditor"] input[type="checkbox"] {
-        margin: 0 auto !important;
-    }
-    /* 체크 시 생기는 셀 포커스 사각 테두리 제거 */
-    div[data-testid="stDataEditor"] [role="gridcell"][aria-selected="true"],
-    div[data-testid="stDataEditor"] [role="gridcell"]:focus,
-    div[data-testid="stDataEditor"] [role="gridcell"]:focus-within,
-    div[data-testid="stDataEditor"] [role="columnheader"][aria-selected="true"],
-    div[data-testid="stDataEditor"] [role="columnheader"]:focus,
-    div[data-testid="stDataEditor"] [role="columnheader"]:focus-within {
-        outline: none !important;
-        box-shadow: none !important;
-        border-color: transparent !important;
-    }
-
-    /* expander/사이드바 카드 톤 */
+    /* expander 스타일 */
     div[data-testid="stExpander"] {
-        border: 1px solid #e6e8ef;
-        border-radius: 10px;
+        border: 1px solid #cbd5e1 !important;
+        border-radius: 8px !important;
+        background-color: #ffffff !important;
     }
 
-    /* selectbox 전체에 포인터 커서 */
-    div[data-baseweb="select"] > div {
-        cursor: pointer !important;
-    }
-
-    /* 드롭다운 화살표 아이콘에 포인터 커서 */
-    div[data-baseweb="select"] svg {
-        cursor: pointer !important;
-    }
-
-    /* hover 시 배경색 변경 */
-    div[data-baseweb="select"]:hover > div {
-        background-color: #f0f2f6 !important;
-        transition: background-color 0.2s ease;
-    }
-
-    /* 실행 중 중단 버튼(빨간색 강조) */
+    /* 실행 중 중단 버튼 (빨간색) */
     .st-key-stop_crawl_btn button {
         background-color: #dc2626 !important;
         color: #ffffff !important;
@@ -239,7 +202,7 @@ st.markdown("""
         border-color: #b91c1c !important;
     }
 </style>
-""", unsafe_allow_html=True)
+""""", unsafe_allow_html=True)
 
 # 프로젝트 루트 기준 경로 고정 (실행 위치가 달라도 DB/설정이 안 갈라지게)
 PROJECT_ROOT = get_project_root()
@@ -1005,204 +968,10 @@ st.markdown('''
         font-size: 1.1rem !important;
         margin: 0 !important;
     }
-    
-    /*
-     * 설정 3카드: Streamlit은 key를 `st-key-$$ID-<해시>-settings_card_N` 클래스로 붙임.
-     * 카드 루트가 곧 stVerticalBlock 이므로 줄 간격(gap)은 이 블록에 둔다 (자손 선택자만으론 루트에 안 먹음).
-     */
-    div[class*="st-key-"][class*="-settings_card_1"],
-    div[class*="st-key-"][class*="-settings_card_2"],
-    div[class*="st-key-"][class*="-settings_card_3"] {
-        background: #eef4ff !important;
-        border: 1px solid #cfdbf3 !important;
-        border-radius: 0.65rem !important;
-        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06) !important;
-        padding: 0.15rem !important;
-        box-sizing: border-box !important;
-        gap: 0.55rem !important;
-        row-gap: 0.55rem !important;
-    }
-    div[class*="st-key-"][class*="-settings_card_1"] [data-testid="stVerticalBlockBorderWrapper"],
-    div[class*="st-key-"][class*="-settings_card_2"] [data-testid="stVerticalBlockBorderWrapper"],
-    div[class*="st-key-"][class*="-settings_card_3"] [data-testid="stVerticalBlockBorderWrapper"] {
-        background: #eef4ff !important;
-        border-color: #cfdbf3 !important;
-        border-radius: 0.6rem !important;
-        padding: 0.58rem 1.1rem 0.72rem 1.1rem !important;
-        box-sizing: border-box !important;
-    }
-    div[class*="st-key-"][class*="-settings_card_1"] [data-testid="stVerticalBlock"],
-    div[class*="st-key-"][class*="-settings_card_2"] [data-testid="stVerticalBlock"],
-    div[class*="st-key-"][class*="-settings_card_3"] [data-testid="stVerticalBlock"] {
-        background: #eef4ff !important;
-        padding-left: 0 !important;
-        padding-right: 0 !important;
-        padding-top: 0 !important;
-        padding-bottom: 0 !important;
-        box-sizing: border-box !important;
-        gap: 0.42rem !important;
-    }
-    div[class*="st-key-"][class*="-settings_card_1"] [data-testid="stVerticalBlock"] [data-testid="stVerticalBlock"],
-    div[class*="st-key-"][class*="-settings_card_2"] [data-testid="stVerticalBlock"] [data-testid="stVerticalBlock"],
-    div[class*="st-key-"][class*="-settings_card_3"] [data-testid="stVerticalBlock"] [data-testid="stVerticalBlock"] {
-        gap: 0.42rem !important;
-    }
-    div[class*="st-key-"][class*="-settings_card_1"] .element-container,
-    div[class*="st-key-"][class*="-settings_card_2"] .element-container,
-    div[class*="st-key-"][class*="-settings_card_3"] .element-container {
-        margin-bottom: 0 !important;
-    }
-    div[class*="st-key-"][class*="-settings_card_1"] [data-testid="stCaptionContainer"],
-    div[class*="st-key-"][class*="-settings_card_2"] [data-testid="stCaptionContainer"],
-    div[class*="st-key-"][class*="-settings_card_3"] [data-testid="stCaptionContainer"] {
-        margin-top: 0 !important;
-        margin-bottom: 0.06rem !important;
-        padding: 0.06rem 0 0.12rem 0.12rem !important;
-    }
-    div[class*="st-key-"][class*="-settings_card_1"] [data-testid="stCaptionContainer"] p,
-    div[class*="st-key-"][class*="-settings_card_2"] [data-testid="stCaptionContainer"] p,
-    div[class*="st-key-"][class*="-settings_card_3"] [data-testid="stCaptionContainer"] p {
-        margin: 0 0 0.1rem 0 !important;
-        line-height: 1.45 !important;
-    }
-    div[class*="st-key-"][class*="-settings_card_1"] [data-testid="stWidgetLabel"],
-    div[class*="st-key-"][class*="-settings_card_2"] [data-testid="stWidgetLabel"],
-    div[class*="st-key-"][class*="-settings_card_3"] [data-testid="stWidgetLabel"] {
-        margin-bottom: 0.14rem !important;
-        margin-top: 0 !important;
-        padding: 0 0.05rem 0 0.12rem !important;
-    }
-    div[class*="st-key-"][class*="-settings_card_1"] .stTextInput,
-    div[class*="st-key-"][class*="-settings_card_2"] .stTextInput,
-    div[class*="st-key-"][class*="-settings_card_3"] .stTextInput,
-    div[class*="st-key-"][class*="-settings_card_1"] .stDateInput,
-    div[class*="st-key-"][class*="-settings_card_2"] .stDateInput,
-    div[class*="st-key-"][class*="-settings_card_3"] .stDateInput,
-    div[class*="st-key-"][class*="-settings_card_1"] .stTextArea,
-    div[class*="st-key-"][class*="-settings_card_2"] .stTextArea,
-    div[class*="st-key-"][class*="-settings_card_3"] .stTextArea,
-    div[class*="st-key-"][class*="-settings_card_1"] .stNumberInput,
-    div[class*="st-key-"][class*="-settings_card_2"] .stNumberInput,
-    div[class*="st-key-"][class*="-settings_card_3"] .stNumberInput {
-        margin-top: 0 !important;
-        margin-bottom: 0.06rem !important;
-    }
-    div[class*="st-key-"][class*="-settings_card_1"] [data-testid="stExpander"],
-    div[class*="st-key-"][class*="-settings_card_2"] [data-testid="stExpander"],
-    div[class*="st-key-"][class*="-settings_card_3"] [data-testid="stExpander"] {
-        margin-top: 0 !important;
-        margin-bottom: 0.34rem !important;
-    }
-    div[class*="st-key-"][class*="-settings_card_1"] [data-testid="stButton"],
-    div[class*="st-key-"][class*="-settings_card_2"] [data-testid="stButton"],
-    div[class*="st-key-"][class*="-settings_card_3"] [data-testid="stButton"] {
-        margin-top: 0.1rem !important;
-        margin-bottom: 0.32rem !important;
-    }
-    div[class*="st-key-"][class*="-settings_card_1"] h3,
-    div[class*="st-key-"][class*="-settings_card_1"] h4,
-    div[class*="st-key-"][class*="-settings_card_2"] h3,
-    div[class*="st-key-"][class*="-settings_card_2"] h4,
-    div[class*="st-key-"][class*="-settings_card_3"] h3,
-    div[class*="st-key-"][class*="-settings_card_3"] h4 {
-        margin-top: 0.45rem !important;
-        margin-bottom: 0.2rem !important;
-        padding-left: 0.12rem !important;
-        line-height: 1.4 !important;
-    }
-    /* 입력·날짜: 흰 박스 안 글자 여백 */
-    div[class*="st-key-"][class*="-settings_card_1"] .stTextInput > div > div > input,
-    div[class*="st-key-"][class*="-settings_card_2"] .stTextInput > div > div > input,
-    div[class*="st-key-"][class*="-settings_card_3"] .stTextInput > div > div > input,
-    div[class*="st-key-"][class*="-settings_card_1"] .stTextInput input,
-    div[class*="st-key-"][class*="-settings_card_2"] .stTextInput input,
-    div[class*="st-key-"][class*="-settings_card_3"] .stTextInput input,
-    div[class*="st-key-"][class*="-settings_card_1"] .stDateInput > div > div > input,
-    div[class*="st-key-"][class*="-settings_card_2"] .stDateInput > div > div > input,
-    div[class*="st-key-"][class*="-settings_card_3"] .stDateInput > div > div > input,
-    div[class*="st-key-"][class*="-settings_card_1"] .stDateInput input,
-    div[class*="st-key-"][class*="-settings_card_2"] .stDateInput input,
-    div[class*="st-key-"][class*="-settings_card_3"] .stDateInput input {
-        padding-left: 0.75rem !important;
-        padding-right: 0.75rem !important;
-    }
-    div[class*="st-key-"][class*="-settings_card_1"] .stTextArea textarea,
-    div[class*="st-key-"][class*="-settings_card_2"] .stTextArea textarea,
-    div[class*="st-key-"][class*="-settings_card_3"] .stTextArea textarea {
-        padding-left: 0.75rem !important;
-        padding-right: 0.75rem !important;
-    }
-    div[class*="st-key-"][class*="-settings_card_1"] [data-testid="stMetric"],
-    div[class*="st-key-"][class*="-settings_card_2"] [data-testid="stMetric"],
-    div[class*="st-key-"][class*="-settings_card_3"] [data-testid="stMetric"] {
-        margin-top: 0.28rem !important;
-        margin-bottom: 0.12rem !important;
-        padding: 0.5rem 0.85rem !important;
-        min-height: 0 !important;
-        justify-content: center !important;
-    }
-    div[class*="st-key-"][class*="-settings_card_1"] [data-testid="stMetricLabel"] p,
-    div[class*="st-key-"][class*="-settings_card_1"] [data-testid="stMetricValue"],
-    div[class*="st-key-"][class*="-settings_card_2"] [data-testid="stMetricLabel"] p,
-    div[class*="st-key-"][class*="-settings_card_2"] [data-testid="stMetricValue"],
-    div[class*="st-key-"][class*="-settings_card_3"] [data-testid="stMetricLabel"] p,
-    div[class*="st-key-"][class*="-settings_card_3"] [data-testid="stMetricValue"] {
-        padding-left: 0.15rem !important;
-    }
-    div[class*="st-key-"][class*="-settings_card_1"] [data-testid="stExpander"] details summary,
-    div[class*="st-key-"][class*="-settings_card_2"] [data-testid="stExpander"] details summary,
-    div[class*="st-key-"][class*="-settings_card_3"] [data-testid="stExpander"] details summary {
-        padding: 0.42rem 0.7rem !important;
-    }
-    [data-testid="stForm"] {
-        padding: 0.8rem 1rem !important;
-    }
-    [data-testid="stExpander"] details {
-        margin-bottom: 0.5rem !important;
-    }
-    div[class*="st-key-"][class*="-settings_card_1"] [data-testid="stExpander"] details,
-    div[class*="st-key-"][class*="-settings_card_2"] [data-testid="stExpander"] details,
-    div[class*="st-key-"][class*="-settings_card_3"] [data-testid="stExpander"] details {
-        margin-bottom: 0.34rem !important;
-    }
-    div[class*="st-key-"][class*="-settings_card_1"] .cafe-monster-settings-card-title,
-    div[class*="st-key-"][class*="-settings_card_2"] .cafe-monster-settings-card-title,
-    div[class*="st-key-"][class*="-settings_card_3"] .cafe-monster-settings-card-title {
-        text-align: center !important;
-        font-size: 0.94rem !important;
-        font-weight: 600 !important;
-        color: #1e3a8a !important;
-        letter-spacing: -0.015em !important;
-        line-height: 1.35 !important;
-        margin: 0 0 0.38rem 0 !important;
-        padding: 0.34rem 0.55rem 0.42rem !important;
-        border-radius: 0.45rem !important;
-        background: rgba(255, 255, 255, 0.72) !important;
-        border: 1px solid rgba(37, 99, 235, 0.22) !important;
-        box-sizing: border-box !important;
-    }
-    div[class*="st-key-"][class*="-settings_card_1"] .cafe-monster-settings-card-title-icon,
-    div[class*="st-key-"][class*="-settings_card_2"] .cafe-monster-settings-card-title-icon,
-    div[class*="st-key-"][class*="-settings_card_3"] .cafe-monster-settings-card-title-icon {
-        margin-right: 0.35rem !important;
-        font-style: normal !important;
-    }
-    div[class*="st-key-"][class*="-settings_card_1"] .cafe-monster-settings-card-title-text,
-    div[class*="st-key-"][class*="-settings_card_2"] .cafe-monster-settings-card-title-text,
-    div[class*="st-key-"][class*="-settings_card_3"] .cafe-monster-settings-card-title-text {
-        vertical-align: middle !important;
-    }
-    /* 설정 카드 밖 전역 입력은 기존 유지, 카드 안은 위에서 좌우 패딩 처리 */
-    div.stTextInput > div > div > input {
-        padding-top: 0.35rem !important;
-        padding-bottom: 0.35rem !important;
-    }
-    div.stDateInput > div > div > input {
-        padding-top: 0.35rem !important;
-        padding-bottom: 0.35rem !important;
-    }
     </style>
 ''', unsafe_allow_html=True)
+
+inject_settings_three_cards_css(key_basename="settings_card")
 
 st.markdown("#### ⚙️ 수집 설정")
 _t1, _t2, _t3 = st.columns([1, 1, 1], gap="medium")

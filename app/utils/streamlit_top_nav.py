@@ -253,111 +253,43 @@ def inject_settings_three_cards_css(*, key_basename: str) -> None:
         f"""
     <style>
     {sel_root} {{
-        background: #eef4ff !important;
-        border: 1px solid #cfdbf3 !important;
-        border-radius: 0.65rem !important;
-        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06) !important;
-        padding: 0.15rem !important;
+        background: #ffffff !important;
+        border: 1px solid #cbd5e1 !important;
+        border-radius: 8px !important;
+        box-shadow: none !important;
+        padding: 1rem !important;
         box-sizing: border-box !important;
-        gap: 0.55rem !important;
-        row-gap: 0.55rem !important;
     }}
     {sel_desc('[data-testid="stVerticalBlockBorderWrapper"]')} {{
-        background: #eef4ff !important;
-        border-color: #cfdbf3 !important;
-        border-radius: 0.6rem !important;
-        padding: 0.58rem 1.1rem 0.72rem 1.1rem !important;
+        background: #ffffff !important;
+        border: none !important;
+        padding: 0 !important;
         box-sizing: border-box !important;
     }}
     {sel_desc('[data-testid="stVerticalBlock"]')} {{
-        background: #eef4ff !important;
+        background: #ffffff !important;
         padding: 0 !important;
         box-sizing: border-box !important;
-        gap: 0.42rem !important;
     }}
     {sel_desc('[data-testid="stVerticalBlock"] [data-testid="stVerticalBlock"]')} {{
-        gap: 0.42rem !important;
+        /* 내부 스택의 마진/패딩 최소화하여 streamlit의 기본 레이아웃 유지 */
     }}
-    {sel_desc(".element-container")} {{
-        margin-bottom: 0 !important;
-    }}
-    {sel_desc('[data-testid="stCaptionContainer"]')} {{
-        margin-top: 0 !important;
-        margin-bottom: 0.06rem !important;
-        padding: 0.06rem 0 0.12rem 0.12rem !important;
-    }}
-    {sel_desc('[data-testid="stCaptionContainer"] p')} {{
-        margin: 0 0 0.1rem 0 !important;
-        line-height: 1.45 !important;
-    }}
-    {sel_desc('[data-testid="stWidgetLabel"]')} {{
-        margin-bottom: 0.14rem !important;
-        margin-top: 0 !important;
-        padding: 0 0.05rem 0 0.12rem !important;
-    }}
-    {sel_desc(".stTextInput")},
-    {sel_desc(".stDateInput")},
-    {sel_desc(".stTextArea")},
-    {sel_desc(".stNumberInput")} {{
-        margin-top: 0 !important;
-        margin-bottom: 0.06rem !important;
-    }}
-    {sel_desc('[data-testid="stExpander"]')} {{
-        margin-top: 0 !important;
-        margin-bottom: 0.34rem !important;
-    }}
-    {sel_desc('[data-testid="stButton"]')} {{
-        margin-top: 0.1rem !important;
-        margin-bottom: 0.32rem !important;
-    }}
-    {sel_desc("h3")},
-    {sel_desc("h4")} {{
-        margin-top: 0.45rem !important;
-        margin-bottom: 0.2rem !important;
-        padding-left: 0.12rem !important;
-        line-height: 1.4 !important;
-    }}
-    {sel_desc(".stTextInput > div > div > input")},
-    {sel_desc(".stTextInput input")},
-    {sel_desc(".stDateInput > div > div > input")},
-    {sel_desc(".stDateInput input")},
-    {sel_desc(".stNumberInput input")} {{
-        padding-left: 0.75rem !important;
-        padding-right: 0.75rem !important;
-    }}
-    {sel_desc(".stTextArea textarea")} {{
-        padding-left: 0.75rem !important;
-        padding-right: 0.75rem !important;
-    }}
-    {sel_desc('[data-testid="stMetric"]')} {{
-        margin-top: 0.28rem !important;
-        margin-bottom: 0.12rem !important;
-        padding: 0.5rem 0.85rem !important;
-        min-height: 0 !important;
-        justify-content: center !important;
-    }}
-    {sel_desc('[data-testid="stMetricLabel"] p')},
-    {sel_desc('[data-testid="stMetricValue"]')} {{
-        padding-left: 0.15rem !important;
-    }}
-    {sel_desc('[data-testid="stExpander"] details summary')} {{
-        padding: 0.42rem 0.7rem !important;
-    }}
-    {sel_desc('[data-testid="stExpander"] details')} {{
-        margin-bottom: 0.34rem !important;
-    }}
+    
+    /* 카드 제목 디자인 */
     {sel_desc(f".{SETTINGS_CARD_TITLE_CLASS}")} {{
         text-align: center !important;
-        font-size: 0.94rem !important;
-        font-weight: 600 !important;
-        color: #1e3a8a !important;
-        letter-spacing: -0.015em !important;
-        line-height: 1.35 !important;
-        margin: 0 0 0.38rem 0 !important;
-        padding: 0.34rem 0.55rem 0.42rem !important;
-        border-radius: 0.45rem !important;
-        background: rgba(255, 255, 255, 0.72) !important;
-        border: 1px solid rgba(37, 99, 235, 0.22) !important;
+        font-size: 1.0rem !important;
+        font-weight: 700 !important;
+        color: #1e3a8a !important; /* 딥 네이비 */
+        margin-top: 0 !important;
+        margin-bottom: 0.8rem !important;
+        padding-bottom: 0.5rem !important;
+        border-bottom: 2px solid #2563eb !important; /* 블루 포인트 */
+        background: transparent !important;
+        border-top: none !important;
+        border-left: none !important;
+        border-right: none !important;
+        border-radius: 0 !important;
         box-sizing: border-box !important;
     }}
     {sel_desc(f".{SETTINGS_CARD_TITLE_ICON_CLASS}")} {{
