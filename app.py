@@ -874,14 +874,15 @@ render_main_top_nav(active="app")
 def _render_cafe_dashboard_header() -> None:
     _logo_path = Path(__file__).resolve().parent / "assets" / "CafeMonster_logo.png"
     
-    _hdr_logo, _hdr_title = st.columns([1, 10], gap="small")
-    with _hdr_logo:
-        render_logo_png(_logo_path, width_px=92)
-    with _hdr_title:
-        st.markdown(
-            '<h2 style="margin: 0.6rem 0 0 0; padding:0; line-height:1.2; font-size:1.35rem;">네이버카페 게시글·댓글 수집기</h2>',
-            unsafe_allow_html=True,
-        )
+    with st.container(key="dashboard_header"):
+        _hdr_logo, _hdr_title = st.columns([1, 10], gap="small")
+        with _hdr_logo:
+            render_logo_png(_logo_path, width_px=92)
+        with _hdr_title:
+            st.markdown(
+                '<h2 style="margin: 0px; padding:0; line-height:1.2; font-size:1.35rem;">네이버카페 게시글·댓글 수집기</h2>',
+                unsafe_allow_html=True,
+            )
     
     with st.expander("📖 사용 가이드 (필독)", expanded=False):
         col1, col2, col3 = st.columns(3, gap="medium")

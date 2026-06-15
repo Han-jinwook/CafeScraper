@@ -31,16 +31,30 @@ def render_main_top_nav(*, active: str) -> None:
     """
     # 멀티페이지(pages/*.py)는 app.py 단일 진입과 달리 상단 헤더·첫 블록이 겹쳐
     # 탭 버튼 위가 잘려 보일 수 있어 본문 상단 패딩만 소폭 추가 (50% 수준으로 최적화).
-    _block_padding_top = "1.5rem" if active == "app" else "2.0rem"
+    _block_padding_top = "0.5rem"
 
     st.markdown(
         f"""
         <style>
             /* Streamlit 기본 헤더 공간 숨김으로 여백 최적화 */
-            header[data-testid="stHeader"] {{
+            header[data-testid="stHeader"],
+            div[data-testid="stAppHeader"],
+            [data-testid="stAppHeader"] {{
                 display: none !important;
                 height: 0px !important;
                 min-height: 0px !important;
+                padding: 0 !important;
+                margin: 0 !important;
+            }}
+
+            /* 사이드바 진입점(collapsedControl)도 함께 숨김 */
+            div[data-testid="collapsedControl"],
+            button[data-testid="collapsedControl"],
+            [data-testid="collapsedControl"] {{
+                display: none !important;
+                width: 0px !important;
+                height: 0px !important;
+                opacity: 0 !important;
             }}
 
             /* 사이드바·멀티페이지 기본 네비 완전 숨김 (첫 페인트 후 잔상·유령 메뉴 최소화) */
@@ -51,7 +65,6 @@ def render_main_top_nav(*, active: str) -> None:
                 min-width: 0 !important;
                 width: 0 !important;
             }}
-            [data-testid="collapsedControl"] {{ display: none !important; }}
             [data-testid="stSidebarNav"],
             [data-testid="stSidebarNavItems"] {{
                 display: none !important;
@@ -70,7 +83,13 @@ def render_main_top_nav(*, active: str) -> None:
             }}
             /* 상단 메뉴: switch_page 버튼 — 예전 HTML nav 링크와 동일한 칩 스타일 */
             [class*="st-key-{_TOP_NAV_CONTAINER_KEY}"] {{
-                margin-bottom: 0.45rem !important;
+                margin-bottom: 0px !important;
+                border-bottom: 1px solid rgba(192,201,195,0.35) !important;
+                padding-bottom: 0.45rem !important;
+            }}
+            /* 제목 헤더 컨테이너: 상단 여백 축소 및 정렬 */
+            [class*="st-key-dashboard_header"] {{
+                margin-top: -0.65rem !important;
             }}
             [class*="st-key-{_TOP_NAV_CONTAINER_KEY}"] div[data-testid="column"] {{
                 flex: 1 1 0% !important;
@@ -123,6 +142,7 @@ def render_main_top_nav(*, active: str) -> None:
                 background-color: #eef4ff !important;
                 color: #1e3a8a !important;
                 font-weight: 700 !important;
+                font-size: 0.92rem !important;
             }}
             /* 옵션 목록 호버 피드백 */
             li[role="option"]:hover {{
@@ -209,12 +229,6 @@ def render_main_top_nav(*, active: str) -> None:
         height=2,
         width=720,
         scrolling=False,
-    )
-
-    st.markdown(
-        '<div style="height:0;margin:0.15rem 0 0.55rem 0;border:none;'
-        'border-top:1px solid rgba(192,201,195,0.35);"></div>',
-        unsafe_allow_html=True,
     )
 
 

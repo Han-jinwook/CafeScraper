@@ -887,15 +887,16 @@ def _ensure_event_analysis_reports(*, force: bool = False) -> None:
 def _render_event_dashboard_header() -> None:
     """메인·논문 수집과 동일: 로고 + 제목 + 가이드."""
     _logo_path = Path(__file__).resolve().parent.parent / "assets" / "CafeMonster_logo.png"
-    _hdr_logo, _hdr_title = st.columns([1, 10], gap="small")
-    with _hdr_logo:
-        render_logo_png(_logo_path, width_px=92)
-    with _hdr_title:
-        st.markdown(
-            '<h2 style="margin: 0.6rem 0 0 0; padding:0; line-height:1.2; font-size:1.35rem;">'
-            "이벤트 댓글 분석 스튜디오</h2>",
-            unsafe_allow_html=True,
-        )
+    with st.container(key="dashboard_header"):
+        _hdr_logo, _hdr_title = st.columns([1, 10], gap="small")
+        with _hdr_logo:
+            render_logo_png(_logo_path, width_px=92)
+        with _hdr_title:
+            st.markdown(
+                '<h2 style="margin: 0px; padding:0; line-height:1.2; font-size:1.35rem;">'
+                "이벤트 댓글 분석 스튜디오</h2>",
+                unsafe_allow_html=True,
+            )
     
     with st.expander("📖 사용 가이드 (필독)", expanded=False):
         col1, col2, col3 = st.columns(3, gap="medium")
