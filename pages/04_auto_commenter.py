@@ -825,9 +825,12 @@ def _render_commenter_dashboard_header() -> None:
                     with c_hdr_title:
                         st.markdown('<p style="margin: 0px; font-weight: 700; color: #1e3a8a; font-size: 1.0rem;">📖 사용 가이드 (필독)</p>', unsafe_allow_html=True)
                     with c_hdr_btn:
-                        if st.button("❌ 닫기", key="guide_close_btn", use_container_width=True):
-                            st.session_state.show_guide = False
-                            st.rerun()
+                        st.button(
+                            "❌ 닫기",
+                            key="guide_close_btn",
+                            on_click=lambda: st.session_state.__setitem__("show_guide", False),
+                            use_container_width=True
+                        )
                     
                     st.markdown('<div style="height:0;margin:0.25rem 0 0.75rem 0;border:none;border-top:1px solid #cbd5e1;"></div>', unsafe_allow_html=True)
                     
@@ -872,9 +875,12 @@ def _render_commenter_dashboard_header() -> None:
                         unsafe_allow_html=True,
                     )
             with col_right:
-                if st.button("📖 사용 가이드 보기", key="guide_btn_open", use_container_width=True):
-                    st.session_state.show_guide = True
-                    st.rerun()
+                st.button(
+                    "📖 사용 가이드 보기",
+                    key="guide_btn_open",
+                    on_click=lambda: st.session_state.__setitem__("show_guide", True),
+                    use_container_width=True
+                )
 
 
 _render_commenter_dashboard_header()
