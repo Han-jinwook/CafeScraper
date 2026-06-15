@@ -97,7 +97,7 @@ st.markdown(
     <style>
     /* 자동댓글러: 본문 하단 여백 축소(스크롤 완화) */
     section.main > div.block-container {
-        padding-bottom: 2.25rem !important;
+        padding-bottom: 1.1rem !important;
     }
     </style>
     """,
@@ -803,43 +803,46 @@ def _collect_commenter_targets_into_session() -> None:
 
 def _render_commenter_dashboard_header() -> None:
     _logo_path = Path(__file__).resolve().parent.parent / "assets" / "CafeMonster_logo.png"
-    _hdr_logo, _hdr_mid = st.columns([1, 5], gap="small")
+    _hdr_logo, _hdr_title = st.columns([1, 10], gap="small")
     with _hdr_logo:
         render_logo_png(_logo_path, width_px=92)
-    with _hdr_mid:
-        _title_col, _guide_col = st.columns([1.95, 2.05], gap="small")
-        with _title_col:
+    with _hdr_title:
+        st.markdown(
+            '<h2 style="margin: 0.6rem 0 0 0; padding:0; line-height:1.2; font-size:1.35rem;">'
+            "자동 댓글러</h2>",
+            unsafe_allow_html=True,
+        )
+    
+    with st.expander("📖 사용 가이드 (필독)", expanded=False):
+        col1, col2, col3 = st.columns(3, gap="medium")
+        with col1:
             st.markdown(
-                '<h2 style="margin:0 0 0.15rem 0;padding:0;line-height:1.2;font-size:1.35rem;">'
-                "자동 댓글러</h2>",
-                unsafe_allow_html=True,
+                f"""
+                **1) 기본 실행 순서**
+                - 타겟 글은 브라우저로 게시판 목록을 직접 스크랩합니다.
+                - **카페 · 연결**: 카페 정보 입력 후 **저장**합니다.
+                - **타겟 수집 설정**: 수집 기간 및 제외 닉네임 설정 후 **💾 저장**합니다.
+                - **실행 제어**: 1단계(브라우저) → 2단계(목록 수집) → **댓글 작성 시작**을 순차 진행합니다.
+                """
             )
-        with _guide_col:
-            with st.expander("📖 사용 가이드 (필독)", expanded=False):
-                st.markdown(
-                    f"""
-                타겟 글은 **브라우저로 게시판 목록을 직접 스크랩**합니다. (`event_posts` 조회 없음)
-
-                1. **카페 · 연결**: 카페명·URL 빈 상태에서 입력 후 **저장**(저장 후 단추는 **리셋**).
-                2. **타겟 수집 설정**: 수집 기간·제외 닉네임 → **💾 저장**.
-                3. **실행 제어**(설정 아래): 1단계(브라우저) → 2단계(목록 수집) → **데이터 관리**에서 현황 확인.
-                4. **댓글 · 실행**: 템플릿 확인 후 **댓글 작성 시작**.
-                5. **목록 재수집**(2단계): 같은 글(URL)에 대해서는 **`작성 완료` 등 댓글 시도 기록을 DB에서 이어 받습니다**(앱을 그냥 끈 경우보다 **재수집을 다시 했던 경우**에 기록이 사라져 보였던 버그가 있었습니다).
-                6. **📋 타겟 목록**: 글 **작성일**만 골라 표·실행 순서 줄이기 — 체크 후 시작·끝 날짜 **적용**(재수집 불필요), **전체**로 원복.
-
-                **안전 사용 조건 (요약, 별도 설정 없음)**  
-                - 실제 Chrome·로그인 계정·글마다 **{COMMENTER_GAP_MIN_SEC}~{COMMENTER_GAP_MAX_SEC}초** 무작위 대기, **{COMMENTER_SESSION_LIMIT}건**마다 **{COMMENTER_SESSION_REST_SEC // 60}분** 휴식 — 무분별한 대량 봇 패턴을 줄이기 위한 **고정 정책**입니다.  
-                - **하루 댓글 약 300건 이하**를 권장합니다. **당일 300건을 다 썼으면 그날은 다시 실행하지 마세요.** (이어서 두 번째 묶음·야간 추가 실행 금지)  
-                - 인사말은 템플릿의 **`{{인사}}`** 또는 맨 앞 「안녕하세요」를 **댓글마다 내부 목록에서 무작위**로 바꿉니다(동일 문장 반복 완화).  
-                - 완전 무위험은 아닙니다. 같은 홍보 문구 반복·스팸 신고·카페 규칙 위반 시 **계정·카페 제재** 가능성이 있습니다. 캡차·비정상 접속이 늘면 **당일 중단**하세요.
-
-                **속도·휴식 (위 안전 조건과 동일)**  
-                - 글 한 편 처리 후 다음 글까지 **{COMMENTER_GAP_MIN_SEC}~{COMMENTER_GAP_MAX_SEC}초** 사이 **무작위 대기**.  
-                - **{COMMENTER_SESSION_LIMIT}건**마다 **{COMMENTER_SESSION_REST_SEC // 60}분** 휴식 후 이어감.
-
-                메인 카페 크롤링이 실행 중이면 이 화면을 사용할 수 없습니다.
-                    """
-                )
+        with col2:
+            st.markdown(
+                """
+                **2) 데이터 및 타겟 관리**
+                - **재수집 시 기록 연동**: 목록 재수집 시 같은 글(URL)에 대한 `작성 완료` 등 기록은 DB에서 연동됩니다.
+                - **📋 타겟 목록 필터링**: 글 작성일 필터 체크 후 날짜를 적용하여 범위를 좁힐 수 있습니다 (재수집 불필요).
+                - 메인 카페 크롤링 실행 중에는 본 화면을 사용할 수 없습니다.
+                """
+            )
+        with col3:
+            st.markdown(
+                f"""
+                **3) 안전 사용 조건 (요약)**
+                - **자동 대기/휴식**: 글 간 **{COMMENTER_GAP_MIN_SEC}~{COMMENTER_GAP_MAX_SEC}초** 무작위 대기, **{COMMENTER_SESSION_LIMIT}건**마다 **{COMMENTER_SESSION_REST_SEC // 60}분** 휴식합니다.
+                - **하루 권장량**: **300건 이하** 작성을 권장하며 초과 시 추가 실행을 금지합니다.
+                - **제재 방지**: `{{인사}}` 랜덤 치환을 활용하되 스팸 신고 등 정책 위반 시 제재 가능성이 있습니다.
+                """
+            )
 
 
 _render_commenter_dashboard_header()

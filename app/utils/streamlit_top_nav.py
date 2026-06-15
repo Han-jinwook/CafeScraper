@@ -30,12 +30,19 @@ def render_main_top_nav(*, active: str) -> None:
     active: "app" | "event" | "commenter"
     """
     # 멀티페이지(pages/*.py)는 app.py 단일 진입과 달리 상단 헤더·첫 블록이 겹쳐
-    # 탭 버튼 위가 잘려 보일 수 있어 본문 상단 패딩만 소폭 추가.
-    _block_padding_top = "3.35rem" if active == "app" else "4.35rem"
+    # 탭 버튼 위가 잘려 보일 수 있어 본문 상단 패딩만 소폭 추가 (50% 수준으로 최적화).
+    _block_padding_top = "1.5rem" if active == "app" else "2.0rem"
 
     st.markdown(
         f"""
         <style>
+            /* Streamlit 기본 헤더 공간 숨김으로 여백 최적화 */
+            header[data-testid="stHeader"] {{
+                display: none !important;
+                height: 0px !important;
+                min-height: 0px !important;
+            }}
+
             /* 사이드바·멀티페이지 기본 네비 완전 숨김 (첫 페인트 후 잔상·유령 메뉴 최소화) */
             section[data-testid="stSidebar"],
             div[data-testid="stSidebar"],
@@ -56,7 +63,7 @@ def render_main_top_nav(*, active: str) -> None:
             .block-container {{
                 max-width: 1450px !important;
                 padding-top: {_block_padding_top} !important;
-                padding-bottom: 4.5rem !important;
+                padding-bottom: 2.25rem !important;
                 margin-left: auto !important;
                 margin-right: auto !important;
                 box-sizing: border-box !important;

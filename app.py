@@ -874,43 +874,46 @@ render_main_top_nav(active="app")
 def _render_cafe_dashboard_header() -> None:
     _logo_path = Path(__file__).resolve().parent / "assets" / "CafeMonster_logo.png"
     
-    _hdr_logo, _hdr_mid = st.columns([1, 5], gap="small")
+    _hdr_logo, _hdr_title = st.columns([1, 10], gap="small")
     with _hdr_logo:
         render_logo_png(_logo_path, width_px=92)
-    with _hdr_mid:
-        _title_col, _guide_col = st.columns([1.95, 2.05], gap="small")
-        with _title_col:
+    with _hdr_title:
+        st.markdown(
+            '<h2 style="margin: 0.6rem 0 0 0; padding:0; line-height:1.2; font-size:1.35rem;">네이버카페 게시글·댓글 수집기</h2>',
+            unsafe_allow_html=True,
+        )
+    
+    with st.expander("📖 사용 가이드 (필독)", expanded=False):
+        col1, col2, col3 = st.columns(3, gap="medium")
+        with col1:
             st.markdown(
-                '<h2 style="margin:0 0 0.15rem 0;padding:0;line-height:1.2;font-size:1.35rem;">네이버카페 게시글·댓글 수집기</h2>',
-                unsafe_allow_html=True,
-            )
-        with _guide_col:
-            with st.expander("📖 사용 가이드 (필독)", expanded=False):
-                st.markdown(
-                    """
-                **1) 저장 버튼은 섹션별로 따로 동작합니다**
-                - **카페명·URL 오른쪽 단추**: 처음엔 **`저장`**. 저장 후에는 **`리셋`** 으로 바뀝니다. 리셋하면 입력칸·게시판 목록 선택 등이 비우고, 저장돼 있던 카페명·URL 설정도 초기화됩니다.
+                """
+                **1) 저장 버튼 동작**
+                - **카페명·URL 오른쪽 단추**: 처음엔 **`저장`**. 저장 후에는 **`리셋`** 으로 바뀝니다. 리셋하면 입력칸·게시판 목록 선택 등이 비워지고, 저장돼 있던 설정도 초기화됩니다.
                 - **왼쪽 `게시판 목록 가져오기`**: 스캔한 게시판 목록은 자동 저장됩니다.
                 - **게시판 체크 선택/해제**: 선택값도 자동 저장됩니다.
                 - **가운데 `저장` 버튼**: 기간/필터/시작페이지 등 가운데 섹션 값만 저장합니다.
-
+                """
+            )
+        with col2:
+            st.markdown(
+                """
                 **2) 기본 수집 동작**
                 - 설정한 기간의 게시글을 수집합니다.
                 - 이미 있는 글은 중복 저장을 피하고, 필요한 값만 보강합니다.
                 - 종료일 기준 자동 시작페이지 모드를 권장합니다.
                 - 처음 수집하는 카페는 **1년 이하 기간으로 나눠서** 순차 수집하는 것을 권장합니다. (예: 2025년 -> 2024년 -> 2023년)
-                - 게시판 목록은 `50개씩 보기` 기준으로 탐색되며, 다음 회차 수집 시 자동 시작페이지가 최근 수집 구간 근처로 점프해 시간을 줄여줍니다.
-
-                **3) 속도와 안정성**
-                - 크롤러가 게시판 목록을 `50개씩 보기`로 자동 전환해 탐색을 최적화합니다.
+                """
+            )
+        with col3:
+            st.markdown(
+                """
+                **3) 속도 / 안정성 / ID**
+                - 게시판 목록은 `50개씩 보기` 기준으로 자동 전환해 탐색을 최적화하며 다음 수집 시 자동 시작페이지가 최근 수집 구간 근처로 점프합니다.
                 - 연속 실패가 누적되면 안전 중단 후 체크포인트를 남깁니다.
-                - 네트워크/페이지 구조/본문 길이에 따라 건당 처리시간은 달라질 수 있습니다.
-
-                **4) 작성자 ID 안내**
-                - 상세 보기의 `작성자 ID`는 네이버 내부 식별값이라 길고 복잡하게 보일 수 있습니다.
-                - 동일 작성자 추적/중복 판별용 키이며, 화면 표시용 닉네임과 역할이 다릅니다.
-                                """
-                )
+                - 상세 보기의 `작성자 ID`는 네이버 내부 식별값(동일 작성자 추적용)이라 길고 복잡할 수 있습니다.
+                """
+            )
 
 
 _render_cafe_dashboard_header()

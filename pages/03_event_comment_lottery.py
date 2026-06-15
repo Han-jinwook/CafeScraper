@@ -887,50 +887,45 @@ def _ensure_event_analysis_reports(*, force: bool = False) -> None:
 def _render_event_dashboard_header() -> None:
     """메인·논문 수집과 동일: 로고 + 제목 + 가이드."""
     _logo_path = Path(__file__).resolve().parent.parent / "assets" / "CafeMonster_logo.png"
-    _hdr_logo, _hdr_mid = st.columns([1, 5], gap="small")
+    _hdr_logo, _hdr_title = st.columns([1, 10], gap="small")
     with _hdr_logo:
         render_logo_png(_logo_path, width_px=92)
-    with _hdr_mid:
-        _title_col, _guide_col = st.columns([1.95, 2.05], gap="small")
-        with _title_col:
+    with _hdr_title:
+        st.markdown(
+            '<h2 style="margin: 0.6rem 0 0 0; padding:0; line-height:1.2; font-size:1.35rem;">'
+            "이벤트 댓글 분석 스튜디오</h2>",
+            unsafe_allow_html=True,
+        )
+    
+    with st.expander("📖 사용 가이드 (필독)", expanded=False):
+        col1, col2, col3 = st.columns(3, gap="medium")
+        with col1:
             st.markdown(
-                '<h2 style="margin:0 0 0.15rem 0;padding:0;line-height:1.2;font-size:1.35rem;">'
-                "이벤트 댓글 분석 스튜디오</h2>",
-                unsafe_allow_html=True,
+                """
+                **1) 이벤트 집계 및 순서**
+                - 조건(1) 게시글 수집·분석, 조건(2) 댓글 수집·분석, 조건(3) 등급별 방문수 중 **1개만 선택**하여 실행합니다.
+                - 카페명·URL을 빈 상태에서 입력 후 **`저장`**합니다 (저장 후에는 **`리셋`**으로 변경됨).
+                - 1단계 브라우저를 열고 로그인 후, 조건 1개를 선택하여 수집을 시작합니다.
+                """
             )
-        with _guide_col:
-            with st.expander("📖 사용 가이드 (필독)", expanded=False):
-                st.markdown(
-                    """
-                **이 페이지는 이벤트 집계 전용입니다**
-                - 조건(1): 게시글 수집·분석(제목/본문/사진 기반 티켓)
-                - 조건(2): 댓글 수집·분석(기간 필터 + 참여 티켓)
-                - 조건(3): 등급별 방문수 수집(멤버 관리)
-                - 세 조건은 **동시에 실행되지 않으며 1개만 선택**해서 실행합니다.
-
-                **기본 실행 순서**
-                1. 카페명·URL은 빈 상태에서 입력 → **`저장`**, 저장 후 단추는 **`리셋`** (리셋 시 입력·게시판 초기화)
-                2. 1단계 브라우저 열기 → 로그인
-                3. 실행할 조건(1/2/3) 1개 선택 후 수집 시작
-
-                **조건(2) 날짜 규칙(중요)**
+        with col2:
+            st.markdown(
+                """
+                **2) 날짜 및 집계 규칙**
                 - 댓글 목표 기간은 수집 기간과 동일합니다.
                 - 게시글 탐색 종료일은 실수 방지를 위해 수집 기간 종료일과 자동 동기화(읽기 전용)됩니다.
-
-                **티켓 규칙**
-                - 조건(1): `글자수(제목 포함)` + `사진 티켓` + `게시판 가산 티켓`
-                - 조건(1) 가산은 `게시판명 / 가산수` 형식, 와일드카드 `*`, `?` 사용 가능  
-                  (예: `*일기 2`, `*후기/1`)
-                - 조건(2): `댓글 글자수 티켓 + 이미지 티켓`에 `한 댓글 최대 티켓 수` 상한 적용
-
-                **집계/다운로드**
-                - 조건1·조건2 각각 티켓 집계표와 CSV 다운로드 제공
-                - `최종 집계`에서 CSV 2개를 올려 별명별 총티켓 합산 가능
-                - 파일명은 `카페명4자_결과종류_기간_시각.csv` 형식으로 저장됩니다.
-
-                메인 카페 크롤링이 실행 중이면 이벤트 수집은 시작할 수 없습니다.
-                    """
-                )
+                - 조건1·조건2 각각 티켓 집계표와 CSV 다운로드 제공하며, `최종 집계`에서 CSV 2개를 합산할 수 있습니다.
+                """
+            )
+        with col3:
+            st.markdown(
+                """
+                **3) 티켓 부여 규칙**
+                - 조건(1): `글자수` + `사진` + `게시판 가산` (예: `*일기 2`, `*후기/1` 형식, 와일드카드 사용 가능).
+                - 조건(2): `댓글 글자수 + 이미지 티켓`에 `한 댓글 최대 티켓 수` 상한 적용.
+                - 메인 크롤링 실행 중에는 이벤트 수집을 시작할 수 없습니다.
+                """
+            )
 
 
 _render_event_dashboard_header()
