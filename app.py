@@ -884,7 +884,7 @@ if "board_picker_options_sig" not in st.session_state:
 if "cafe_connect_side_mode" not in st.session_state:
     st.session_state.cafe_connect_side_mode = "save"
 if "auto_login_after_reset_save_mode" not in st.session_state:
-    st.session_state.auto_login_after_reset_save_mode = False
+    st.session_state.auto_login_after_reset_save_mode = not bool(str(config.get("naver_id", "") or "").strip())
 
 render_main_top_nav(active="app")
 
@@ -998,6 +998,7 @@ if "auto_login_enabled_input" not in st.session_state:
 
 def on_auto_login_change():
     st.session_state.auto_login_expanded = True
+    st.session_state.auto_login_after_reset_save_mode = True
 
 def toggle_settings():
     st.session_state.settings_collapsed = not st.session_state.settings_collapsed
@@ -1490,11 +1491,8 @@ with _t1:
                 selected_urls = list(dict.fromkeys([u for u in (st.session_state.get("selected_board_urls", []) or []) if u]))
                 selected_urls_str = "\n".join(selected_urls)
         else:
-            # 추출 목록이 없을 때만 수동 입력 폴백
-            selected_urls_str = st.text_input(
-                "게시판 URL (전체글보기 권장)",
-                value=str(config.get("board_url", "") or ""),
-            )
+            selected_urls_str = ""
+            st.info("먼저 **1단계: 브라우저 열기**를 실행한 뒤 **게시판 목록 가져오기**를 눌러주세요. 그 다음 게시판을 선택해주세요.")
         board_url = selected_urls_str
 with _t2:
     with st.container(border=True, key="settings_card_2"):

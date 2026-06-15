@@ -177,6 +177,7 @@ if "event_auto_login_enabled_input" not in st.session_state:
 
 def on_event_auto_login_change():
     st.session_state.event_auto_login_expanded = True
+    st.session_state.event_auto_login_after_reset_save_mode = True
 if "event_extracted_boards" not in st.session_state or not st.session_state.event_extracted_boards:
     _cfg_boards = config.get("event_extracted_boards", [])
     if isinstance(_cfg_boards, list) and _cfg_boards:

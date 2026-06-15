@@ -229,6 +229,7 @@ if "commenter_auto_login_enabled_input" not in st.session_state:
 
 def on_commenter_auto_login_change():
     st.session_state.commenter_auto_login_expanded = True
+    st.session_state.commenter_auto_login_after_reset_save_mode = True
 
 
 def _parse_cfg_date(val, fallback):
