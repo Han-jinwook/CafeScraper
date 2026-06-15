@@ -803,47 +803,78 @@ def _collect_commenter_targets_into_session() -> None:
 
 def _render_commenter_dashboard_header() -> None:
     _logo_path = Path(__file__).resolve().parent.parent / "assets" / "CafeMonster_logo.png"
-    with st.container(key="dashboard_header"):
-        _hdr_logo, _hdr_title = st.columns([1, 10], gap="small")
-        with _hdr_logo:
-            render_logo_png(_logo_path, width_px=92)
-        with _hdr_title:
-            st.markdown(
-                '<h2 style="margin: 0px; padding:0; line-height:1.2; font-size:1.35rem;">'
-                "자동 댓글러</h2>",
-                unsafe_allow_html=True,
-            )
     
-    with st.expander("📖 사용 가이드 (필독)", expanded=False):
-        col1, col2, col3 = st.columns(3, gap="medium")
-        with col1:
-            st.markdown(
-                f"""
-                **1) 기본 실행 순서**
-                - 타겟 글은 브라우저로 게시판 목록을 직접 스크랩합니다.
-                - **카페 · 연결**: 카페 정보 입력 후 **저장**합니다.
-                - **타겟 수집 설정**: 수집 기간 및 제외 닉네임 설정 후 **💾 저장**합니다.
-                - **실행 제어**: 1단계(브라우저) → 2단계(목록 수집) → **댓글 작성 시작**을 순차 진행합니다.
-                """
-            )
-        with col2:
-            st.markdown(
-                """
-                **2) 데이터 및 타겟 관리**
-                - **재수집 시 기록 연동**: 목록 재수집 시 같은 글(URL)에 대한 `작성 완료` 등 기록은 DB에서 연동됩니다.
-                - **📋 타겟 목록 필터링**: 글 작성일 필터 체크 후 날짜를 적용하여 범위를 좁힐 수 있습니다 (재수집 불필요).
-                - 메인 카페 크롤링 실행 중에는 본 화면을 사용할 수 없습니다.
-                """
-            )
-        with col3:
-            st.markdown(
-                f"""
-                **3) 안전 사용 조건 (요약)**
-                - **자동 대기/휴식**: 글 간 **{COMMENTER_GAP_MIN_SEC}~{COMMENTER_GAP_MAX_SEC}초** 무작위 대기, **{COMMENTER_SESSION_LIMIT}건**마다 **{COMMENTER_SESSION_REST_SEC // 60}분** 휴식합니다.
-                - **하루 권장량**: **300건 이하** 작성을 권장하며 초과 시 추가 실행을 금지합니다.
-                - **제재 방지**: `{{인사}}` 랜덤 치환을 활용하되 스팸 신고 등 정책 위반 시 제재 가능성이 있습니다.
-                """
-            )
+    if "show_guide" not in st.session_state:
+        st.session_state.show_guide = False
+
+    with st.container(key="dashboard_header"):
+        if st.session_state.show_guide:
+            col_left, col_right = st.columns([1, 3], gap="medium")
+            with col_left:
+                _hdr_logo, _hdr_title = st.columns([1, 4], gap="small", vertical_alignment="center")
+                with _hdr_logo:
+                    render_logo_png(_logo_path, width_px=64)
+                with _hdr_title:
+                    st.markdown(
+                        '<h2 style="margin: 0px; padding:0; line-height:1.2; font-size:1.15rem; color: #1e3a8a !important; font-weight: 700 !important;">자동 댓글러</h2>',
+                        unsafe_allow_html=True,
+                    )
+            with col_right:
+                with st.container(border=True):
+                    c_hdr_title, c_hdr_btn = st.columns([4, 1.2], vertical_alignment="center")
+                    with c_hdr_title:
+                        st.markdown('<p style="margin: 0px; font-weight: 700; color: #1e3a8a; font-size: 1.0rem;">📖 사용 가이드 (필독)</p>', unsafe_allow_html=True)
+                    with c_hdr_btn:
+                        if st.button("❌ 닫기", key="guide_close_btn", use_container_width=True):
+                            st.session_state.show_guide = False
+                            st.rerun()
+                    
+                    st.markdown('<div style="height:0;margin:0.25rem 0 0.75rem 0;border:none;border-top:1px solid #cbd5e1;"></div>', unsafe_allow_html=True)
+                    
+                    col1, col2, col3 = st.columns(3, gap="medium")
+                    with col1:
+                        st.markdown(
+                            f"""
+                            **1) 기본 실행 순서**
+                            - 타겟 글은 브라우저로 게시판 목록을 직접 스크랩합니다.
+                            - **카페 · 연결**: 카페 정보 입력 후 **저장**합니다.
+                            - **타겟 수집 설정**: 수집 기간 및 제외 닉네임 설정 후 **💾 저장**합니다.
+                            - **실행 제어**: 1단계(브라우저) → 2단계(목록 수집) → **댓글 작성 시작**을 순차 진행합니다.
+                            """
+                        )
+                    with col2:
+                        st.markdown(
+                            """
+                            **2) 데이터 및 타겟 관리**
+                            - **재수집 시 기록 연동**: 목록 재수집 시 같은 글(URL)에 대한 `작성 완료` 등 기록은 DB에서 연동됩니다.
+                            - **📋 타겟 목록 필터링**: 글 작성일 필터 체크 후 날짜를 적용하여 범위를 좁힐 수 있습니다 (재수집 불필요).
+                            - 메인 카페 크롤링 실행 중에는 본 화면을 사용할 수 없습니다.
+                            """
+                        )
+                    with col3:
+                        st.markdown(
+                            f"""
+                            **3) 안전 사용 조건 (요약)**
+                            - **자동 대기/휴식**: 글 간 **{COMMENTER_GAP_MIN_SEC}~{COMMENTER_GAP_MAX_SEC}초** 무작위 대기, **{COMMENTER_SESSION_LIMIT}건**마다 **{COMMENTER_SESSION_REST_SEC // 60}분** 휴식합니다.
+                            - **하루 권장량**: **300건 이하** 작성을 권장하며 초과 시 추가 실행을 금지합니다.
+                            - **제재 방지**: `{{인사}}` 랜덤 치환을 활용하되 스팸 신고 등 정책 위반 시 제재 가능성이 있습니다.
+                            """
+                        )
+        else:
+            col_left, col_right = st.columns([3, 1], gap="medium", vertical_alignment="center")
+            with col_left:
+                _hdr_logo, _hdr_title = st.columns([1, 10], gap="small", vertical_alignment="center")
+                with _hdr_logo:
+                    render_logo_png(_logo_path, width_px=80)
+                with _hdr_title:
+                    st.markdown(
+                        '<h2 style="margin: 0px; padding:0; line-height:1.2; font-size:1.35rem; color: #1e3a8a !important; font-weight: 700 !important;">자동 댓글러</h2>',
+                        unsafe_allow_html=True,
+                    )
+            with col_right:
+                if st.button("📖 사용 가이드 보기", key="guide_btn_open", use_container_width=True):
+                    st.session_state.show_guide = True
+                    st.rerun()
 
 
 _render_commenter_dashboard_header()

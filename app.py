@@ -874,47 +874,78 @@ render_main_top_nav(active="app")
 def _render_cafe_dashboard_header() -> None:
     _logo_path = Path(__file__).resolve().parent / "assets" / "CafeMonster_logo.png"
     
+    if "show_guide" not in st.session_state:
+        st.session_state.show_guide = False
+
     with st.container(key="dashboard_header"):
-        _hdr_logo, _hdr_title = st.columns([1, 10], gap="small")
-        with _hdr_logo:
-            render_logo_png(_logo_path, width_px=92)
-        with _hdr_title:
-            st.markdown(
-                '<h2 style="margin: 0px; padding:0; line-height:1.2; font-size:1.35rem;">네이버카페 게시글·댓글 수집기</h2>',
-                unsafe_allow_html=True,
-            )
-    
-    with st.expander("📖 사용 가이드 (필독)", expanded=False):
-        col1, col2, col3 = st.columns(3, gap="medium")
-        with col1:
-            st.markdown(
-                """
-                **1) 저장 버튼 동작**
-                - **카페명·URL 오른쪽 단추**: 처음엔 **`저장`**. 저장 후에는 **`리셋`** 으로 바뀝니다. 리셋하면 입력칸·게시판 목록 선택 등이 비워지고, 저장돼 있던 설정도 초기화됩니다.
-                - **왼쪽 `게시판 목록 가져오기`**: 스캔한 게시판 목록은 자동 저장됩니다.
-                - **게시판 체크 선택/해제**: 선택값도 자동 저장됩니다.
-                - **가운데 `저장` 버튼**: 기간/필터/시작페이지 등 가운데 섹션 값만 저장합니다.
-                """
-            )
-        with col2:
-            st.markdown(
-                """
-                **2) 기본 수집 동작**
-                - 설정한 기간의 게시글을 수집합니다.
-                - 이미 있는 글은 중복 저장을 피하고, 필요한 값만 보강합니다.
-                - 종료일 기준 자동 시작페이지 모드를 권장합니다.
-                - 처음 수집하는 카페는 **1년 이하 기간으로 나눠서** 순차 수집하는 것을 권장합니다. (예: 2025년 -> 2024년 -> 2023년)
-                """
-            )
-        with col3:
-            st.markdown(
-                """
-                **3) 속도 / 안정성 / ID**
-                - 게시판 목록은 `50개씩 보기` 기준으로 자동 전환해 탐색을 최적화하며 다음 수집 시 자동 시작페이지가 최근 수집 구간 근처로 점프합니다.
-                - 연속 실패가 누적되면 안전 중단 후 체크포인트를 남깁니다.
-                - 상세 보기의 `작성자 ID`는 네이버 내부 식별값(동일 작성자 추적용)이라 길고 복잡할 수 있습니다.
-                """
-            )
+        if st.session_state.show_guide:
+            col_left, col_right = st.columns([1, 3], gap="medium")
+            with col_left:
+                _hdr_logo, _hdr_title = st.columns([1, 4], gap="small", vertical_alignment="center")
+                with _hdr_logo:
+                    render_logo_png(_logo_path, width_px=64)
+                with _hdr_title:
+                    st.markdown(
+                        '<h2 style="margin: 0px; padding:0; line-height:1.2; font-size:1.15rem; color: #1e3a8a !important; font-weight: 700 !important;">네이버카페<br>게시글·댓글 수집기</h2>',
+                        unsafe_allow_html=True,
+                    )
+            with col_right:
+                with st.container(border=True):
+                    c_hdr_title, c_hdr_btn = st.columns([4, 1.2], vertical_alignment="center")
+                    with c_hdr_title:
+                        st.markdown('<p style="margin: 0px; font-weight: 700; color: #1e3a8a; font-size: 1.0rem;">📖 사용 가이드 (필독)</p>', unsafe_allow_html=True)
+                    with c_hdr_btn:
+                        if st.button("❌ 닫기", key="guide_close_btn", use_container_width=True):
+                            st.session_state.show_guide = False
+                            st.rerun()
+                    
+                    st.markdown('<div style="height:0;margin:0.25rem 0 0.75rem 0;border:none;border-top:1px solid #cbd5e1;"></div>', unsafe_allow_html=True)
+                    
+                    col1, col2, col3 = st.columns(3, gap="medium")
+                    with col1:
+                        st.markdown(
+                            """
+                            **1) 저장 버튼 동작**
+                            - **카페명·URL 오른쪽 단추**: 처음엔 **`저장`**. 저장 후에는 **`리셋`** 으로 바뀝니다. 리셋하면 입력칸·게시판 목록 선택 등이 비워지고, 저장돼 있던 설정도 초기화됩니다.
+                            - **왼쪽 `게시판 목록 가져오기`**: 스캔한 게시판 목록은 자동 저장됩니다.
+                            - **게시판 체크 선택/해제**: 선택값도 자동 저장됩니다.
+                            - **가운데 `저장` 버튼**: 기간/필터/시작페이지 등 가운데 섹션 값만 저장합니다.
+                            """
+                        )
+                    with col2:
+                        st.markdown(
+                            """
+                            **2) 기본 수집 동작**
+                            - 설정한 기간의 게시글을 수집합니다.
+                            - 이미 있는 글은 중복 저장을 피하고, 필요한 값만 보강합니다.
+                            - 종료일 기준 자동 시작페이지 모드를 권장합니다.
+                            - 처음 수집하는 카페는 **1년 이하 기간으로 나눠서** 순차 수집하는 것을 권장합니다. (예: 2025년 -> 2024년 -> 2023년)
+                            """
+                        )
+                    with col3:
+                        st.markdown(
+                            """
+                            **3) 속도 / 안정성 / ID**
+                            - 게시판 목록은 `50개씩 보기` 기준으로 자동 전환해 탐색을 최적화하며 다음 수집 시 자동 시작페이지가 최근 수집 구간 근처로 점프합니다.
+                            - 연속 실패가 누적되면 안전 중단 후 체크포인트를 남깁니다.
+                            - 상세 보기의 `작성자 ID`는 네이버 내부 식별값(동일 작성자 추적용)이라 길고 복잡할 수 있습니다.
+                            """
+                        )
+        else:
+            col_left, col_right = st.columns([3, 1], gap="medium", vertical_alignment="center")
+            with col_left:
+                _hdr_logo, _hdr_title = st.columns([1, 10], gap="small", vertical_alignment="center")
+                with _hdr_logo:
+                    render_logo_png(_logo_path, width_px=80)
+                with _hdr_title:
+                    st.markdown(
+                        '<h2 style="margin: 0px; padding:0; line-height:1.2; font-size:1.35rem; color: #1e3a8a !important; font-weight: 700 !important;">네이버카페 게시글·댓글 수집기</h2>',
+                        unsafe_allow_html=True,
+                    )
+            with col_right:
+                if st.button("📖 사용 가이드 보기", key="guide_btn_open", use_container_width=True):
+                    st.session_state.show_guide = True
+                    st.rerun()
 
 
 _render_cafe_dashboard_header()

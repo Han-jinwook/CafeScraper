@@ -887,46 +887,77 @@ def _ensure_event_analysis_reports(*, force: bool = False) -> None:
 def _render_event_dashboard_header() -> None:
     """메인·논문 수집과 동일: 로고 + 제목 + 가이드."""
     _logo_path = Path(__file__).resolve().parent.parent / "assets" / "CafeMonster_logo.png"
-    with st.container(key="dashboard_header"):
-        _hdr_logo, _hdr_title = st.columns([1, 10], gap="small")
-        with _hdr_logo:
-            render_logo_png(_logo_path, width_px=92)
-        with _hdr_title:
-            st.markdown(
-                '<h2 style="margin: 0px; padding:0; line-height:1.2; font-size:1.35rem;">'
-                "이벤트 댓글 분석 스튜디오</h2>",
-                unsafe_allow_html=True,
-            )
     
-    with st.expander("📖 사용 가이드 (필독)", expanded=False):
-        col1, col2, col3 = st.columns(3, gap="medium")
-        with col1:
-            st.markdown(
-                """
-                **1) 이벤트 집계 및 순서**
-                - 조건(1) 게시글 수집·분석, 조건(2) 댓글 수집·분석, 조건(3) 등급별 방문수 중 **1개만 선택**하여 실행합니다.
-                - 카페명·URL을 빈 상태에서 입력 후 **`저장`**합니다 (저장 후에는 **`리셋`**으로 변경됨).
-                - 1단계 브라우저를 열고 로그인 후, 조건 1개를 선택하여 수집을 시작합니다.
-                """
-            )
-        with col2:
-            st.markdown(
-                """
-                **2) 날짜 및 집계 규칙**
-                - 댓글 목표 기간은 수집 기간과 동일합니다.
-                - 게시글 탐색 종료일은 실수 방지를 위해 수집 기간 종료일과 자동 동기화(읽기 전용)됩니다.
-                - 조건1·조건2 각각 티켓 집계표와 CSV 다운로드 제공하며, `최종 집계`에서 CSV 2개를 합산할 수 있습니다.
-                """
-            )
-        with col3:
-            st.markdown(
-                """
-                **3) 티켓 부여 규칙**
-                - 조건(1): `글자수` + `사진` + `게시판 가산` (예: `*일기 2`, `*후기/1` 형식, 와일드카드 사용 가능).
-                - 조건(2): `댓글 글자수 + 이미지 티켓`에 `한 댓글 최대 티켓 수` 상한 적용.
-                - 메인 크롤링 실행 중에는 이벤트 수집을 시작할 수 없습니다.
-                """
-            )
+    if "show_guide" not in st.session_state:
+        st.session_state.show_guide = False
+
+    with st.container(key="dashboard_header"):
+        if st.session_state.show_guide:
+            col_left, col_right = st.columns([1, 3], gap="medium")
+            with col_left:
+                _hdr_logo, _hdr_title = st.columns([1, 4], gap="small", vertical_alignment="center")
+                with _hdr_logo:
+                    render_logo_png(_logo_path, width_px=64)
+                with _hdr_title:
+                    st.markdown(
+                        '<h2 style="margin: 0px; padding:0; line-height:1.2; font-size:1.15rem; color: #1e3a8a !important; font-weight: 700 !important;">이벤트 댓글<br>분석 스튜디오</h2>',
+                        unsafe_allow_html=True,
+                    )
+            with col_right:
+                with st.container(border=True):
+                    c_hdr_title, c_hdr_btn = st.columns([4, 1.2], vertical_alignment="center")
+                    with c_hdr_title:
+                        st.markdown('<p style="margin: 0px; font-weight: 700; color: #1e3a8a; font-size: 1.0rem;">📖 사용 가이드 (필독)</p>', unsafe_allow_html=True)
+                    with c_hdr_btn:
+                        if st.button("❌ 닫기", key="guide_close_btn", use_container_width=True):
+                            st.session_state.show_guide = False
+                            st.rerun()
+                    
+                    st.markdown('<div style="height:0;margin:0.25rem 0 0.75rem 0;border:none;border-top:1px solid #cbd5e1;"></div>', unsafe_allow_html=True)
+                    
+                    col1, col2, col3 = st.columns(3, gap="medium")
+                    with col1:
+                        st.markdown(
+                            """
+                            **1) 이벤트 집계 및 순서**
+                            - 조건(1) 게시글 수집·분석, 조건(2) 댓글 수집·분석, 조건(3) 등급별 방문수 중 **1개만 선택**하여 실행합니다.
+                            - 카페명·URL을 빈 상태에서 입력 후 **`저장`**합니다 (저장 후에는 **`리셋`**으로 변경됨).
+                            - 1단계 브라우저를 열고 로그인 후, 조건 1개를 선택하여 수집을 시작합니다.
+                            """
+                        )
+                    with col2:
+                        st.markdown(
+                            """
+                            **2) 날짜 및 집계 규칙**
+                            - 댓글 목표 기간은 수집 기간과 동일합니다.
+                            - 게시글 탐색 종료일은 실수 방지를 위해 수집 기간 종료일과 자동 동기화(읽기 전용)됩니다.
+                            - 조건1·조건2 각각 티켓 집계표와 CSV 다운로드 제공하며, `최종 집계`에서 CSV 2개를 합산할 수 있습니다.
+                            """
+                        )
+                    with col3:
+                        st.markdown(
+                            """
+                            **3) 티켓 부여 규칙**
+                            - 조건(1): `글자수` + `사진` + `게시판 가산` (예: `*일기 2`, `*후기/1` 형식, 와일드카드 사용 가능).
+                            - 조건(2): `댓글 글자수 + 이미지 티켓`에 `한 댓글 최대 티켓 수` 상한 적용.
+                            - 메인 크롤링 실행 중에는 이벤트 수집을 시작할 수 없습니다.
+                            """
+                        )
+        else:
+            col_left, col_right = st.columns([3, 1], gap="medium", vertical_alignment="center")
+            with col_left:
+                _hdr_logo, _hdr_title = st.columns([1, 10], gap="small", vertical_alignment="center")
+                with _hdr_logo:
+                    render_logo_png(_logo_path, width_px=80)
+                with _hdr_title:
+                    st.markdown(
+                        '<h2 style="margin: 0px; padding:0; line-height:1.2; font-size:1.35rem; color: #1e3a8a !important; font-weight: 700 !important;">이벤트 댓글 분석 스튜디오</h2>',
+                        unsafe_allow_html=True,
+                    )
+            with col_right:
+                if st.button("📖 사용 가이드 보기", key="guide_btn_open", use_container_width=True):
+                    st.session_state.show_guide = True
+                    st.rerun()
 
 
 _render_event_dashboard_header()
