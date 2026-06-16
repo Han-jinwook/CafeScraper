@@ -865,9 +865,9 @@ if "_extracted_boards_cafe_sig" not in st.session_state:
         str(config.get("cafe_url", "") or "")
     )
 if "cafe_name_input" not in st.session_state:
-    st.session_state.cafe_name_input = ""
+    st.session_state.cafe_name_input = str(config.get("cafe_name", "") or "")
 if "cafe_url_input" not in st.session_state:
-    st.session_state.cafe_url_input = ""
+    st.session_state.cafe_url_input = str(config.get("cafe_url", "") or "")
 if "selected_board_urls" not in st.session_state:
     cfg_selected_urls = config.get("selected_board_urls", [])
     if isinstance(cfg_selected_urls, list) and cfg_selected_urls:
@@ -882,7 +882,7 @@ if "board_picker_version" not in st.session_state:
 if "board_picker_options_sig" not in st.session_state:
     st.session_state.board_picker_options_sig = ""
 if "cafe_connect_side_mode" not in st.session_state:
-    st.session_state.cafe_connect_side_mode = "save"
+    st.session_state.cafe_connect_side_mode = "reset" if str(config.get("cafe_url", "") or "").strip() else "save"
 if "auto_login_after_reset_save_mode" not in st.session_state:
     st.session_state.auto_login_after_reset_save_mode = not bool(str(config.get("naver_id", "") or "").strip())
 
