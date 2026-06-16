@@ -153,6 +153,12 @@ def render_main_top_nav(*, active: str) -> None:
             li[role="option"]:hover {{
                 background-color: #f8fafc !important;
             }}
+
+            /* Edge 브라우저의 자체 비밀번호 표시/숨김 및 지우기(X) 아이콘 숨김 */
+            input::-ms-reveal,
+            input::-ms-clear {{
+                display: none !important;
+            }}
         </style>
         """,
         unsafe_allow_html=True,
