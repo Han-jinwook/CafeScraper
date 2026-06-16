@@ -1137,20 +1137,23 @@ with _t1:
                     "네이버 아이디",
                     key="naver_id_input",
                     placeholder="아이디 입력",
-                    on_change=on_auto_login_change,
                 )
                 naver_pw = st.text_input(
                     "네이버 비밀번호",
                     key="naver_pw_input",
                     type="password",
                     placeholder="비밀번호 입력",
-                    on_change=on_auto_login_change,
                 )
             if auto_login_enabled and (not naver_id or not naver_pw):
                 st.warning("자동로그인을 켜려면 아이디/비밀번호를 모두 입력해주세요.")
             with _al_btn_col:
                 st.markdown("<div style='margin-top: 88px;'></div>", unsafe_allow_html=True)
-                _al_save_mode = bool(st.session_state.get("auto_login_after_reset_save_mode", False))
+                _al_save_mode = (
+                    bool(st.session_state.get("auto_login_after_reset_save_mode", False))
+                    or str(st.session_state.get("naver_id_input", "") or "").strip() != str(config.get("naver_id", "") or "").strip()
+                    or str(st.session_state.get("naver_pw_input", "") or "") != str(config.get("naver_pw", "") or "")
+                    or bool(st.session_state.get("auto_login_enabled_input", True)) != bool(config.get("auto_login_enabled", True))
+                )
                 _al_lbl = "저장" if _al_save_mode else "리셋"
                 if st.button(_al_lbl, key="auto_login_side_action_btn", use_container_width=True):
                     if _al_save_mode:

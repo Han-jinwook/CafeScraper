@@ -1177,18 +1177,21 @@ with _ev1:
                     "네이버 아이디",
                     key="event_naver_id_input",
                     placeholder="아이디 입력",
-                    on_change=on_event_auto_login_change,
                 )
                 event_naver_pw = st.text_input(
                     "네이버 비밀번호",
                     key="event_naver_pw_input",
                     type="password",
                     placeholder="비밀번호 입력",
-                    on_change=on_event_auto_login_change,
                 )
             with _ev_al_btn_col:
                 st.markdown("<div style='margin-top: 88px;'></div>", unsafe_allow_html=True)
-                _ev_al_save_mode = bool(st.session_state.get("event_auto_login_after_reset_save_mode", False))
+                _ev_al_save_mode = (
+                    bool(st.session_state.get("event_auto_login_after_reset_save_mode", False))
+                    or str(st.session_state.get("event_naver_id_input", "") or "").strip() != str(config.get("event_naver_id", "") or "").strip()
+                    or str(st.session_state.get("event_naver_pw_input", "") or "") != str(config.get("event_naver_pw", "") or "")
+                    or bool(st.session_state.get("event_auto_login_enabled_input", True)) != bool(config.get("event_auto_login_enabled", True))
+                )
                 _ev_al_lbl = "저장" if _ev_al_save_mode else "리셋"
                 if st.button(_ev_al_lbl, key="event_auto_login_side_action_btn", use_container_width=True):
                     if _ev_al_save_mode:

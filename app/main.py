@@ -35,9 +35,11 @@ app.add_middleware(
     allow_headers=["*"],  # 모든 헤더 허용
 )
 
-SESSIONS_DIR = os.path.abspath(os.path.join(os.getcwd(), "sessions"))
-OUTPUTS_DIR = os.path.abspath(os.path.join(os.getcwd(), "outputs"))
-SNAPSHOTS_DIR = os.path.abspath(os.path.join(os.getcwd(), "snapshots"))
+from app.utils.paths import get_user_data_dir
+_user_data_dir = get_user_data_dir()
+SESSIONS_DIR = os.path.abspath(str(_user_data_dir / "sessions"))
+OUTPUTS_DIR = os.path.abspath(str(_user_data_dir / "outputs"))
+SNAPSHOTS_DIR = os.path.abspath(str(_user_data_dir / "snapshots"))
 STATIC_DIR = os.path.abspath(os.path.join(os.getcwd(), "app", "static"))
 
 for _d in (SESSIONS_DIR, OUTPUTS_DIR, SNAPSHOTS_DIR, STATIC_DIR):

@@ -16,19 +16,70 @@ def get_project_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def get_user_data_dir() -> Path:
+    """
+    사용자 데이터 저장 루트.
+    우선순위: CAFESCRAPER_DATA_DIR(환경변수) → %APPDATA%/CafeScraper → ~/.CafeScraper
+    """
+    env_dir = (os.getenv("CAFESCRAPER_DATA_DIR") or "").strip()
+    if env_dir:
+        root = Path(env_dir).expanduser()
+    else:
+        appdata = os.getenv("APPDATA")
+        if appdata:
+            root = Path(appdata) / "CafeScraper"
+        else:
+            root = Path.home() / ".CafeScraper"
+    root.mkdir(parents=True, exist_ok=True)
+    
+    # 레거시 데이터가 프로젝트 루트(CWD 등)에 있으면 새 APPDATA 위치로 자동 마이그레이션
+    try:
+        _migrate_legacy_data(get_project_root(), root)
+    except Exception:
+        pass
+        
+    return root
+
+
+def _migrate_legacy_data(legacy_root: Path, new_root: Path) -> None:
+    import shutil
+    if legacy_root.resolve() == new_root.resolve():
+        return
+        
+    # 파일 마이그레이션
+    for filename in ["crawler_config.json", "comment_templates.json"]:
+        src = legacy_root / filename
+        dst = new_root / filename
+        if src.exists() and not dst.exists():
+            try:
+                shutil.copy2(src, dst)
+            except Exception:
+                pass
+                
+    # 디렉토리 마이그레이션
+    for dirname in ["logs", "data", "sessions", "snapshots", "outputs"]:
+        src = legacy_root / dirname
+        dst = new_root / dirname
+        if src.exists() and src.is_dir() and not dst.exists():
+            try:
+                shutil.copytree(src, dst, dirs_exist_ok=True)
+            except Exception:
+                pass
+
+
 def get_config_path() -> Path:
     """크롤러 설정 파일 경로."""
-    return get_project_root() / "crawler_config.json"
+    return get_user_data_dir() / "crawler_config.json"
 
 
 def get_comment_templates_path() -> Path:
     """자동댓글러 저장 템플릿 JSON (exe/프로젝트 루트와 동일 규칙 — crawler_config 옆)."""
-    return get_project_root() / "comment_templates.json"
+    return get_user_data_dir() / "comment_templates.json"
 
 
 def get_logs_dir() -> Path:
     """로그 폴더 경로."""
-    return get_project_root() / "logs"
+    return get_user_data_dir() / "logs"
 
 
 def _safe_mkdir(p: Path) -> Path:
@@ -37,7 +88,7 @@ def _safe_mkdir(p: Path) -> Path:
         p.parent.mkdir(parents=True, exist_ok=True)
         return p
     except (PermissionError, OSError):
-        fallback = Path.cwd() / "data" / p.name
+        fallback = get_user_data_dir() / "data" / p.name
         fallback.parent.mkdir(parents=True, exist_ok=True)
         return fallback
 
@@ -59,7 +110,7 @@ def resolve_db_path(config_db_path: str | None = None) -> Path:
         p = Path(str(config_db_path)).expanduser().resolve()
         return _safe_mkdir(p)
 
-    p = (get_project_root() / "data" / "cafe_data.db").resolve()
+    p = (get_user_data_dir() / "data" / "cafe_data.db").resolve()
     return _safe_mkdir(p)
 
 
@@ -80,9 +131,8 @@ def resolve_event_db_path(config_event_db_path: str | None = None) -> Path:
         p = Path(str(config_event_db_path)).expanduser().resolve()
         return _safe_mkdir(p)
 
-    p = (get_project_root() / "data" / "event_analysis.db").resolve()
+    p = (get_user_data_dir() / "data" / "event_analysis.db").resolve()
     return _safe_mkdir(p)
-
 
 
 def resolve_commenter_db_path(config_commenter_db_path: str | None = None) -> Path:
@@ -99,5 +149,5 @@ def resolve_commenter_db_path(config_commenter_db_path: str | None = None) -> Pa
         p = Path(str(config_commenter_db_path)).expanduser().resolve()
         return _safe_mkdir(p)
 
-    p = (get_project_root() / "data" / "auto_commenter.db").resolve()
+    p = (get_user_data_dir() / "data" / "auto_commenter.db").resolve()
     return _safe_mkdir(p)
