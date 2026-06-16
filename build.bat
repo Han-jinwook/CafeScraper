@@ -132,6 +132,7 @@ set "HASPERSIST=0"
 if defined SRCROOT (
     if exist "%SRCROOT%\data" set "HASPERSIST=1"
     if exist "%SRCROOT%\crawler_config.json" set "HASPERSIST=1"
+    if exist "%SRCROOT%\user_settings.json" set "HASPERSIST=1"
     if exist "%SRCROOT%\comment_templates.json" set "HASPERSIST=1"
     if exist "%SRCROOT%\sessions\" set "HASPERSIST=1"
     if exist "%SRCROOT%\snapshots\" set "HASPERSIST=1"
@@ -149,6 +150,7 @@ set "PRIORHAS=0"
 if defined PRIORROOT (
     if exist "%PRIORROOT%\data" set "PRIORHAS=1"
     if exist "%PRIORROOT%\crawler_config.json" set "PRIORHAS=1"
+    if exist "%PRIORROOT%\user_settings.json" set "PRIORHAS=1"
     if exist "%PRIORROOT%\comment_templates.json" set "PRIORHAS=1"
     if exist "%PRIORROOT%\sessions\" set "PRIORHAS=1"
     if exist "%PRIORROOT%\snapshots\" set "PRIORHAS=1"
@@ -163,6 +165,7 @@ set LEG_LEGACY=%~dp0dist\CafeScraper
 set "LEGHAS=0"
 if exist "%LEG_LEGACY%\data\" set "LEGHAS=1"
 if exist "%LEG_LEGACY%\crawler_config.json" set "LEGHAS=1"
+if exist "%LEG_LEGACY%\user_settings.json" set "LEGHAS=1"
 if exist "%LEG_LEGACY%\comment_templates.json" set "LEGHAS=1"
 if exist "%LEG_LEGACY%\sessions\" set "LEGHAS=1"
 if exist "%LEG_LEGACY%\snapshots\" set "LEGHAS=1"
@@ -192,6 +195,14 @@ if defined BK_SOURCE (
         copy /y "%BK_SOURCE%\crawler_config.json" "%~dp0dist\_user_data_backup\" >nul
         if errorlevel 1 (
             echo [ERROR] Backup failed ^(crawler_config.json^).
+            goto :fail_pause
+        )
+    )
+
+    if exist "%BK_SOURCE%\user_settings.json" (
+        copy /y "%BK_SOURCE%\user_settings.json" "%~dp0dist\_user_data_backup\" >nul
+        if errorlevel 1 (
+            echo [ERROR] Backup failed ^(user_settings.json^).
             goto :fail_pause
         )
     )
@@ -303,6 +314,11 @@ if exist "%~dp0dist\_user_data_backup\" (
 
     if exist "%~dp0dist\_user_data_backup\crawler_config.json" (
         copy /y "%~dp0dist\_user_data_backup\crawler_config.json" "%~dp0dist\%DISTDIR%\" >nul
+        if errorlevel 1 set "RESTORE_ERR=1"
+    )
+
+    if exist "%~dp0dist\_user_data_backup\user_settings.json" (
+        copy /y "%~dp0dist\_user_data_backup\user_settings.json" "%~dp0dist\%DISTDIR%\" >nul
         if errorlevel 1 set "RESTORE_ERR=1"
     )
 

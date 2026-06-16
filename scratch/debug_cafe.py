@@ -9,7 +9,9 @@ from selenium.webdriver.common.by import By
 
 def main():
     # Load config
-    config_path = "crawler_config.json"
+    config_path = "user_settings.json"
+    if not os.path.exists(config_path):
+        config_path = "crawler_config.json"
     if not os.path.exists(config_path):
         print("Config not found")
         return

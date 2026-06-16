@@ -35,10 +35,10 @@ if (-not (Test-Path -LiteralPath $exePath)) {
 
 # 배포 ZIP에는 사용자 DB·설정이 들어 있는 항목을 넣지 않음 (빌드 직전 복원된 dist 대비).
 # - data/: SQLite 등
-# - crawler_config.json: 로컬 계정/경로 (개발자 테스트 복원본이 그대로 들어가면 유출 위험)
+# - user_settings.json / crawler_config.json: 로컬 계정/경로 (개발자 테스트 복원본이 그대로 들어가면 유출 위험)
 $items = @(Get-ChildItem -LiteralPath $distDir -Force | Where-Object {
         $n = $_.Name
-        ($n -ine 'data') -and ($n -ine 'crawler_config.json') -and ($n -ine 'comment_templates.json')
+        ($n -ine 'data') -and ($n -ine 'crawler_config.json') -and ($n -ine 'user_settings.json') -and ($n -ine 'comment_templates.json')
     })
 if ($items.Count -lt 1) {
     Write-Error "dist\$distFolder 내용이 비정상적으로 적습니다. (data 제외 항목 수: $($items.Count))"
@@ -87,7 +87,7 @@ if (-not $packed) {
     Write-Host "Falling back: copy to staging folder then ZIP: $stage"
     try {
         New-Item -ItemType Directory -Path $stage -Force | Out-Null
-        robocopy $distDir $stage /E /XD data /XF crawler_config.json comment_templates.json /COPY:DAT /R:2 /W:3 /NFL /NDL /NJH /NJS | Out-Null
+        robocopy $distDir $stage /E /XD data /XF crawler_config.json user_settings.json comment_templates.json /COPY:DAT /R:2 /W:3 /NFL /NDL /NJH /NJS | Out-Null
         if ($LASTEXITCODE -ge 8) {
             throw "robocopy failed with exit $LASTEXITCODE"
         }

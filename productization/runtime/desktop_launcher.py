@@ -48,7 +48,7 @@ def main() -> int:
     parser.add_argument("--title", required=True, help="창 제목")
     parser.add_argument("--license-file", default="license.lic")
     parser.add_argument("--public-key", default="ed25519_public.pem")
-    parser.add_argument("--config", default="crawler_config.json")
+    parser.add_argument("--config", default="user_settings.json")
     args = parser.parse_args()
 
     root = Path.cwd()

@@ -15,7 +15,7 @@
 
 | 용도 | 기본 파일 | 환경 변수(우선) | 설정 키(차순) |
 |------|-----------|-----------------|---------------|
-| 카페 메인 수집 | `data/cafe_data.db` | `CAFESCRAPER_DB_PATH` | `crawler_config.json` → `db_path` |
+| 카페 메인 수집 | `data/cafe_data.db` | `CAFESCRAPER_DB_PATH` | `user_settings.json` → `db_path` |
 | 이벤트 댓글·추첨 | `data/event_analysis.db` | `CAFESCRAPER_EVENT_DB_PATH` | `event_db_path` |
 | 논문(위키) 수집 | `data/paper_collection.db` | `CAFESCRAPER_PAPER_DB_PATH` | `paper_db_path` |
 | 자동 댓글러 | `data/auto_commenter.db` | `CAFESCRAPER_COMMENTER_DB_PATH` | `commenter_db_path` |

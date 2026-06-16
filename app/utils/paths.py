@@ -43,20 +43,45 @@ def get_user_data_dir() -> Path:
 
 def _migrate_legacy_data(legacy_root: Path, new_root: Path) -> None:
     import shutil
+    
+    # 0. APPDATA 내부 자체 마이그레이션 (crawler_config.json -> user_settings.json)
+    appdata_old_cfg = new_root / "crawler_config.json"
+    appdata_new_cfg = new_root / "user_settings.json"
+    if appdata_old_cfg.exists() and not appdata_new_cfg.exists():
+        try:
+            shutil.copy2(appdata_old_cfg, appdata_new_cfg)
+        except Exception:
+            pass
+
     if legacy_root.resolve() == new_root.resolve():
         return
         
-    # 파일 마이그레이션
-    for filename in ["crawler_config.json", "comment_templates.json"]:
-        src = legacy_root / filename
-        dst = new_root / filename
-        if src.exists() and not dst.exists():
-            try:
-                shutil.copy2(src, dst)
-            except Exception:
-                pass
+    # 1. crawler_config.json (레거시 루트) -> user_settings.json (APPDATA)
+    legacy_old_cfg = legacy_root / "crawler_config.json"
+    if legacy_old_cfg.exists() and not appdata_new_cfg.exists():
+        try:
+            shutil.copy2(legacy_old_cfg, appdata_new_cfg)
+        except Exception:
+            pass
+
+    # 2. user_settings.json (레거시 루트) -> user_settings.json (APPDATA)
+    legacy_new_cfg = legacy_root / "user_settings.json"
+    if legacy_new_cfg.exists() and not appdata_new_cfg.exists():
+        try:
+            shutil.copy2(legacy_new_cfg, appdata_new_cfg)
+        except Exception:
+            pass
+
+    # 3. comment_templates.json 마이그레이션
+    src_tpl = legacy_root / "comment_templates.json"
+    dst_tpl = new_root / "comment_templates.json"
+    if src_tpl.exists() and not dst_tpl.exists():
+        try:
+            shutil.copy2(src_tpl, dst_tpl)
+        except Exception:
+            pass
                 
-    # 디렉토리 마이그레이션
+    # 4. 디렉토리 마이그레이션
     for dirname in ["logs", "data", "sessions", "snapshots", "outputs"]:
         src = legacy_root / dirname
         dst = new_root / dirname
@@ -69,7 +94,7 @@ def _migrate_legacy_data(legacy_root: Path, new_root: Path) -> None:
 
 def get_config_path() -> Path:
     """크롤러 설정 파일 경로."""
-    return get_user_data_dir() / "crawler_config.json"
+    return get_user_data_dir() / "user_settings.json"
 
 
 def get_comment_templates_path() -> Path:

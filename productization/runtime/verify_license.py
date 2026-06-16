@@ -17,7 +17,7 @@ def main() -> int:
     parser.add_argument("--product", required=True, help="제품 키")
     parser.add_argument("--license-file", default="license.lic", help="라이선스 파일 경로")
     parser.add_argument("--public-key", default="ed25519_public.pem", help="공개키 파일 경로")
-    parser.add_argument("--config", default="crawler_config.json", help="설정 파일 경로")
+    parser.add_argument("--config", default="user_settings.json", help="설정 파일 경로")
     args = parser.parse_args()
 
     lic_path = Path(args.license_file)

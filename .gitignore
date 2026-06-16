@@ -34,7 +34,8 @@ debug_*.html
 debug_*.png
 
 ## Local config (uncomment if you do NOT want to track UI settings)
-# crawler_config.json
+# user_settings.json
+user_settings.json
 
 ## PyInstaller build output
 dist/

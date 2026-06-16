@@ -27,4 +27,4 @@ pip install -r requirements.txt
 python run_app.py
 ```
 
-설정은 프로젝트 루트 `crawler_config.json`을 사용합니다. **배포 빌드**는 `version.txt`를 맞춘 뒤 `build.bat`을 실행하면 **`dist\cafescraper_V{semver}\`** 폴더에 `CafeScraper.exe`가 생성됩니다. ZIP 배포는 `package.bat` 또는 `scripts\pack_dist.ps1`을 사용합니다.
+설정은 프로젝트 루트 `user_settings.json`을 사용합니다. **배포 빌드**는 `version.txt`를 맞춘 뒤 `build.bat`을 실행하면 **`dist\cafescraper_V{semver}\`** 폴더에 `CafeScraper.exe`가 생성됩니다. ZIP 배포는 `package.bat` 또는 `scripts\pack_dist.ps1`을 사용합니다.

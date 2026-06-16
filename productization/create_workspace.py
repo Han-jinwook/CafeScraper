@@ -139,7 +139,7 @@ def render_run_desktop_bat(profile_key: str, profile: dict) -> str:
         f"--title \"{title}\" "
         "--license-file \"license.lic\" "
         "--public-key \"ed25519_public.pem\" "
-        "--config \"crawler_config.json\"\n"
+        "--config \"user_settings.json\"\n"
     )
 
 
@@ -162,8 +162,8 @@ def build_workspace(profile_key: str, output_root: Path) -> Path:
     copy_file(".gitignore", target)
     copy_file("app.py", target)
     copy_file_to("_archive_scripts/cafe_post_comment_crawler.py", target / "cafe_post_comment_crawler.py")
-    if (ROOT / "crawler_config.json").exists():
-        copy_file("crawler_config.json", target)
+    if (ROOT / "user_settings.json").exists():
+        copy_file("user_settings.json", target)
     copy_tree("app", target)
     copy_tree_to("productization/runtime", target / "runtime")
     logo_path = copy_brand_logo(target)

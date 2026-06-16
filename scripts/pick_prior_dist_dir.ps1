@@ -31,12 +31,14 @@ foreach ($d in Get-ChildItem -LiteralPath $rootPath -Directory -ErrorAction Sile
     }
 
     $jp = Join-Path $d.FullName 'crawler_config.json'
+    $us = Join-Path $d.FullName 'user_settings.json'
     $tpl = Join-Path $d.FullName 'comment_templates.json'
     $dat = Join-Path $d.FullName 'data'
     $sess = Join-Path $d.FullName 'sessions'
     $snap = Join-Path $d.FullName 'snapshots'
     $hasPersist =
         ((Test-Path -LiteralPath $jp) -or
+        (Test-Path -LiteralPath $us) -or
         (Test-Path -LiteralPath $tpl) -or
         (Test-Path -LiteralPath $dat) -or
         (Test-Path -LiteralPath $sess) -or
