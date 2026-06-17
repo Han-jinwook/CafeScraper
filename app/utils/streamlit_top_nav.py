@@ -94,7 +94,7 @@ def render_main_top_nav(*, active: str) -> None:
             }}
             /* 제목 헤더 컨테이너: 상단 여백 축소 및 정렬 */
             [class*="st-key-dashboard_header"] {{
-                margin-top: -2.6rem !important;
+                margin-top: -0.65rem !important;
             }}
             [class*="st-key-{_TOP_NAV_CONTAINER_KEY}"] div[data-testid="column"] {{
                 flex: 1 1 0% !important;
