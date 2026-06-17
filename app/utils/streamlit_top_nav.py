@@ -281,6 +281,11 @@ def inject_settings_three_cards_css(*, key_basename: str) -> None:
             for i in (1, 2, 3)
         )
 
+    sel_wrapper = ",\n    ".join(
+        f'div[data-testid="stVerticalBlockBorderWrapper"]:has(div[class*="st-key-"][class*="-{key_basename}_{i}"])'
+        for i in (1, 2, 3)
+    )
+
     st.markdown(
         f"""
     <style>
@@ -290,7 +295,7 @@ def inject_settings_three_cards_css(*, key_basename: str) -> None:
         padding: 0 !important;
         box-shadow: none !important;
     }}
-    {sel_desc('[data-testid="stVerticalBlockBorderWrapper"]')} {{
+    {sel_wrapper} {{
         background: #ffffff !important;
         border: 1.5px solid #8c9ba5 !important;
         border-radius: 8px !important;
