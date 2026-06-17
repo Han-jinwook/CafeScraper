@@ -1302,7 +1302,17 @@ with _t1:
         st.markdown("<hr style='margin: 0.5rem 0; border: none; border-top: 1px dashed #e2e8f0;'>", unsafe_allow_html=True)
         selected_urls_str = str(config.get("board_url", "") or "")
         if st.session_state.extracted_boards:
-                st.markdown(f"##### 📋 게시판 선택 (총 {len(st.session_state.extracted_boards)}개)")
+                total_board_count = len(st.session_state.extracted_boards)
+                selected_count_header = st.empty()
+                _selected_now = len(list(dict.fromkeys([u for u in (st.session_state.get("selected_board_urls", []) or []) if u])))
+                selected_count_header.markdown(
+                    f"<div style='display:flex;justify-content:space-between;align-items:center;gap:12px;white-space:nowrap;"
+                    f"padding:4px 0 8px 0;margin:2px 0 6px 0;'>"
+                    f"<div style='font-size:1.0rem;font-weight:700;line-height:1.2;color:#1e3a8a;'>📋 게시판 선택 (총 {total_board_count}개)</div>"
+                    f"<div style='font-size:0.92rem;color:#475569;'>[{_selected_now}개 게시판 선택]</div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
                 all_boards = st.session_state.extracted_boards
                 board_options = {f"{i+1:02d}. {b['name']}": b["url"] for i, b in enumerate(all_boards)}
 
@@ -1353,15 +1363,11 @@ with _t1:
                         # combo 위젯 생성 전에만 상태를 조정해야 Streamlit 예외를 피할 수 있음
                         st.session_state[combo_key] = False
                         st.session_state[combo_prev_key] = False
-                    _combo_col, _count_col = st.columns([2.6, 1.4])
-                    with _combo_col:
-                        combo_checked_now = st.checkbox(
-                            "✨ 전체 게시판 선택",
-                            key=combo_key,
-                            help="한 번에 전체 게시판을 체크합니다. 이후 제외할 게시판만 해제하세요.",
-                        )
-                    with _count_col:
-                        selected_count_placeholder = st.empty()
+                    combo_checked_now = st.checkbox(
+                        "✨ 전체 게시판 선택",
+                        key=combo_key,
+                        help="한 번에 전체 게시판을 체크합니다. 이후 제외할 게시판만 해제하세요.",
+                    )
                     combo_prev = bool(st.session_state.get(combo_prev_key, False))
                     if combo_checked_now and (not combo_prev):
                         for label in options_list:
@@ -1480,9 +1486,12 @@ with _t1:
                         cfg_now["board_url"] = "\n".join(selected_urls_dedup)
                         save_config(cfg_now)
 
-                    selected_count_placeholder.markdown(
-                        f"<div style='font-size:0.92rem;color:#475569;text-align:right;"
-                        f"padding-top:6px;'>[{len(selected_urls_dedup)}개 게시판 선택]</div>",
+                    selected_count_header.markdown(
+                        f"<div style='display:flex;justify-content:space-between;align-items:center;gap:12px;white-space:nowrap;"
+                        f"padding:4px 0 8px 0;margin:2px 0 6px 0;'>"
+                        f"<div style='font-size:1.0rem;font-weight:700;line-height:1.2;color:#1e3a8a;'>📋 게시판 선택 (총 {total_board_count}개)</div>"
+                        f"<div style='font-size:0.92rem;color:#475569;'>[{len(selected_urls_dedup)}개 게시판 선택]</div>"
+                        f"</div>",
                         unsafe_allow_html=True,
                     )
 
