@@ -1180,7 +1180,7 @@ with _t1:
                 st.session_state._auto_login_save_ack = False
                 st.success("자동로그인 설정을 저장했습니다.")
 
-        scan_clicked = st.button("🔍 게시판 목록 가져오기", help="현재 열린 카페 화면에서 모든 게시판 목록을 스캔합니다.", use_container_width=True)
+        scan_clicked = st.button("🔍 게시판 목록 가져오기", use_container_width=True)
         if scan_clicked:
             if not st.session_state.get("crawler") or not getattr(st.session_state.crawler, "driver", None):
                 st.error("먼저 1단계 브라우저를 열어주세요.")
