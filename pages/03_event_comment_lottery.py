@@ -173,7 +173,7 @@ if "event_naver_id_input" not in st.session_state:
 if "event_naver_pw_input" not in st.session_state:
     st.session_state.event_naver_pw_input = str(config.get("event_naver_pw", "") or "")
 if "event_auto_login_enabled_input" not in st.session_state:
-    st.session_state.event_auto_login_enabled_input = bool(config.get("event_auto_login_enabled", True))
+    st.session_state.event_auto_login_enabled_input = True
 
 def on_event_auto_login_change():
     st.session_state.event_auto_login_expanded = True
@@ -1156,11 +1156,11 @@ with _ev1:
         _event_auto_login_title = "🔐 자동로그인 설정 (완료)" if _event_auto_login_done else "🔐 자동로그인 설정"
         with st.expander(_event_auto_login_title, expanded=st.session_state.event_auto_login_expanded):
             if st.session_state.pop("_event_pending_clear_auto_login_inputs", False):
-                st.session_state.pop("event_auto_login_enabled_input", None)
-                st.session_state.pop("event_naver_id_input", None)
-                st.session_state.pop("event_naver_pw_input", None)
+                st.session_state.event_auto_login_enabled_input = True
+                st.session_state.event_naver_id_input = ""
+                st.session_state.event_naver_pw_input = ""
             if "event_auto_login_enabled_input" not in st.session_state:
-                st.session_state.event_auto_login_enabled_input = bool(config.get("event_auto_login_enabled", True))
+                st.session_state.event_auto_login_enabled_input = True
             event_auto_login_enabled = st.checkbox(
                 "브라우저 열 때 자동로그인 실행",
                 key="event_auto_login_enabled_input",

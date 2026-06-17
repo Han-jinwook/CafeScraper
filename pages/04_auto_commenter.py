@@ -225,7 +225,7 @@ if "commenter_naver_id_input" not in st.session_state:
 if "commenter_naver_pw_input" not in st.session_state:
     st.session_state.commenter_naver_pw_input = str(config.get("commenter_naver_pw", "") or "")
 if "commenter_auto_login_enabled_input" not in st.session_state:
-    st.session_state.commenter_auto_login_enabled_input = bool(config.get("commenter_auto_login_enabled", True))
+    st.session_state.commenter_auto_login_enabled_input = True
 
 def on_commenter_auto_login_change():
     st.session_state.commenter_auto_login_expanded = True
@@ -993,13 +993,11 @@ with _col1:
         _auto_login_title = "🔐 자동로그인 설정 (완료)" if _auto_login_done else "🔐 자동로그인 설정"
         with st.expander(_auto_login_title, expanded=st.session_state.commenter_auto_login_expanded):
             if st.session_state.pop("_commenter_pending_clear_auto_login_inputs", False):
-                st.session_state.commenter_auto_login_enabled_input = False
+                st.session_state.commenter_auto_login_enabled_input = True
                 st.session_state.commenter_naver_id_input = ""
                 st.session_state.commenter_naver_pw_input = ""
             if "commenter_auto_login_enabled_input" not in st.session_state:
-                st.session_state.commenter_auto_login_enabled_input = bool(
-                    config.get("commenter_auto_login_enabled", True)
-                )
+                st.session_state.commenter_auto_login_enabled_input = True
             st.checkbox(
                 "브라우저 열 때 자동로그인 실행",
                 key="commenter_auto_login_enabled_input",

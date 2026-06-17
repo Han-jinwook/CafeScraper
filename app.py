@@ -984,7 +984,7 @@ def _inject_cafe_connect_history_suggestions(cafe_names: list[str], cafe_urls: l
 
 
 if "settings_collapsed" not in st.session_state:
-    st.session_state.settings_collapsed = True
+    st.session_state.settings_collapsed = False
 
 if "auto_login_expanded" not in st.session_state:
     st.session_state.auto_login_expanded = False
@@ -994,7 +994,7 @@ if "naver_id_input" not in st.session_state:
 if "naver_pw_input" not in st.session_state:
     st.session_state.naver_pw_input = str(config.get("naver_pw", "") or "")
 if "auto_login_enabled_input" not in st.session_state:
-    st.session_state.auto_login_enabled_input = bool(config.get("auto_login_enabled", True))
+    st.session_state.auto_login_enabled_input = True
 
 def on_auto_login_change():
     st.session_state.auto_login_expanded = True
@@ -1122,7 +1122,7 @@ with _t1:
 
         with st.expander("🔐 자동로그인 설정", expanded=st.session_state.auto_login_expanded):
             if st.session_state.pop("_pending_clear_auto_login_inputs", False):
-                st.session_state.auto_login_enabled_input = False
+                st.session_state.auto_login_enabled_input = True
                 st.session_state.naver_id_input = ""
                 st.session_state.naver_pw_input = ""
             auto_login_enabled = st.checkbox(
@@ -1180,12 +1180,7 @@ with _t1:
                 st.session_state._auto_login_save_ack = False
                 st.success("자동로그인 설정을 저장했습니다.")
 
-        c_scan, c_tog1 = st.columns([0.9, 0.1])
-        with c_tog1:
-            st.markdown("<div style='margin-top: 5px;'></div>", unsafe_allow_html=True)
-            st.button("▼" if st.session_state.settings_collapsed else "▲", key="btn_fold_1", on_click=toggle_settings)
-        
-        scan_clicked = c_scan.button("🔍 게시판 목록 가져오기", help="현재 열린 카페 화면에서 모든 게시판 목록을 스캔합니다.", use_container_width=True)
+        scan_clicked = st.button("🔍 게시판 목록 가져오기", help="현재 열린 카페 화면에서 모든 게시판 목록을 스캔합니다.", use_container_width=True)
         if scan_clicked:
             if not st.session_state.get("crawler") or not getattr(st.session_state.crawler, "driver", None):
                 st.error("먼저 1단계 브라우저를 열어주세요.")
@@ -1529,12 +1524,9 @@ with _t2:
             except:
                 pass
 
-        col1, col2, col_tog2 = st.columns([0.45, 0.45, 0.1])
+        col1, col2 = st.columns([0.5, 0.5])
         start_date = col1.date_input("시작일", default_start)
         end_date = col2.date_input("종료일", default_end)
-        with col_tog2:
-            st.markdown("<div style='margin-top: 28px;'></div>", unsafe_allow_html=True)
-            st.button("▼" if st.session_state.settings_collapsed else "▲", key="btn_fold_2", on_click=toggle_settings)
 
         # 설정 접힘 시에도 아래 실행 제어·크롤이 동일 이름을 참조하므로 여기서 기본 정의
         speed_profile = "fast"
@@ -1643,19 +1635,10 @@ with _t3:
             col_stat1, col_stat2 = st.columns(2)
             col_stat1.metric("게시글", f"{int(post_count):,}")
             col_stat2.metric("댓글", f"{int(comment_count):,}")
-            c_cap, c_tog3 = st.columns([0.9, 0.1])
-            with c_cap:
-                st.caption(f"최신 게시글 날짜: `{str(last_post_date) if last_post_date else '-'}`")
-                st.caption(f"마지막 저장시각: `{str(last_created_at) if last_created_at else '-'}`")
-            with c_tog3:
-                st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
-                st.button("▼" if st.session_state.settings_collapsed else "▲", key="btn_fold_3", on_click=toggle_settings)
+            st.caption(f"최신 게시글 날짜: `{str(last_post_date) if last_post_date else '-'}`")
+            st.caption(f"마지막 저장시각: `{str(last_created_at) if last_created_at else '-'}`")
         except:
-            c_info, c_tog3 = st.columns([0.9, 0.1])
-            with c_info:
-                st.info("DB 통계를 읽을 수 없습니다.")
-            with c_tog3:
-                st.button("▼" if st.session_state.settings_collapsed else "▲", key="btn_fold_3", on_click=toggle_settings)
+            st.info("DB 통계를 읽을 수 없습니다.")
 
         st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
         
