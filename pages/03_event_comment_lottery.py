@@ -2013,56 +2013,12 @@ with _ev3:
         _ec2.metric("수집 댓글", f"{get_event_comments_count(EVENT_DB_PATH):,}건")
         _ec3.metric("등급별 방문수", f"{get_event_mentor_visits_count(EVENT_DB_PATH):,}행")
 
-        st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
-        st.checkbox(
-            "이벤트 게시글·댓글·분석·멘토 방문 데이터를 모두 삭제합니다. 필요하면 먼저 CSV/리포트를 내려받으세요.",
-            key="event_data_reset_confirm",
-        )
-        _event_busy = bool(
-            st.session_state.get("event_running") or st.session_state.get("event_run_pending")
-        )
-        if st.button(
-            "데이터 초기화",
-            type="primary",
-            use_container_width=True,
-            key="reset_event_db_btn",
-            disabled=_event_busy or (not bool(st.session_state.get("event_data_reset_confirm"))),
-            help="이벤트 수집 실행 중에는 사용할 수 없습니다. 먼저 중단하세요.",
-        ):
-            try:
-                try:
-                    if st.session_state.get("event_crawler") and getattr(st.session_state.event_crawler, "driver", None):
-                        st.session_state.event_crawler.close()
-                except Exception:
-                    pass
-                st.session_state.event_crawler = None
-                st.session_state.event_running = False
-                st.session_state.event_run_pending = False
-                st.session_state.event_run_payload = None
-                st.session_state.event_progress_ratio = 0.0
-                st.session_state.event_progress_label = "대기 중..."
-
-                conn_reset = sqlite3.connect(EVENT_DB_PATH, timeout=30.0)
-                cur_reset = conn_reset.cursor()
-                cur_reset.execute("DELETE FROM event_post_analysis")
-                cur_reset.execute("DELETE FROM event_posts")
-                cur_reset.execute("DELETE FROM event_comments")
-                cur_reset.execute("DELETE FROM event_mentor_visits")
-                cur_reset.execute("DELETE FROM sqlite_sequence WHERE name = 'event_post_analysis'")
-                cur_reset.execute("DELETE FROM sqlite_sequence WHERE name = 'event_posts'")
-                cur_reset.execute("DELETE FROM sqlite_sequence WHERE name = 'event_comments'")
-                cur_reset.execute("DELETE FROM sqlite_sequence WHERE name = 'event_mentor_visits'")
-                conn_reset.commit()
-                conn_reset.close()
-                st.session_state.event_dup_report = None
-                st.session_state.event_final_summary_report = None
-                st.session_state.event_analysis_signature = ""
-                st.session_state.event_data_reset_confirm = False
-                st.success("✅ 이벤트 DB를 초기화했습니다.")
-                time.sleep(0.8)
-                st.rerun()
-            except Exception as e:
-                st.error(f"DB 초기화 실패: {e}")
+        # Zero-maintenance Data Policy: 단일 작업 폴더 열기 버튼
+        if st.button("📁 작업 폴더 열기", type="primary", use_container_width=True, key="open_zero_maintenance_dir_btn"):
+            from app.utils.paths import export_all_latest_dbs_to_csv, open_zero_maintenance_data_dir
+            export_all_latest_dbs_to_csv()
+            open_zero_maintenance_data_dir()
+            st.toast("📂 작업 폴더를 열고 CSV 파일들을 변환했습니다.")
 
 # 실행용 조건값 정규화
 comment_condition_enabled = bool(st.session_state.get("event_condition_comment_enabled", False))
@@ -2287,8 +2243,18 @@ with step_col2:
                 else:
                     if mentor_condition_enabled and not post_condition_enabled and not comment_condition_enabled:
                         _reset_mentor_async_workspace()
+                    # Piling DB 생성 및 할당
+                    from app.utils.paths import generate_new_db_path
+                    new_db_path = generate_new_db_path("event_analysis")
+                    st.session_state.active_db_path_event = str(new_db_path)
+                    
+                    # 새로운 DB 파일 초기화
+                    from app.utils.event_db import init_event_db
+                    init_event_db(str(new_db_path))
+
                     st.session_state.event_run_payload = {
                             "board_urls": board_urls,
+                            "active_db_path": str(new_db_path),
                             "comment_enabled": bool(comment_condition_enabled),
                             "comment_target_start_dt": comment_start_dt,
                             "comment_target_end_dt": comment_end_dt,
@@ -2332,6 +2298,8 @@ elif st.session_state.get("event_last_run_message"):
 
 if st.session_state.event_run_pending and st.session_state.event_running:
     payload = st.session_state.get("event_run_payload") or {}
+    if "active_db_path" in payload and payload["active_db_path"]:
+        st.session_state.active_db_path_event = payload["active_db_path"]
     board_urls = [u.strip() for u in (payload.get("board_urls") or []) if str(u).strip()]
     comment_enabled = bool(payload.get("comment_enabled"))
     comment_target_start_dt = payload.get("comment_target_start_dt")
@@ -3017,7 +2985,8 @@ if st.session_state.event_run_pending and st.session_state.event_running:
             )
             # 디버그 로그를 파일로 저장
             try:
-                _log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "logs")
+                from app.utils.paths import get_logs_dir
+                _log_dir = str(get_logs_dir())
                 os.makedirs(_log_dir, exist_ok=True)
                 _log_file = os.path.join(_log_dir, f"event_run_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
                 with open(_log_file, "w", encoding="utf-8") as _lf:
@@ -3161,16 +3130,7 @@ try:
             key="event_editor_readonly",
         )
 
-        # 하단 액션 버튼: CSV 저장만 유지
-        st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
-        csv_bytes = df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-        st.download_button(
-            "⬇️ CSV 저장",
-            data=csv_bytes,
-            file_name=_build_export_filename("댓글원본", include_period=True),
-            mime="text/csv",
-            use_container_width=True,
-        )
+
 
 except Exception as e:
     st.error(f"DB 조회 오류: {e}")
@@ -3225,18 +3185,8 @@ try:
         )
         _selected_post_ids = _edited_post[_edited_post["선택"] == True]["id"].tolist()
 
-        _post_btn1, _post_btn2, _post_btn3 = st.columns(3)
+        _post_btn1, _post_btn2 = st.columns(2)
         with _post_btn1:
-            _post_result_bytes = df_post.drop(columns=["선택", "id"]).to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-            st.download_button(
-                "⬇️ 분석결과 다운로드",
-                data=_post_result_bytes,
-                file_name=_build_export_filename("조건1분석결과", include_period=True),
-                mime="text/csv",
-                use_container_width=True,
-                key="post_analysis_result_download_top",
-            )
-        with _post_btn2:
             _del_disabled = len(_selected_post_ids) == 0
             if st.button(
                 f"🗑️ 선택 삭제 ({len(_selected_post_ids)}건)",
@@ -3258,7 +3208,7 @@ try:
                     st.rerun()
                 except Exception as _del_e:
                     st.error(f"삭제 실패: {_del_e}")
-        with _post_btn3:
+        with _post_btn2:
             if st.button("🔄 집계 다시 실행", use_container_width=True, key="post_analysis_rerun_ticket"):
                 st.rerun()
     if not df_post.empty:
@@ -3352,15 +3302,7 @@ try:
                 hide_index=False,
             )
 
-            _post_sum_bytes = _post_sum.to_csv(index=True, encoding="utf-8-sig").encode("utf-8-sig")
-            st.download_button(
-                "⬇️ 조건1 티켓 집계 다운로드",
-                data=_post_sum_bytes,
-                file_name=_build_export_filename("조건1티켓집계", include_period=True),
-                mime="text/csv",
-                use_container_width=True,
-                key="post_ticket_download",
-            )
+
 
 except Exception as e:
     st.error(f"조건1 결과 조회 오류: {e}")
@@ -3472,14 +3414,7 @@ if comment_condition_enabled:
                             hide_index=True,
                         )
 
-                        sum_bytes = sum_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-                        st.download_button(
-                            "⬇️ 조건2 티켓 집계 다운로드",
-                            data=sum_bytes,
-                            file_name=_build_export_filename("조건2티켓집계", include_period=True),
-                            mime="text/csv",
-                            use_container_width=True,
-                        )
+
             elif not st.session_state.event_running:
                 st.info("아직 자동 집계 결과가 없습니다. 댓글 수집을 완료하면 자동으로 표시됩니다.")
     except Exception as e:
@@ -3508,15 +3443,7 @@ try:
         st.info("조건(3)으로 저장된 등급별 방문수가 없습니다. 조건(3) 수집을 실행하면 아래 표에 채워집니다.")
     else:
         st.dataframe(df_mv, use_container_width=True, hide_index=True)
-        _mv_csv = df_mv.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-        st.download_button(
-            "⬇️ 등급별 방문수 CSV",
-            data=_mv_csv,
-            file_name=_build_export_filename("등급별방문수", include_period=True),
-            mime="text/csv",
-            use_container_width=True,
-            key="event_download_mentor_visits_csv",
-        )
+
 except Exception as _emv:
     st.error(f"등급별 방문수 조회 오류: {_emv}")
 
@@ -3660,12 +3587,4 @@ if isinstance(_final_df, pd.DataFrame):
         _f1.metric("참여자", f"{len(_final_df):,}명")
         _f2.metric("총 티켓", f"{int(_final_df['총티켓수'].sum()):,}개")
         st.dataframe(_final_df, use_container_width=True, hide_index=True)
-        _final_bytes = _final_df.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-        st.download_button(
-            "⬇️ 최종 집계 CSV 다운로드",
-            data=_final_bytes,
-            file_name=_build_export_filename("최종합산티켓", include_period=True),
-            mime="text/csv",
-            use_container_width=True,
-            key="event_final_summary_download_btn",
-        )
+

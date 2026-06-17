@@ -502,88 +502,15 @@ def _render_commenter_db_section() -> None:
     """타겟 수집 설정 카드 하단 expander 안에서 호출."""
     _eff_commenter_db = str(COMMENTER_DB_PATH)
 
-    _env_ov = (os.getenv("CAFESCRAPER_COMMENTER_DB_PATH") or "").strip()
-    if _env_ov:
-        st.caption("`CAFESCRAPER_COMMENTER_DB_PATH` 가 설정되어 이 경로가 적용됩니다.")
-    else:
-        st.caption("앱 기본 규칙으로 정해진 파일 경로입니다 (읽기 전용 표시).")
-    st.text_area(
-        "DB 경로",
-        value=_eff_commenter_db,
-        height=76,
-        disabled=True,
-        key="commenter_db_path_display_ro",
-    )
-
-    # [NEW] Downloads Folder & DB Directory Opener Button (CafeScraper comment page)
-    c_open_com1, c_open_com2 = st.columns(2)
-    with c_open_com1:
-        if st.button("📁 DB 저장폴더 열기", use_container_width=True, key="open_comment_db_dir"):
-            try:
-                dir_path = os.path.dirname(os.path.abspath(_eff_commenter_db))
-                import subprocess
-                if sys.platform == "win32":
-                    os.startfile(dir_path)
-                elif sys.platform == "darwin":
-                    subprocess.Popen(["open", dir_path])
-                else:
-                    subprocess.Popen(["xdg-open", dir_path])
-                st.toast("📂 DB 저장폴더를 열었습니다.")
-            except Exception as e:
-                st.error(f"폴더 열기 실패: {e}")
-    with c_open_com2:
-        if st.button("📥 다운로드 폴더 열기", use_container_width=True, key="open_comment_download_dir"):
-            try:
-                download_path = os.path.join(os.path.expanduser("~"), "Downloads")
-                import subprocess
-                if sys.platform == "win32":
-                    os.startfile(download_path)
-                elif sys.platform == "darwin":
-                    subprocess.Popen(["open", download_path])
-                else:
-                    subprocess.Popen(["xdg-open", download_path])
-                st.toast("📂 다운로드 폴더를 열었습니다.")
-            except Exception as e:
-                st.error(f"다운로드 폴더 열기 실패: {e}")
-
     st.metric("저장된 댓글 대상 글", f"{get_commenter_targets_count(_eff_commenter_db):,}건")
+    st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
 
-    st.markdown("<div style='height: 6px;'></div>", unsafe_allow_html=True)
-    if st.session_state.pop("_commenter_pending_clear_db_reset_confirm", False):
-        st.session_state.commenter_db_reset_confirm = False
-    st.checkbox(
-        "자동댓글러 댓글 대상(commenter_targets) 데이터를 모두 삭제합니다. 필요하면 먼저 CSV/리포트를 내려받으세요.",
-        key="commenter_db_reset_confirm",
-    )
-    if st.button(
-        "데이터 초기화",
-        type="primary",
-        use_container_width=True,
-        key="commenter_reset_db_btn",
-        disabled=(
-            _commenter_ui_busy()
-            or (not bool(st.session_state.get("commenter_db_reset_confirm")))
-        ),
-    ):
-        try:
-            try:
-                if st.session_state.get("commenter") and getattr(st.session_state.commenter, "driver", None):
-                    st.session_state.commenter.close()
-            except Exception:
-                pass
-            st.session_state.commenter = None
-            init_event_db(_eff_commenter_db)
-            clear_commenter_targets(_eff_commenter_db)
-            st.session_state.target_df = None
-            st.session_state.commenter_target_df_full = None
-            _commenter_reset_run_state()
-            st.session_state.comment_logs = []
-            st.session_state._commenter_pending_clear_db_reset_confirm = True
-            st.success("✅ 댓글 대상 DB를 초기화했습니다.")
-            time.sleep(0.8)
-            st.rerun()
-        except Exception as e:
-            st.error(f"DB 초기화 실패: {e}")
+    # Zero-maintenance Data Policy: 단일 작업 폴더 열기 버튼
+    if st.button("📁 작업 폴더 열기", type="primary", use_container_width=True, key="open_zero_maintenance_dir_btn"):
+        from app.utils.paths import export_all_latest_dbs_to_csv, open_zero_maintenance_data_dir
+        export_all_latest_dbs_to_csv()
+        open_zero_maintenance_data_dir()
+        st.toast("📂 작업 폴더를 열고 CSV 파일들을 변환했습니다.")
 
 
 def _commenter_normalized_target_range():
@@ -1551,6 +1478,15 @@ with _col3:
                     elif not final_template.strip():
                         st.error("내용 없음")
                     else:
+                        # Piling DB 생성 및 할당
+                        from app.utils.paths import generate_new_db_path
+                        new_db_path = generate_new_db_path("auto_commenter")
+                        st.session_state.active_db_path_commenter = str(new_db_path)
+                        init_event_db(str(new_db_path))
+
+                        if st.session_state.get("commenter"):
+                            st.session_state.commenter.db_path = str(new_db_path)
+
                         st.session_state.is_running = True
                         st.session_state.commenter_run_index = 0
                         st.session_state.commenter_stop_requested = False

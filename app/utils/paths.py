@@ -102,77 +102,183 @@ def get_comment_templates_path() -> Path:
     return get_user_data_dir() / "comment_templates.json"
 
 
+def get_zero_maintenance_data_dir() -> Path:
+    """Zero-maintenance Data Policy에 따른 최상위 고정 데이터 저장 경로."""
+    p = Path(os.path.expanduser('~\\Documents\\MarketingMonster\\CafeScraper'))
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def get_zero_maintenance_db_dir() -> Path:
+    """Zero-maintenance Data Policy에 따른 DB 저장 경로 (DB 폴더 숨김)."""
+    p = get_zero_maintenance_data_dir() / "DB"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def get_zero_maintenance_logs_dir() -> Path:
+    """Zero-maintenance Data Policy에 따른 로그 저장 경로 (Logs 폴더 숨김)."""
+    p = get_zero_maintenance_data_dir() / "Logs"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
 def get_logs_dir() -> Path:
-    """로그 폴더 경로."""
-    return get_user_data_dir() / "logs"
+    """로그 폴더 경로 (Zero-maintenance Logs 디렉토리 반환)."""
+    return get_zero_maintenance_logs_dir()
 
 
-def _safe_mkdir(p: Path) -> Path:
-    """디렉토리 생성 시도. 실패하면 CWD/data 폴백."""
+def get_latest_db_path(prefix: str) -> Path:
+    """
+    해당 prefix를 가진 가장 최근의 DB 경로를 반환합니다.
+    존재하는 파일이 없을 경우 기본 경로를 반환합니다.
+    """
+    db_dir = get_zero_maintenance_db_dir()
+    db_files = list(db_dir.glob(f"{prefix}_*.db"))
+    if not db_files:
+        return db_dir / f"{prefix}.db"
+    db_files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+    return db_files[0]
+
+
+def generate_new_db_path(prefix: str) -> Path:
+    """
+    매 작업 실행 시 호출되어 타임스탬프가 포함된 새 DB 파일 경로를 생성합니다.
+    """
+    from datetime import datetime
+    db_dir = get_zero_maintenance_db_dir()
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+    return db_dir / f"{prefix}_{timestamp}.db"
+
+
+def _resolve_dynamic_db_path(prefix: str, session_key: str) -> Path:
+    # 1. Streamlit 세션 내 활성 경로 확인
     try:
-        p.parent.mkdir(parents=True, exist_ok=True)
-        return p
-    except (PermissionError, OSError):
-        fallback = get_user_data_dir() / "data" / p.name
-        fallback.parent.mkdir(parents=True, exist_ok=True)
-        return fallback
+        import streamlit as st
+        if session_key in st.session_state and st.session_state[session_key]:
+            active_path = Path(st.session_state[session_key]).resolve()
+            active_path.parent.mkdir(parents=True, exist_ok=True)
+            return active_path
+    except Exception:
+        pass
+
+    # 2. 대기 시, 가장 최근 수정된 DB 경로 선택
+    target_path = get_latest_db_path(prefix).resolve()
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    return target_path
 
 
 def resolve_db_path(config_db_path: str | None = None) -> Path:
     """
-    카페 메인 수집 전용 SQLite DB (이벤트·논문·자동댓글러와 분리).
-    우선순위:
-    1) 환경변수 `CAFESCRAPER_DB_PATH`
-    2) config_db_path (존재 가능한 경로만)
-    3) 기본값: data/cafe_data.db
+    카페 메인 수집 SQLite DB 경로 동적 해결.
+    Zero-maintenance Data Policy에 따라 무조건 고정 경로 및 최신 DB를 사용합니다.
     """
-    env_path = (os.getenv("CAFESCRAPER_DB_PATH") or "").strip()
-    if env_path:
-        p = Path(env_path).expanduser().resolve()
-        return _safe_mkdir(p)
-
-    if config_db_path and str(config_db_path).strip():
-        p = Path(str(config_db_path)).expanduser().resolve()
-        return _safe_mkdir(p)
-
-    p = (get_user_data_dir() / "data" / "cafe_data.db").resolve()
-    return _safe_mkdir(p)
+    return _resolve_dynamic_db_path("cafe_data", "active_db_path_main")
 
 
 def resolve_event_db_path(config_event_db_path: str | None = None) -> Path:
     """
-    이벤트 댓글 분석 전용 SQLite DB (카페 수집·논문·자동댓글러와 파일 분리).
-    우선순위:
-    1) 환경변수 `CAFESCRAPER_EVENT_DB_PATH`
-    2) config_event_db_path
-    3) 기본값: data/event_analysis.db
+    이벤트 댓글 분석 SQLite DB 경로 동적 해결.
     """
-    env_path = (os.getenv("CAFESCRAPER_EVENT_DB_PATH") or "").strip()
-    if env_path:
-        p = Path(env_path).expanduser().resolve()
-        return _safe_mkdir(p)
-
-    if config_event_db_path and str(config_event_db_path).strip():
-        p = Path(str(config_event_db_path)).expanduser().resolve()
-        return _safe_mkdir(p)
-
-    p = (get_user_data_dir() / "data" / "event_analysis.db").resolve()
-    return _safe_mkdir(p)
+    return _resolve_dynamic_db_path("event_analysis", "active_db_path_event")
 
 
 def resolve_commenter_db_path(config_commenter_db_path: str | None = None) -> Path:
     """
-    자동 댓글러 전용 SQLite DB.
-    우선순위: `CAFESCRAPER_COMMENTER_DB_PATH` → config → data/auto_commenter.db
+    자동 댓글러 SQLite DB 경로 동적 해결.
     """
-    env_path = (os.getenv("CAFESCRAPER_COMMENTER_DB_PATH") or "").strip()
-    if env_path:
-        p = Path(env_path).expanduser().resolve()
-        return _safe_mkdir(p)
+    return _resolve_dynamic_db_path("auto_commenter", "active_db_path_commenter")
 
-    if config_commenter_db_path and str(config_commenter_db_path).strip():
-        p = Path(str(config_commenter_db_path)).expanduser().resolve()
-        return _safe_mkdir(p)
 
-    p = (get_user_data_dir() / "data" / "auto_commenter.db").resolve()
-    return _safe_mkdir(p)
+def export_all_latest_dbs_to_csv() -> None:
+    """
+    가장 최근 누적된 DB 파일들을 읽어서 최상위 문서 폴더에 CSV 결과물을 즉시 생성(Export)합니다.
+    """
+    import sqlite3
+    import pandas as pd
+    from datetime import datetime
+
+    data_dir = get_zero_maintenance_data_dir()
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+
+    # 1. 카페 메인 수집 DB
+    latest_main = get_latest_db_path("cafe_data")
+    if latest_main.exists():
+        try:
+            conn = sqlite3.connect(latest_main)
+            df_posts = pd.read_sql_query("SELECT * FROM posts", conn)
+            df_comments = pd.read_sql_query("SELECT * FROM comments", conn)
+            conn.close()
+
+            if not df_posts.empty:
+                df_posts.to_csv(data_dir / f"카페수집_게시글_{timestamp}.csv", index=False, encoding="utf-8-sig")
+            if not df_comments.empty:
+                df_comments.to_csv(data_dir / f"카페수집_댓글_{timestamp}.csv", index=False, encoding="utf-8-sig")
+        except Exception:
+            pass
+
+    # 2. 이벤트 수집 DB
+    latest_event = get_latest_db_path("event_analysis")
+    if latest_event.exists():
+        try:
+            conn = sqlite3.connect(latest_event)
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+            tables = [row[0] for row in cursor.fetchall()]
+
+            for table in tables:
+                if table.startswith("sqlite_"):
+                    continue
+                df_table = pd.read_sql_query(f"SELECT * FROM [{table}]", conn)
+                if not df_table.empty:
+                    table_name_kr = table
+                    if table == "event_comments":
+                        table_name_kr = "이벤트수집_댓글"
+                    elif table == "event_posts":
+                        table_name_kr = "이벤트수집_게시글"
+                    elif table == "event_post_analysis":
+                        table_name_kr = "이벤트수집_게시글분석"
+                    elif table == "event_mentor_visits":
+                        table_name_kr = "이벤트수집_방문내역"
+                    df_table.to_csv(data_dir / f"{table_name_kr}_{timestamp}.csv", index=False, encoding="utf-8-sig")
+            conn.close()
+        except Exception:
+            pass
+
+    # 3. 자동 댓글러 DB
+    latest_commenter = get_latest_db_path("auto_commenter")
+    if latest_commenter.exists():
+        try:
+            conn = sqlite3.connect(latest_commenter)
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+            tables = [row[0] for row in cursor.fetchall()]
+
+            for table in tables:
+                if table.startswith("sqlite_"):
+                    continue
+                df_table = pd.read_sql_query(f"SELECT * FROM [{table}]", conn)
+                if not df_table.empty:
+                    table_name_kr = table
+                    if table == "event_comments":
+                        table_name_kr = "자동댓글_댓글"
+                    elif table == "event_posts":
+                        table_name_kr = "자동댓글_게시글"
+                    elif table == "event_post_analysis":
+                        table_name_kr = "자동댓글_게시글분석"
+                    elif table == "event_mentor_visits":
+                        table_name_kr = "자동댓글_방문내역"
+                    df_table.to_csv(data_dir / f"{table_name_kr}_{timestamp}.csv", index=False, encoding="utf-8-sig")
+            conn.close()
+        except Exception:
+            pass
+
+
+def open_zero_maintenance_data_dir() -> None:
+    """윈도우 파일 탐색기를 열어 최상위 폴더를 화면에 띄워줍니다."""
+    import os
+    data_dir = get_zero_maintenance_data_dir()
+    try:
+        os.startfile(str(data_dir))
+    except Exception:
+        pass

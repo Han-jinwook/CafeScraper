@@ -414,12 +414,16 @@ def _serialize_crawl_state(state: dict) -> dict:
 
 def _deserialize_crawl_state(state: dict) -> dict:
     out = dict(state or {})
+    if "active_db_path" in out and out["active_db_path"]:
+        st.session_state.active_db_path_main = out["active_db_path"]
+
     if isinstance(out.get("existing_ids"), list):
         out["existing_ids"] = set(out["existing_ids"])
     # 재개 시 existing_map이 없으면 DB에서 복구
     if out.get("phase") == "run" and "existing_map" not in out:
         try:
-            conn = sqlite3.connect(DB_PATH, timeout=30.0)
+            effective_db_path = out.get("active_db_path") or DB_PATH
+            conn = sqlite3.connect(effective_db_path, timeout=30.0)
             df_exist = pd.read_sql_query("SELECT post_id, member_level FROM posts", conn)
             out["existing_map"] = df_exist.set_index('post_id')['member_level'].to_dict()
             conn.close()
@@ -1651,124 +1655,12 @@ with _t3:
 
         st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
         
-        # [NEW] Downloads Folder Opener Button
-        c_open1, c_open2 = st.columns(2)
-        with c_open1:
-            if st.button("📁 DB 저장폴더 열기", use_container_width=True, key="open_main_db_dir"):
-                try:
-                    dir_path = os.path.dirname(os.path.abspath(DB_PATH))
-                    if sys.platform == "win32":
-                        os.startfile(dir_path)
-                    elif sys.platform == "darwin":
-                        subprocess.Popen(["open", dir_path])
-                    else:
-                        subprocess.Popen(["xdg-open", dir_path])
-                    st.toast("📂 DB 저장폴더를 열었습니다.")
-                except Exception as e:
-                    st.error(f"폴더 열기 실패: {e}")
-        with c_open2:
-            if st.button("📥 다운로드 폴더 열기", use_container_width=True, key="open_main_download_dir"):
-                try:
-                    download_path = os.path.join(os.path.expanduser("~"), "Downloads")
-                    if sys.platform == "win32":
-                        os.startfile(download_path)
-                    elif sys.platform == "darwin":
-                        subprocess.Popen(["open", download_path])
-                    else:
-                        subprocess.Popen(["xdg-open", download_path])
-                    st.toast("📂 다운로드 폴더를 열었습니다.")
-                except Exception as e:
-                    st.error(f"다운로드 폴더 열기 실패: {e}")
-
-        st.checkbox(
-            "카페 수집 게시글·댓글 데이터를 모두 삭제합니다. 필요하면 먼저 CSV/리포트를 내려받으세요.",
-            key="main_cafe_db_reset_confirm",
-        )
-        if st.button(
-            "데이터 초기화",
-            type="primary",
-            use_container_width=True,
-            key="main_cafe_reset_db_btn",
-            disabled=(
-                bool(st.session_state.get("crawl_running"))
-                or (not bool(st.session_state.get("main_cafe_db_reset_confirm")))
-            ),
-            help="수집 실행 중에는 사용할 수 없습니다. 먼저 중단하세요.",
-        ):
-            try:
-                conn_r = sqlite3.connect(DB_PATH, timeout=30.0)
-                cur_r = conn_r.cursor()
-                cur_r.execute("DELETE FROM comments")
-                cur_r.execute("DELETE FROM posts")
-                cur_r.execute("DELETE FROM sqlite_sequence WHERE name = 'comments'")
-                conn_r.commit()
-                conn_r.close()
-                st.session_state.crawl_running = False
-                st.session_state.crawl_stop_requested = False
-                st.session_state.crawl_state = {}
-                _clear_crawl_checkpoint()
-                st.session_state.posts_editor_refresh = int(st.session_state.get("posts_editor_refresh", 0)) + 1
-                st.session_state.comments_editor_refresh = int(st.session_state.get("comments_editor_refresh", 0)) + 1
-                st.session_state.main_cafe_db_reset_confirm = False
-                st.success("✅ 카페 수집 데이터를 초기화했습니다.")
-                time.sleep(0.6)
-                st.rerun()
-            except Exception as e:
-                st.error(f"초기화 실패: {e}")
-
-        if not st.session_state.settings_collapsed:
-            st.markdown("<hr style='margin: 0.5rem 0; border: none; border-top: 1px dashed #e2e8f0;'>", unsafe_allow_html=True)
-            col_db1, col_db2 = st.columns(2)
-            with col_db1:
-                if st.button("폴더 열기", use_container_width=True, key="open_db_folder"):
-                    try:
-                        import subprocess
-                        subprocess.run(['explorer', '/select,', db_full_path])
-                    except Exception as e:
-                        st.error(f"폴더 열기 실패: {e}")
-            with col_db2:
-                log_dir = str(get_logs_dir())
-                if st.button("로그 폴더", use_container_width=True, key="open_log_folder"):
-                    try:
-                        import subprocess
-                        subprocess.run(['explorer', log_dir])
-                    except Exception as e:
-                        st.error(f"폴더 열기 실패: {e}")
-
-            with st.expander("DB 위치 변경", expanded=False):
-                db_path_override = st.text_input(
-                    "DB 파일 절대경로 (예: D:\\CafeScraper\\data\\cafe_data.db)",
-                    value=str(config.get("db_path", "") or ""),
-                    placeholder=r"D:\CafeScraper\data\cafe_data.db",
-                    key="db_path_override_input",
-                )
-                st.caption("우선순위: 환경변수 `CAFESCRAPER_DB_PATH` > 여기 입력한 경로 > 기본값")
-                st.caption(f"현재 입력값: `{(db_path_override or '').strip() or '(비어있음)'}`")
-
-                c1, c2 = st.columns(2)
-                with c1:
-                    if st.button("경로 저장(파일 이동 없음)", use_container_width=True, key="apply_db_path_only"):
-                        target = (db_path_override or "").strip()
-                        if not target:
-                            st.error("대상 DB 경로가 비어 있습니다.")
-                        else:
-                            config["db_path"] = target
-                            save_config(config)
-                            st.success("✅ 저장 완료. 앱을 새로고침하세요.")
-                with c2:
-                    if st.button("현재 DB 복사 + 전환", use_container_width=True, key="copy_db_and_apply"):
-                        target = (db_path_override or "").strip()
-                        if not target:
-                            st.error("대상 DB 경로가 비어 있습니다.")
-                        else:
-                            try:
-                                os.makedirs(os.path.dirname(target), exist_ok=True)
-                                shutil.copy2(db_full_path, target)
-                                config["db_path"] = target
-                                save_config(config)
-                                st.success("✅ 복사/전환 완료. 앱을 새로고침하세요.")
-                            except Exception as e:
-                                st.error(f"복사/전환 실패: {e}")
+        # Zero-maintenance Data Policy: 단일 작업 폴더 열기 버튼
+        if st.button("📁 작업 폴더 열기", type="primary", use_container_width=True, key="open_zero_maintenance_dir_btn"):
+            from app.utils.paths import export_all_latest_dbs_to_csv, open_zero_maintenance_data_dir
+            export_all_latest_dbs_to_csv()
+            open_zero_maintenance_data_dir()
+            st.toast("📂 작업 폴더를 열고 CSV 파일들을 변환했습니다.")
 col_main = st.container()
 
 
@@ -1982,9 +1874,17 @@ def _render_cafe_main_workspace():
 
                     # 먼저 실행 상태로 전환해서 버튼이 즉시 '중단'으로 바뀌게 함
                     quick_mode_on = bool(quick_recovery_mode) # level_backfill_mode 조건 제거 (스마트 로직 사용)
+                    
+                    # Piling DB 생성 및 할당
+                    from app.utils.paths import generate_new_db_path
+                    new_db_path = generate_new_db_path("cafe_data")
+                    st.session_state.active_db_path_main = str(new_db_path)
+                    init_db(str(new_db_path))
+
                     st.session_state.crawl_state = {
                         "phase": "prepare",
                         "board_url": current_board_url,
+                        "active_db_path": str(new_db_path),
                         "board_urls_queue": board_urls,
                         "board_names_queue": board_names_queue,
                         "current_board_idx": 0,
