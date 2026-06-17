@@ -73,16 +73,31 @@ st.markdown("""
         font-weight: 700 !important;
     }
 
-    /* 구분선 톤 다운 */
-    hr {
-        margin: 0.8rem 0 !important;
-        border-color: #cbd5e1 !important;
+    /* container border 명확화 - 뚜렷하고 선명하게 */
+    div[data-testid="stVerticalBlockBorderWrapper"] {
+        border: 1.5px solid #8c9ba5 !important;
+        border-radius: 8px !important;
     }
 
-    /* metric 카드: 깔끔한 평면 디자인 */
+    /* columns 내부 컬럼 컨테이너의 테두리는 제거 */
+    div[data-testid="column"] div[data-testid="stVerticalBlockBorderWrapper"] {
+        border: none !important;
+        background: transparent !important;
+        padding: 0 !important;
+        box-shadow: none !important;
+    }
+
+    /* 구분선 톤 다운 방지 및 명확화 */
+    hr {
+        margin: 0.8rem 0 !important;
+        border: none !important;
+        border-top: 1.5px solid #8c9ba5 !important;
+    }
+
+    /* metric 카드: 선명한 테두리 */
     div[data-testid="stMetric"] {
         background-color: #ffffff !important;
-        border: 1px solid #cbd5e1 !important;
+        border: 1.5px solid #8c9ba5 !important;
         border-radius: 8px !important;
         padding: 12px 14px !important;
         box-shadow: none !important;
@@ -114,7 +129,7 @@ st.markdown("""
     .stDateInput input, 
     .stNumberInput input, 
     .stTextArea textarea {
-        border: 1px solid #cbd5e1 !important;
+        border: 1.5px solid #8c9ba5 !important;
         border-radius: 6px !important;
         background-color: #ffffff !important;
         color: #0f172a !important;
@@ -131,7 +146,7 @@ st.markdown("""
 
     /* selectbox (드롭다운) 테두리 명확화 및 포인터 커서 */
     div[data-baseweb="select"] {
-        border: 1px solid #cbd5e1 !important;
+        border: 1.5px solid #8c9ba5 !important;
         border-radius: 6px !important;
         background-color: #ffffff !important;
     }
@@ -151,12 +166,12 @@ st.markdown("""
         background-color: #f8fafc !important;
     }
 
-    /* 버튼 스타일 단순화 */
+    /* 버튼 스타일 단순화 및 선명화 */
     div.stButton > button {
         min-height: 40px;
         border-radius: 6px;
         font-weight: 600;
-        border: 1px solid #cbd5e1 !important;
+        border: 1.5px solid #8c9ba5 !important;
         background-color: #ffffff !important;
         color: #1e3a8a !important;
         transition: all 0.2s ease;
@@ -187,10 +202,10 @@ st.markdown("""
         border-bottom-color: #1e3a8a !important;
     }
 
-    /* 에디터/테이블 외곽 정리 */
+    /* 에디터/테이블 외곽 정리 및 선명화 */
     div[data-testid="stDataFrame"],
     div[data-testid="stDataEditor"] {
-        border: 1px solid #cbd5e1 !important;
+        border: 1.5px solid #8c9ba5 !important;
         border-radius: 8px !important;
         overflow: hidden;
     }
@@ -201,9 +216,9 @@ st.markdown("""
         overflow: auto !important;
     }
 
-    /* expander 스타일 */
+    /* expander 스타일 선명화 */
     div[data-testid="stExpander"] {
-        border: 1px solid #cbd5e1 !important;
+        border: 1.5px solid #8c9ba5 !important;
         border-radius: 8px !important;
         background-color: #ffffff !important;
     }
@@ -219,7 +234,7 @@ st.markdown("""
         border-color: #b91c1c !important;
     }
 </style>
-""""", unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
 # 프로젝트 루트 기준 경로 고정 (실행 위치가 달라도 DB/설정이 안 갈라지게)
 PROJECT_ROOT = get_project_root()
@@ -923,7 +938,7 @@ def _render_cafe_dashboard_header() -> None:
                             use_container_width=True
                         )
                     
-                    st.markdown('<div style="height:0;margin:0.25rem 0 0.75rem 0;border:none;border-top:1px solid #cbd5e1;"></div>', unsafe_allow_html=True)
+                    st.markdown('<div style="height:0;margin:0.25rem 0 0.75rem 0;border:none;border-top:1.5px solid #8c9ba5;"></div>', unsafe_allow_html=True)
                     
                     col1, col2, col3 = st.columns(3, gap="medium")
                     with col1:

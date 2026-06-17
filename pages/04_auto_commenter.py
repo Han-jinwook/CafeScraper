@@ -99,6 +99,14 @@ st.markdown(
     section.main > div.block-container {
         padding-bottom: 1.1rem !important;
     }
+
+    /* columns 내부 컬럼 컨테이너의 테두리는 제거 */
+    div[data-testid="column"] div[data-testid="stVerticalBlockBorderWrapper"] {
+        border: none !important;
+        background: transparent !important;
+        padding: 0 !important;
+        box-shadow: none !important;
+    }
     </style>
     """,
     unsafe_allow_html=True,
