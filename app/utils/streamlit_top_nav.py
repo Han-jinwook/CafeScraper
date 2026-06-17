@@ -292,7 +292,7 @@ def inject_settings_three_cards_css(*, key_basename: str) -> None:
     }}
     {sel_desc('[data-testid="stVerticalBlockBorderWrapper"]')} {{
         background: #ffffff !important;
-        border: 1.5px solid #8c9ba5 !important;
+        border: 1px solid #cbd5e1 !important;
         border-radius: 8px !important;
         padding: 1rem !important;
         box-shadow: none !important;

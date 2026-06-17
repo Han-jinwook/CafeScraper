@@ -111,14 +111,6 @@ st.markdown(
         display: flex !important;
         align-items: center !important;
     }
-
-    /* columns 내부 컬럼 컨테이너의 테두리는 제거 */
-    div[data-testid="column"] div[data-testid="stVerticalBlockBorderWrapper"] {
-        border: none !important;
-        background: transparent !important;
-        padding: 0 !important;
-        box-shadow: none !important;
-    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -521,7 +513,7 @@ def _run_mentor_only_on_main_thread(payload: dict, *, event_db_path: str) -> Non
             _mc3.metric("경과 시간", _fmt_event_duration(elapsed))
             _mc4.markdown(
                 f"<div style='background-color:#ffffff;"
-                f"border:1.5px solid #8c9ba5;border-radius:8px;padding:12px 14px;"
+                f"border:1px solid #cbd5e1;border-radius:8px;padding:12px 14px;"
                 f"box-shadow:none;min-height:90px;"
                 f"display:flex;flex-direction:column;justify-content:center;'>"
                 f"<div style='font-size:0.85rem;color:#475569;font-weight:600;'>예상 남은 시간</div>"
@@ -925,7 +917,7 @@ def _render_event_dashboard_header() -> None:
                             use_container_width=True
                         )
                     
-                    st.markdown('<div style="height:0;margin:0.25rem 0 0.75rem 0;border:none;border-top:1.5px solid #8c9ba5;"></div>', unsafe_allow_html=True)
+                    st.markdown('<div style="height:0;margin:0.25rem 0 0.75rem 0;border:none;border-top:1px solid #cbd5e1;"></div>', unsafe_allow_html=True)
                     
                     col1, col2, col3 = st.columns(3, gap="medium")
                     with col1:
@@ -2416,7 +2408,7 @@ if st.session_state.event_run_pending and st.session_state.event_running:
                     _mc3.metric("경과 시간", _fmt_duration(elapsed))
                 _mc4.markdown(
                     f"<div style='background-color:#ffffff;"
-                    f"border:1.5px solid #8c9ba5;border-radius:8px;padding:12px 14px;"
+                    f"border:1px solid #cbd5e1;border-radius:8px;padding:12px 14px;"
                     f"box-shadow:none;min-height:90px;"
                     f"display:flex;flex-direction:column;justify-content:center;'>"
                     f"<div style='font-size:0.85rem;color:#475569;font-weight:600;'>예상 남은 시간</div>"
