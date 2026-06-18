@@ -282,7 +282,7 @@ def inject_settings_three_cards_css(*, key_basename: str) -> None:
         )
 
     sel_wrapper = ",\n    ".join(
-        f'div[data-testid="stVerticalBlockBorderWrapper"]:has(div[class*="st-key-"][class*="-{key_basename}_{i}"])'
+        f'div[data-testid="stVerticalBlockBorderWrapper"]:has(> div[class*="st-key-"][class*="-{key_basename}_{i}"])'
         for i in (1, 2, 3)
     )
 
