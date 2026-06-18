@@ -92,9 +92,10 @@ def render_main_top_nav(*, active: str) -> None:
                 border-bottom: 1px solid rgba(192,201,195,0.35) !important;
                 padding-bottom: 0.45rem !important;
             }}
-            /* 제목 헤더 컨테이너: 상단 여백 축소 및 정렬 */
+            /* 제목 헤더 컨테이너: 상단 및 하단 여백 축소 */
             [class*="st-key-dashboard_header"] {{
-                margin-top: -0.65rem !important;
+                margin-top: -1.6rem !important;
+                margin-bottom: -1.0rem !important;
             }}
             [class*="st-key-{_TOP_NAV_CONTAINER_KEY}"] div[data-testid="column"] {{
                 flex: 1 1 0% !important;
