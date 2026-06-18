@@ -197,9 +197,25 @@ def export_all_latest_dbs_to_csv() -> None:
     import sqlite3
     import pandas as pd
     from datetime import datetime
+    import json
 
     data_dir = get_zero_maintenance_data_dir()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+
+    # Load config to get meaningful identifiers (cafe_name, start_date, end_date)
+    config = {}
+    config_path = get_config_path()
+    if config_path.exists():
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                config = json.load(f)
+        except Exception:
+            pass
+
+    def sanitize_filename(name: str) -> str:
+        import re
+        name = re.sub(r'[\\/*?:"<>|]', "", name)
+        return name.strip()
 
     # 1. 카페 메인 수집 DB
     latest_main = get_latest_db_path("cafe_data")
@@ -210,10 +226,21 @@ def export_all_latest_dbs_to_csv() -> None:
             df_comments = pd.read_sql_query("SELECT * FROM comments", conn)
             conn.close()
 
+            cafe_name = str(config.get("cafe_name") or "").strip()
+            start_date = str(config.get("start_date") or "").strip()
+            end_date = str(config.get("end_date") or "").strip()
+            
+            if cafe_name and start_date and end_date:
+                d1 = start_date.replace("-", "")
+                d2 = end_date.replace("-", "")
+                main_suffix = sanitize_filename(f"{cafe_name}_{d1}~{d2}")
+            else:
+                main_suffix = timestamp
+
             if not df_posts.empty:
-                df_posts.to_csv(data_dir / f"카페수집_게시글_{timestamp}.csv", index=False, encoding="utf-8-sig")
+                df_posts.to_csv(data_dir / f"카페수집_게시글_{main_suffix}.csv", index=False, encoding="utf-8-sig")
             if not df_comments.empty:
-                df_comments.to_csv(data_dir / f"카페수집_댓글_{timestamp}.csv", index=False, encoding="utf-8-sig")
+                df_comments.to_csv(data_dir / f"카페수집_댓글_{main_suffix}.csv", index=False, encoding="utf-8-sig")
         except Exception:
             pass
 
@@ -225,6 +252,17 @@ def export_all_latest_dbs_to_csv() -> None:
             cursor = conn.cursor()
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
             tables = [row[0] for row in cursor.fetchall()]
+
+            event_cafe_name = str(config.get("event_cafe_name") or "").strip()
+            event_start_date = str(config.get("event_start_date") or "").strip()
+            event_end_date = str(config.get("event_end_date") or "").strip()
+
+            if event_cafe_name and event_start_date and event_end_date:
+                d1 = event_start_date.replace("-", "")
+                d2 = event_end_date.replace("-", "")
+                event_suffix = sanitize_filename(f"{event_cafe_name}_{d1}~{d2}")
+            else:
+                event_suffix = timestamp
 
             for table in tables:
                 if table.startswith("sqlite_"):
@@ -240,7 +278,7 @@ def export_all_latest_dbs_to_csv() -> None:
                         table_name_kr = "이벤트수집_게시글분석"
                     elif table == "event_mentor_visits":
                         table_name_kr = "이벤트수집_방문내역"
-                    df_table.to_csv(data_dir / f"{table_name_kr}_{timestamp}.csv", index=False, encoding="utf-8-sig")
+                    df_table.to_csv(data_dir / f"{table_name_kr}_{event_suffix}.csv", index=False, encoding="utf-8-sig")
             conn.close()
         except Exception:
             pass
@@ -253,6 +291,17 @@ def export_all_latest_dbs_to_csv() -> None:
             cursor = conn.cursor()
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
             tables = [row[0] for row in cursor.fetchall()]
+
+            commenter_cafe_name = str(config.get("commenter_cafe_name") or "").strip()
+            commenter_start_date = str(config.get("commenter_target_start_date") or "").strip()
+            commenter_end_date = str(config.get("commenter_target_end_date") or "").strip()
+
+            if commenter_cafe_name and commenter_start_date and commenter_end_date:
+                d1 = commenter_start_date.replace("-", "")
+                d2 = commenter_end_date.replace("-", "")
+                commenter_suffix = sanitize_filename(f"{commenter_cafe_name}_{d1}~{d2}")
+            else:
+                commenter_suffix = timestamp
 
             for table in tables:
                 if table.startswith("sqlite_"):
@@ -268,7 +317,9 @@ def export_all_latest_dbs_to_csv() -> None:
                         table_name_kr = "자동댓글_게시글분석"
                     elif table == "event_mentor_visits":
                         table_name_kr = "자동댓글_방문내역"
-                    df_table.to_csv(data_dir / f"{table_name_kr}_{timestamp}.csv", index=False, encoding="utf-8-sig")
+                    elif table == "commenter_targets":
+                        table_name_kr = "자동댓글_대상글"
+                    df_table.to_csv(data_dir / f"{table_name_kr}_{commenter_suffix}.csv", index=False, encoding="utf-8-sig")
             conn.close()
         except Exception:
             pass
