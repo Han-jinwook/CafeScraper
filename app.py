@@ -1661,6 +1661,22 @@ with _t3:
             export_all_latest_dbs_to_csv()
             open_zero_maintenance_data_dir()
             st.toast("📂 작업 폴더를 열고 CSV 파일들을 변환했습니다.")
+            
+        st.markdown("<div style='height: 4px;'></div>", unsafe_allow_html=True)
+        if st.button("🧹 통계 초기화 후 작업하기", use_container_width=True, key="reset_statistics_and_db_btn"):
+            from app.utils.paths import generate_new_db_path
+            new_db_path = generate_new_db_path("cafe_data")
+            st.session_state["active_db_path_main"] = str(new_db_path)
+            
+            # Save to config as well so it persists
+            config["db_path"] = str(new_db_path)
+            save_config(config)
+            
+            # Initialize the new DB immediately
+            init_db(str(new_db_path))
+            
+            st.success("🧹 통계가 초기화되었습니다. 새 작업 환경에서 시작합니다.")
+            st.rerun()
 col_main = st.container()
 
 

@@ -2020,6 +2020,23 @@ with _ev3:
             open_zero_maintenance_data_dir()
             st.toast("📂 작업 폴더를 열고 CSV 파일들을 변환했습니다.")
 
+        st.markdown("<div style='height: 4px;'></div>", unsafe_allow_html=True)
+        if st.button("🧹 통계 초기화 후 작업하기", use_container_width=True, key="reset_event_statistics_and_db_btn"):
+            from app.utils.paths import generate_new_db_path
+            from app.utils.event_db import init_event_db
+            new_db_path = generate_new_db_path("event_analysis")
+            st.session_state["active_db_path_event"] = str(new_db_path)
+            
+            # Save to config as well so it persists
+            config["event_db_path"] = str(new_db_path)
+            save_config(config)
+            
+            # Initialize the new DB immediately
+            init_event_db(str(new_db_path))
+            
+            st.success("🧹 통계가 초기화되었습니다. 새 작업 환경에서 시작합니다.")
+            st.rerun()
+
 # 실행용 조건값 정규화
 comment_condition_enabled = bool(st.session_state.get("event_condition_comment_enabled", False))
 post_condition_enabled = bool(st.session_state.get("event_condition_post_enabled", False))
