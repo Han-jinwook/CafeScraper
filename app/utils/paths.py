@@ -143,12 +143,59 @@ def get_latest_db_path(prefix: str) -> Path:
 
 def generate_new_db_path(prefix: str) -> Path:
     """
-    매 작업 실행 시 호출되어 타임스탬프가 포함된 새 DB 파일 경로를 생성합니다.
+    매 작업 실행 시 호출되어 의미있는 식별자(카페명_시작일~종료일) 및 타임스탬프가 포함된 새 DB 파일 경로를 생성합니다.
     """
     from datetime import datetime
+    import json
+    import re
+    
     db_dir = get_zero_maintenance_db_dir()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    return db_dir / f"{prefix}_{timestamp}.db"
+    
+    # Load config to get meaningful identifiers
+    config = {}
+    config_path = get_config_path()
+    if config_path.exists():
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                config = json.load(f)
+        except Exception:
+            pass
+
+    def sanitize_filename(name: str) -> str:
+        name = re.sub(r'[\\/*?:"<>|]', "", name)
+        return name.strip()
+
+    suffix = ""
+    if prefix == "cafe_data":
+        cafe_name = str(config.get("cafe_name") or "").strip()
+        start_date = str(config.get("start_date") or "").strip()
+        end_date = str(config.get("end_date") or "").strip()
+        if cafe_name and start_date and end_date:
+            d1 = start_date.replace("-", "")
+            d2 = end_date.replace("-", "")
+            suffix = sanitize_filename(f"{cafe_name}_{d1}~{d2}")
+    elif prefix == "event_analysis":
+        event_cafe_name = str(config.get("event_cafe_name") or "").strip()
+        event_start_date = str(config.get("event_start_date") or "").strip()
+        event_end_date = str(config.get("event_end_date") or "").strip()
+        if event_cafe_name and event_start_date and event_end_date:
+            d1 = event_start_date.replace("-", "")
+            d2 = event_end_date.replace("-", "")
+            suffix = sanitize_filename(f"{event_cafe_name}_{d1}~{d2}")
+    elif prefix == "auto_commenter":
+        commenter_cafe_name = str(config.get("commenter_cafe_name") or "").strip()
+        commenter_start_date = str(config.get("commenter_target_start_date") or "").strip()
+        commenter_end_date = str(config.get("commenter_target_end_date") or "").strip()
+        if commenter_cafe_name and commenter_start_date and commenter_end_date:
+            d1 = commenter_start_date.replace("-", "")
+            d2 = commenter_end_date.replace("-", "")
+            suffix = sanitize_filename(f"{commenter_cafe_name}_{d1}~{d2}")
+
+    if suffix:
+        return db_dir / f"{prefix}_{suffix}_{timestamp}.db"
+    else:
+        return db_dir / f"{prefix}_{timestamp}.db"
 
 
 def _resolve_dynamic_db_path(prefix: str, session_key: str) -> Path:
