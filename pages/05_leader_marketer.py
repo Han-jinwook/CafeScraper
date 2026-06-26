@@ -22,6 +22,13 @@ from app.utils.streamlit_top_nav import (
     inject_settings_three_cards_css,
 )
 
+import inspect
+import app.utils.streamlit_top_nav
+print("=" * 50)
+print("DEBUG stream_top_nav path:", app.utils.streamlit_top_nav.__file__)
+print("DEBUG signature:", inspect.signature(render_settings_card_title))
+print("=" * 50)
+
 st.set_page_config(
     page_title="운영진 마케터 - CafeScraper",
     layout="wide",
@@ -302,187 +309,182 @@ def run_sending_job(method: str, target_list: list, subject: str, content: str, 
 # 5. UI 화면 그리기
 inject_settings_three_cards_css(key_basename="marketer_settings_card")
 
-col_left, col_right = st.columns([1, 1], gap="medium")
+st.markdown("#### ⚙️ 운영진 마케터 설정")
+_t1, _t2, _t3 = st.columns([1, 1, 1], gap="medium")
 
-with col_left:
-    # 5-1. 운영진 추출 카드
-    st.markdown('<div class="cafe-monster-settings-card">', unsafe_allow_html=True)
-    render_settings_card_title("🔍 카페 운영진 정보 수집", icon="ia-info")
-    
-    target_cafe = st.text_input(
-        "대상 카페 URL 또는 카페 영문 ID",
-        value=config.get("marketer_target_cafe", ""),
-        help="예: joonggonara 또는 https://cafe.naver.com/joonggonara"
-    )
-    
-    btn_col1, btn_col2 = st.columns([1, 1])
-    with btn_col1:
-        run_extract = st.button(
-            "운영진 추출 시작 🚀",
+with _t1:
+    with st.container(border=True, key="marketer_settings_card_1"):
+        render_settings_card_title("🔍 카페 운영진 정보 수집", icon="ia-info")
+        
+        target_cafe = st.text_input(
+            "대상 카페 URL 또는 카페 영문 ID",
+            value=config.get("marketer_target_cafe", ""),
+            help="예: joonggonara 또는 https://cafe.naver.com/joonggonara"
+        )
+        
+        btn_col1, btn_col2 = st.columns([1, 1])
+        with btn_col1:
+            run_extract = st.button(
+                "추출 시작 🚀",
+                use_container_width=True,
+                type="primary",
+                disabled=st.session_state.marketer_running
+            )
+        with btn_col2:
+            stop_extract = st.button(
+                "추출 중단 🛑",
+                use_container_width=True,
+                type="secondary",
+                disabled=not st.session_state.marketer_running
+            )
+            
+        if run_extract and target_cafe.strip():
+            # 설정 저장
+            config["marketer_target_cafe"] = target_cafe.strip()
+            save_config(config)
+            
+            st.session_state.marketer_logs = []
+            log_message("운영진 추출 작업을 백그라운드 스레드로 시작합니다...")
+            
+            # 스레드 구동
+            t = threading.Thread(target=run_extraction_job, args=(target_cafe.strip(),))
+            st.session_state.marketer_thread = t
+            t.start()
+            st.rerun()
+            
+        if stop_extract:
+            st.session_state.marketer_stop_requested = True
+            log_message("작업 중단이 요청되었습니다. 진행 중인 루프 종료 대기 중...")
+            st.rerun()
+
+with _t2:
+    with st.container(border=True, key="marketer_settings_card_2"):
+        render_settings_card_title("✉️ 자동 발송 메시지 설정", icon="mail")
+        
+        send_method = st.radio(
+            "발송 수단 선택",
+            options=["쪽지", "이메일"],
+            index=0 if config.get("marketer_send_method", "쪽지") == "쪽지" else 1,
+            horizontal=True
+        )
+        
+        # 딜레이 조절 슬라이더
+        delay_range = st.slider(
+            "발송 간격 딜레이 (초) - 랜덤 휴식 적용",
+            min_value=5,
+            max_value=300,
+            value=(config.get("marketer_delay_min", 30), config.get("marketer_delay_max", 120)),
+            step=5,
+            help="단시간 발송 차단을 막기 위해 지연 간격을 루즈하게 설정하는 것을 강력 추천합니다."
+        )
+        
+        # 쪽지 폼
+        if send_method == "쪽지":
+            memo_subj = st.text_input("쪽지 제목", value=config.get("marketer_memo_subject", "[제안] 카페몬스터 마케팅 프로그램 소개"))
+            memo_content = st.text_area("쪽지 본문 내용", value=config.get("marketer_memo_content", "안녕하세요 매니저님,\n카페몬스터에서 개발한 타겟 스크래핑 프로그램을 소개합니다..."), height=120)
+        else:
+            # 이메일 SMTP 폼
+            smtp_srv = st.text_input("SMTP 서버 주소", value=config.get("marketer_smtp_server", "smtp.naver.com"))
+            smtp_prt = st.number_input("SMTP 포트 번호", value=config.get("marketer_smtp_port", 465), step=1)
+            smtp_usr = st.text_input("SMTP 로그인 계정 ID (네이버 ID)", value=config.get("marketer_smtp_user", ""))
+            smtp_pwd = st.text_input("SMTP 앱 비밀번호 (2차 비밀번호)", value=config.get("marketer_smtp_password", ""), type="password")
+            
+            memo_subj = st.text_input("이메일 제목", value=config.get("marketer_email_subject", "[제안] 카페몬스터 마케팅 프로그램 소개"))
+            memo_content = st.text_area("이메일 본문 내용", value=config.get("marketer_email_content", "안녕하세요 매니저님,\n카페몬스터에서 개발한 타겟 스크래핑 프로그램을 소개합니다..."), height=120)
+            
+        btn_send_run = st.button(
+            "자동 발송 시작 ✈️",
             use_container_width=True,
             type="primary",
-            disabled=st.session_state.marketer_running
-        )
-    with btn_col2:
-        stop_extract = st.button(
-            "추출 작업 중단 🛑",
-            use_container_width=True,
-            type="secondary",
-            disabled=not st.session_state.marketer_running
+            disabled=st.session_state.marketer_running or not st.session_state.marketer_leaders
         )
         
-    if run_extract and target_cafe.strip():
-        # 설정 저장
-        config["marketer_target_cafe"] = target_cafe.strip()
-        save_config(config)
-        
-        st.session_state.marketer_logs = []
-        log_message("운영진 추출 작업을 백그라운드 스레드로 시작합니다...")
-        
-        # 스레드 구동
-        t = threading.Thread(target=run_extraction_job, args=(target_cafe.strip(),))
-        st.session_state.marketer_thread = t
-        t.start()
-        st.rerun()
-        
-    if stop_extract:
-        st.session_state.marketer_stop_requested = True
-        log_message("작업 중단이 요청되었습니다. 진행 중인 루프 종료 대기 중...")
-        st.rerun()
-        
-    st.markdown("</div>", unsafe_allow_html=True)
-    
-    # 5-2. 자동 발송 설정 & 메시지 템플릿 카드
-    st.markdown('<div class="cafe-monster-settings-card" style="margin-top: 15px;">', unsafe_allow_html=True)
-    render_settings_card_title("✉️ 자동 발송 메시지 템플릿 설정", icon="mail")
-    
-    send_method = st.radio(
-        "발송 수단 선택",
-        options=["쪽지", "이메일"],
-        index=0 if config.get("marketer_send_method", "쪽지") == "쪽지" else 1,
-        horizontal=True
-    )
-    
-    # 딜레이 조절 슬라이더
-    delay_range = st.slider(
-        "발송 간격 딜레이 (초) - 랜덤 휴식 적용",
-        min_value=5,
-        max_value=300,
-        value=(config.get("marketer_delay_min", 30), config.get("marketer_delay_max", 120)),
-        step=5,
-        help="단시간 발송 차단을 막기 위해 지연 간격을 루즈하게 설정하는 것을 강력 추천합니다."
-    )
-    
-    # 쪽지 폼
-    if send_method == "쪽지":
-        memo_subj = st.text_input("쪽지 제목", value=config.get("marketer_memo_subject", "[제안] 카페몬스터 마케팅 프로그램 소개"))
-        memo_content = st.text_area("쪽지 본문 내용", value=config.get("marketer_memo_content", "안녕하세요 매니저님,\n카페몬스터에서 개발한 타겟 스크래핑 프로그램을 소개합니다..."), height=150)
-    else:
-        # 이메일 SMTP 폼
-        smtp_srv = st.text_input("SMTP 서버 주소", value=config.get("marketer_smtp_server", "smtp.naver.com"))
-        smtp_prt = st.number_input("SMTP 포트 번호", value=config.get("marketer_smtp_port", 465), step=1)
-        smtp_usr = st.text_input("SMTP 로그인 계정 ID (네이버 ID)", value=config.get("marketer_smtp_user", ""))
-        smtp_pwd = st.text_input("SMTP 앱 비밀번호 (2차 비밀번호)", value=config.get("marketer_smtp_password", ""), type="password")
-        
-        memo_subj = st.text_input("이메일 제목", value=config.get("marketer_email_subject", "[제안] 카페몬스터 마케팅 프로그램 소개"))
-        memo_content = st.text_area("이메일 본문 내용", value=config.get("marketer_email_content", "안녕하세요 매니저님,\n카페몬스터에서 개발한 타겟 스크래핑 프로그램을 소개합니다..."), height=150)
-        
-    btn_send_run = st.button(
-        "자동 발송 시작 ✈️",
-        use_container_width=True,
-        type="primary",
-        disabled=st.session_state.marketer_running or not st.session_state.marketer_leaders
-    )
-    
-    if btn_send_run:
-        # 설정 저장
-        config["marketer_send_method"] = send_method
-        config["marketer_delay_min"] = delay_range[0]
-        config["marketer_delay_max"] = delay_range[1]
-        if send_method == "쪽지":
-            config["marketer_memo_subject"] = memo_subj
-            config["marketer_memo_content"] = memo_content
-        else:
-            config["marketer_smtp_server"] = smtp_srv
-            config["marketer_smtp_port"] = smtp_prt
-            config["marketer_smtp_user"] = smtp_usr
-            config["marketer_smtp_password"] = smtp_pwd
-            config["marketer_email_subject"] = memo_subj
-            config["marketer_email_content"] = memo_content
-        save_config(config)
-        
-        st.session_state.marketer_logs = []
-        log_message(f"자동 {send_method} 발송 작업을 스레드로 구동합니다...")
-        
-        smtp_set = None
-        if send_method == "이메일":
-            smtp_set = {
-                "host": smtp_srv,
-                "port": smtp_prt,
-                "user": smtp_usr,
-                "pass": smtp_pwd
-            }
+        if btn_send_run:
+            # 설정 저장
+            config["marketer_send_method"] = send_method
+            config["marketer_delay_min"] = delay_range[0]
+            config["marketer_delay_max"] = delay_range[1]
+            if send_method == "쪽지":
+                config["marketer_memo_subject"] = memo_subj
+                config["marketer_memo_content"] = memo_content
+            else:
+                config["marketer_smtp_server"] = smtp_srv
+                config["marketer_smtp_port"] = smtp_prt
+                config["marketer_smtp_user"] = smtp_usr
+                config["marketer_smtp_password"] = smtp_pwd
+                config["marketer_email_subject"] = memo_subj
+                config["marketer_email_content"] = memo_content
+            save_config(config)
             
-        t = threading.Thread(
-            target=run_sending_job,
-            args=(send_method, st.session_state.marketer_leaders, memo_subj, memo_content, delay_range[0], delay_range[1], smtp_set)
-        )
-        st.session_state.marketer_thread = t
-        t.start()
-        st.rerun()
-        
-    st.markdown("</div>", unsafe_allow_html=True)
+            st.session_state.marketer_logs = []
+            log_message(f"자동 {send_method} 발송 작업을 스레드로 구동합니다...")
+            
+            smtp_set = None
+            if send_method == "이메일":
+                smtp_set = {
+                    "host": smtp_srv,
+                    "port": smtp_prt,
+                    "user": smtp_usr,
+                    "pass": smtp_pwd
+                }
+                
+            t = threading.Thread(
+                target=run_sending_job,
+                args=(send_method, st.session_state.marketer_leaders, memo_subj, memo_content, delay_range[0], delay_range[1], smtp_set)
+            )
+            st.session_state.marketer_thread = t
+            t.start()
+            st.rerun()
 
-with col_right:
-    # 5-3. 실시간 작업 진행 상태 및 로그 카드
-    st.markdown('<div class="cafe-monster-settings-card">', unsafe_allow_html=True)
-    render_settings_card_title("📊 작업 진행 모니터링", icon="cpu")
-    
-    # 진행률 표시
-    if st.session_state.marketer_running:
-        st.progress(st.session_state.marketer_send_progress)
-        st.info(st.session_state.marketer_send_status_text)
+with _t3:
+    with st.container(border=True, key="marketer_settings_card_3"):
+        render_settings_card_title("📊 작업 진행 모니터링", icon="cpu")
         
-    # 로그 스크롤 박스 (3Monster 규정 준수 - 무제한 스크롤박스 형태)
-    log_content = "\n".join(st.session_state.marketer_logs)
-    log_html = f"""
-    <div style="
-        background-color: #0f172a;
-        color: #38bdf8;
-        font-family: 'Courier New', Courier, monospace;
-        font-size: 0.85rem;
-        padding: 12px;
-        border-radius: 8px;
-        height: 380px;
-        overflow-y: scroll;
-        white-space: pre-wrap;
-        border: 1px solid #334155;
-    ">{html.escape(log_content)}</div>
-    """
-    st.markdown(log_html, unsafe_allow_html=True)
-    
-    # 로그 클립보드 복사 및 고객센터 링크 연동
-    col_log_btn1, col_log_btn2 = st.columns([1, 1])
-    with col_log_btn1:
-        # Streamlit 내장 copy
-        st.download_button(
-            "📋 전체 로그 파일 다운로드",
-            data=log_content,
-            file_name=f"marketer_log_{datetime.now().strftime('%Y%md_%H%M%S')}.log",
-            mime="text/plain",
-            use_container_width=True
-        )
-    with col_log_btn2:
-        # 고객센터로 바로가기 링크 (3Monster 보안 규정 - 고객지원 쇼룸 노출 유도)
-        st.markdown(
-            '<a href="https://kmong.com" target="_blank" style="text-decoration:none;"><button style="width:100%;height:38px;border-radius:4px;border:1px solid #cbd5e1;background:#ffffff;color:#1e3a8a;font-weight:600;cursor:pointer;">💬 3Monster 1:1 고객센터</button></a>',
-            unsafe_allow_html=True
-        )
+        # 진행률 표시
+        if st.session_state.marketer_running:
+            st.progress(st.session_state.marketer_send_progress)
+            st.info(st.session_state.marketer_send_status_text)
+            
+        # 로그 스크롤 박스 (3Monster 규정 준수 - 무제한 스크롤박스 형태)
+        log_content = "\n".join(st.session_state.marketer_logs)
+        log_html = f"""
+        <div style="
+            background-color: #0f172a;
+            color: #38bdf8;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 0.85rem;
+            padding: 12px;
+            border-radius: 8px;
+            height: 250px;
+            overflow-y: scroll;
+            white-space: pre-wrap;
+            border: 1px solid #334155;
+        ">{html.escape(log_content)}</div>
+        """
+        st.markdown(log_html, unsafe_allow_html=True)
         
-    st.markdown("</div>", unsafe_allow_html=True)
+        # 로그 클립보드 복사 및 고객센터 링크 연동
+        col_log_btn1, col_log_btn2 = st.columns([1, 1])
+        with col_log_btn1:
+            # Streamlit 내장 copy
+            st.download_button(
+                "📋 로그 다운로드",
+                data=log_content,
+                file_name=f"marketer_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log",
+                mime="text/plain",
+                use_container_width=True
+            )
+        with col_log_btn2:
+            # 고객센터로 바로가기 링크 (3Monster 보안 규정 - 고객지원 쇼룸 노출 유도)
+            st.markdown(
+                '<a href="https://kmong.com" target="_blank" style="text-decoration:none;"><button style="width:100%;height:38px;border-radius:4px;border:1px solid #cbd5e1;background:#ffffff;color:#1e3a8a;font-weight:600;cursor:pointer;">💬 3Monster 고객센터</button></a>',
+                unsafe_allow_html=True
+            )
 
 # 6. 하단 데이터 리스트 표출
 if st.session_state.marketer_leaders:
+    st.markdown("---")
     st.subheader("📋 수집된 운영진 리스트")
     df_leaders = pd.DataFrame(st.session_state.marketer_leaders)
     st.dataframe(df_leaders, use_container_width=True)
+
