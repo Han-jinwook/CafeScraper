@@ -307,7 +307,7 @@ col_left, col_right = st.columns([1, 1], gap="medium")
 with col_left:
     # 5-1. 운영진 추출 카드
     st.markdown('<div class="cafe-monster-settings-card">', unsafe_allow_html=True)
-    render_settings_card_title("🔍 카페 운영진 정보 수집", "ia-info")
+    render_settings_card_title("🔍 카페 운영진 정보 수집", icon="ia-info")
     
     target_cafe = st.text_input(
         "대상 카페 URL 또는 카페 영문 ID",
@@ -354,7 +354,7 @@ with col_left:
     
     # 5-2. 자동 발송 설정 & 메시지 템플릿 카드
     st.markdown('<div class="cafe-monster-settings-card" style="margin-top: 15px;">', unsafe_allow_html=True)
-    render_settings_card_title("✉️ 자동 발송 메시지 템플릿 설정", "mail")
+    render_settings_card_title("✉️ 자동 발송 메시지 템플릿 설정", icon="mail")
     
     send_method = st.radio(
         "발송 수단 선택",
@@ -436,7 +436,7 @@ with col_left:
 with col_right:
     # 5-3. 실시간 작업 진행 상태 및 로그 카드
     st.markdown('<div class="cafe-monster-settings-card">', unsafe_allow_html=True)
-    render_settings_card_title("📊 작업 진행 모니터링", "cpu")
+    render_settings_card_title("📊 작업 진행 모니터링", icon="cpu")
     
     # 진행률 표시
     if st.session_state.marketer_running:
