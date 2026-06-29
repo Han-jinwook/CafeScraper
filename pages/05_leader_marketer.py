@@ -383,11 +383,11 @@ with _t2:
             memo_subj = st.text_input("쪽지 제목", value=config.get("marketer_memo_subject", "[제안] 카페몬스터 마케팅 프로그램 소개"))
             memo_content = st.text_area("쪽지 본문 내용", value=config.get("marketer_memo_content", "안녕하세요 매니저님,\n카페몬스터에서 개발한 타겟 스크래핑 프로그램을 소개합니다..."), height=120)
         else:
-            # 이메일 SMTP 폼
-            smtp_srv = st.text_input("SMTP 서버 주소", value=config.get("marketer_smtp_server", "smtp.naver.com"))
-            smtp_prt = st.number_input("SMTP 포트 번호", value=config.get("marketer_smtp_port", 465), step=1)
-            smtp_usr = st.text_input("SMTP 로그인 계정 ID (네이버 ID)", value=config.get("marketer_smtp_user", ""))
-            smtp_pwd = st.text_input("SMTP 앱 비밀번호 (2차 비밀번호)", value=config.get("marketer_smtp_password", ""), type="password")
+            # 메일 연동 설정
+            mail_host = st.text_input("메일 발송 서버 주소", value=config.get("marketer_smtp_server", "smtp.naver.com"))
+            mail_port = st.number_input("메일 서버 포트 번호", value=config.get("marketer_smtp_port", 465), step=1)
+            mail_user = st.text_input("발송용 메일 계정 ID (네이버 ID)", value=config.get("marketer_smtp_user", ""))
+            mail_pass = st.text_input("발송용 앱 비밀번호 (2차 암호)", value=config.get("marketer_smtp_password", ""), type="password")
             
             memo_subj = st.text_input("이메일 제목", value=config.get("marketer_email_subject", "[제안] 카페몬스터 마케팅 프로그램 소개"))
             memo_content = st.text_area("이메일 본문 내용", value=config.get("marketer_email_content", "안녕하세요 매니저님,\n카페몬스터에서 개발한 타겟 스크래핑 프로그램을 소개합니다..."), height=120)
@@ -408,10 +408,10 @@ with _t2:
                 config["marketer_memo_subject"] = memo_subj
                 config["marketer_memo_content"] = memo_content
             else:
-                config["marketer_smtp_server"] = smtp_srv
-                config["marketer_smtp_port"] = smtp_prt
-                config["marketer_smtp_user"] = smtp_usr
-                config["marketer_smtp_password"] = smtp_pwd
+                config["marketer_smtp_server"] = mail_host
+                config["marketer_smtp_port"] = mail_port
+                config["marketer_smtp_user"] = mail_user
+                config["marketer_smtp_password"] = mail_pass
                 config["marketer_email_subject"] = memo_subj
                 config["marketer_email_content"] = memo_content
             save_config(config)
@@ -422,10 +422,10 @@ with _t2:
             smtp_set = None
             if send_method == "이메일":
                 smtp_set = {
-                    "host": smtp_srv,
-                    "port": smtp_prt,
-                    "user": smtp_usr,
-                    "pass": smtp_pwd
+                    "host": mail_host,
+                    "port": mail_port,
+                    "user": mail_user,
+                    "pass": mail_pass
                 }
                 
             t = threading.Thread(
