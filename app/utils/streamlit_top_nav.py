@@ -21,7 +21,7 @@ _NAV_PAGE_LINKS: tuple[tuple[str, str, str], ...] = (
     ("app", PAGE_HOME, "카페 수집"),
     ("event", PAGE_EVENT, "이벤트 댓글 분석"),
     ("commenter", PAGE_COMMENTER, "자동 댓글러"),
-    ("marketer", PAGE_MARKETER, "운영진 마케터"),
+    ("marketer", PAGE_MARKETER, "카페스탭 ID 수집"),
 )
 
 _TOP_NAV_CONTAINER_KEY = "cafe_monster_top_nav"

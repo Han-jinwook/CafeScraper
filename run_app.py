@@ -45,7 +45,7 @@ def _boot_log(exe_dir: str, msg: str) -> None:
         pass
 
 
-def find_available_port(start: int = 8501, end: int = 8520) -> int:
+def find_available_port(start: int = 8900, end: int = 8920) -> int:
     for port in range(start, end):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             try:

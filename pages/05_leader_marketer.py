@@ -22,15 +22,8 @@ from app.utils.streamlit_top_nav import (
     inject_settings_three_cards_css,
 )
 
-import inspect
-import app.utils.streamlit_top_nav
-print("=" * 50)
-print("DEBUG stream_top_nav path:", app.utils.streamlit_top_nav.__file__)
-print("DEBUG signature:", inspect.signature(render_settings_card_title))
-print("=" * 50)
-
 st.set_page_config(
-    page_title="운영진 마케터 - CafeScraper",
+    page_title="카페스탭 ID 수집 - CafeScraper",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -94,11 +87,63 @@ def log_message(msg: str):
     st.session_state.marketer_logs.append(f"[{timestamp}] {msg}")
 
 # 4. 백그라운드 작업 스레드 함수
-def run_extraction_job(cafe_url_or_name: str):
+def run_extraction_job(mode: str, text_input: str, search_keyword: str, max_cafes: int):
     st.session_state.marketer_running = True
     st.session_state.marketer_stop_requested = False
     
+    # 1. 카페 목록 준비
+    target_cafes = []
+    if mode == "직접 입력":
+        # 줄 단위로 분할하여 카페 URL/ID 추출
+        lines = [line.strip() for line in text_input.split("\n") if line.strip()]
+        for line in lines:
+            target_cafes.append(line)
+    else:
+        # 키워드 검색 수집
+        log_message(f"🔍 키워드 '{search_keyword}'로 네이버 카페 검색을 진행합니다...")
+        import urllib.parse
+        import requests
+        from bs4 import BeautifulSoup
+        import re
+        
+        cafe_ids = set()
+        # 최대 3페이지(45개 항목) 검색
+        for page_idx in range(3):
+            if st.session_state.marketer_stop_requested:
+                break
+            start_num = page_idx * 15 + 1
+            encoded = urllib.parse.quote(search_keyword)
+            search_url = f"https://search.naver.com/search.naver?where=cafe&query={encoded}&start={start_num}"
+            try:
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                }
+                res = requests.get(search_url, headers=headers, timeout=10)
+                if res.status_code == 200:
+                    soup = BeautifulSoup(res.text, "html.parser")
+                    links = soup.find_all("a")
+                    for link in links:
+                        href = link.get("href", "")
+                        if "cafe.naver.com" in href:
+                            match = re.search(r"cafe\.naver\.com/([a-zA-Z0-9_]+)", href)
+                            if match:
+                                cid = match.group(1)
+                                if cid not in ("ca-fe", "ArticleRead", "ArticleList", "MyCafeIntro"):
+                                    cafe_ids.add(cid)
+            except Exception as e_search:
+                log_message(f"  ⚠️ 검색 {page_idx+1}페이지 수집 중 에러: {e_search}")
+            time.sleep(0.5)
+            
+        target_cafes = sorted(list(cafe_ids))[:max_cafes]
+        log_message(f"  └ [성공] 총 {len(target_cafes)}개의 카페 ID를 수집했습니다: {', '.join(target_cafes)}")
+        
+    if not target_cafes:
+        log_message("❌ 수집할 대상 카페가 존재하지 않습니다.")
+        st.session_state.marketer_running = False
+        return
+
     crawler = None
+    all_leaders = []
     try:
         log_message("🌐 undetected-chromedriver 브라우저 실행 중...")
         crawler = NaverCafeCrawler(debug_mode=True)
@@ -111,22 +156,44 @@ def run_extraction_job(cafe_url_or_name: str):
         log_message("🔑 네이버 로그인이 필요한 경우 브라우저 창에서 진행해 주세요. (5초 대기...)")
         time.sleep(5.0)
         
-        # 운영진 정보 수집 시작
-        leaders = crawler.extract_cafe_leaders(cafe_url_or_name)
-        
-        if leaders:
-            st.session_state.marketer_leaders = leaders
+        for idx, cafe in enumerate(target_cafes):
+            if st.session_state.marketer_stop_requested:
+                log_message("⚠️ 사용자에 의해 작업 중단이 요청되었습니다.")
+                break
+                
+            log_message(f"🔄 [{idx+1}/{len(target_cafes)}] '{cafe}' 스탭 추출 시작...")
+            try:
+                leaders = crawler.extract_cafe_leaders(cafe)
+                if leaders:
+                    for l in leaders:
+                        l['source_cafe'] = cafe  # 수집 출처 기록
+                    all_leaders.extend(leaders)
+                    log_message(f"  => 성공: {len(leaders)}명 추출 완료")
+                else:
+                    log_message("  => 추출된 스탭 정보가 없습니다.")
+            except Exception as e_cafe:
+                log_message(f"  => 에러 발생: {e_cafe}")
+                
+            time.sleep(random.uniform(1.5, 3.0)) # 카페 간 지연
+            
+        if all_leaders:
+            st.session_state.marketer_leaders = all_leaders
             
             # 다운로드 폴더에 즉시 CSV 다이렉트 저장
             try:
                 dl_dir = get_user_download_dir()
-                # 파일명에서 특수문자 제거
-                safe_name = re.sub(r'[\/:*?"<>|]', '', cafe_url_or_name).replace("https", "").replace("cafe.naver.com", "").strip("_")
+                # 파일명 생성
+                safe_name = search_keyword.strip() if mode == "키워드 검색" else "직접입력"
+                safe_name = re.sub(r'[\/:*?"<>|]', '', safe_name)
                 if not safe_name:
                     safe_name = "naver_cafe"
-                csv_path = dl_dir / f"{safe_name}_운영진_이메일_목록.csv"
+                csv_path = dl_dir / f"{safe_name}_스탭_이메일_목록.csv"
                 
-                df = pd.DataFrame(leaders)
+                df = pd.DataFrame(all_leaders)
+                # 컬럼 순서 정비
+                if 'source_cafe' in df.columns:
+                    cols = ['source_cafe'] + [c for c in df.columns if c != 'source_cafe']
+                    df = df[cols]
                 df.to_csv(csv_path, index=False, encoding="utf-8-sig")
                 log_message(f"💾 수집 결과가 다운로드 폴더에 저장되었습니다: {csv_path.name}")
                 
@@ -136,7 +203,7 @@ def run_extraction_job(cafe_url_or_name: str):
             except Exception as e_save:
                 log_message(f"⚠️ 파일 저장 또는 탐색기 기동 실패: {e_save}")
         else:
-            log_message("❌ 추출된 운영진 정보가 없습니다.")
+            log_message("❌ 추출된 최종 스탭 정보가 하나도 없습니다.")
             
     except Exception as e:
         log_message(f"🚨 작업 중 치명적 에러 발생: {e}")
@@ -309,19 +376,45 @@ def run_sending_job(method: str, target_list: list, subject: str, content: str, 
 # 5. UI 화면 그리기
 inject_settings_three_cards_css(key_basename="marketer_settings_card")
 
-st.markdown("#### ⚙️ 운영진 마케터 설정")
+st.markdown("#### ⚙️ 카페스탭 ID 수집 설정")
 _t1, _t2, _t3 = st.columns([1, 1, 1], gap="medium")
 
 with _t1:
     with st.container(border=True, key="marketer_settings_card_1"):
-        render_settings_card_title("🔍 카페 운영진 정보 수집", icon="ia-info")
+        render_settings_card_title("🔍 카페스탭 ID 수집", icon="ia-info")
         
-        target_cafe = st.text_input(
-            "대상 카페 URL 또는 카페 영문 ID",
-            value=config.get("marketer_target_cafe", ""),
-            help="예: joonggonara 또는 https://cafe.naver.com/joonggonara"
+        target_mode = st.radio(
+            "수집 방식 선택",
+            options=["직접 입력", "키워드 검색"],
+            index=0 if config.get("marketer_target_mode", "직접 입력") == "직접 입력" else 1,
+            horizontal=True
         )
         
+        if target_mode == "직접 입력":
+            target_cafes_input = st.text_area(
+                "대상 카페 URL 또는 ID (한 줄에 하나씩 입력)",
+                value=config.get("marketer_target_cafes_input", "joonggonara\nhttps://cafe.naver.com/campingfirst"),
+                height=120,
+                help="수십 개의 카페 주소나 영문 ID를 한 줄에 하나씩 여러 개 입력할 수 있습니다."
+            )
+            search_keyword = ""
+            max_cafes = 1
+        else:
+            search_keyword = st.text_input(
+                "검색 키워드 입력",
+                value=config.get("marketer_search_keyword", "캠핑"),
+                help="네이버에서 이 키워드로 카페를 검색하여 대상 목록을 자동 확보합니다."
+            )
+            max_cafes = st.number_input(
+                "최대 수집 카페 수",
+                min_value=1,
+                max_value=100,
+                value=int(config.get("marketer_max_cafes", 20)),
+                step=5,
+                help="수집할 카페 개수의 최대 한도를 설정합니다."
+            )
+            target_cafes_input = ""
+            
         btn_col1, btn_col2 = st.columns([1, 1])
         with btn_col1:
             run_extract = st.button(
@@ -338,16 +431,24 @@ with _t1:
                 disabled=not st.session_state.marketer_running
             )
             
-        if run_extract and target_cafe.strip():
+        if run_extract:
             # 설정 저장
-            config["marketer_target_cafe"] = target_cafe.strip()
+            config["marketer_target_mode"] = target_mode
+            if target_mode == "직접 입력":
+                config["marketer_target_cafes_input"] = target_cafes_input
+            else:
+                config["marketer_search_keyword"] = search_keyword
+                config["marketer_max_cafes"] = max_cafes
             save_config(config)
             
             st.session_state.marketer_logs = []
-            log_message("운영진 추출 작업을 백그라운드 스레드로 시작합니다...")
+            log_message("카페 스탭 추출 작업을 백그라운드 스레드로 시작합니다...")
             
             # 스레드 구동
-            t = threading.Thread(target=run_extraction_job, args=(target_cafe.strip(),))
+            t = threading.Thread(
+                target=run_extraction_job,
+                args=(target_mode, target_cafes_input, search_keyword, max_cafes)
+            )
             st.session_state.marketer_thread = t
             t.start()
             st.rerun()
