@@ -169,6 +169,27 @@ class NaverCafeCrawler:
         else:
             _safe_stdout_line(f"[INFO] {message}")
 
+    def _execute_js_via_cdp(self, js_code: str) -> Optional[str]:
+        """
+        크롬 최신 버전(149 등)의 셀레늄 자바스크립트 역직렬화(Deserialization) 오류를
+        CDP Runtime.evaluate 호출 방식으로 완벽히 우회하여 JS 문자열 실행 결과를 안전하게 획득합니다.
+        """
+        if not self.driver:
+            return None
+        try:
+            res = self.driver.execute_cdp_cmd("Runtime.evaluate", {
+                "expression": js_code,
+                "returnByValue": True
+            })
+            val = res.get("result", {}).get("value")
+            if val is not None:
+                return str(val)
+            return None
+        except Exception as e:
+            self._update_status(f"[CDP 우회 실행 오류] {e}")
+            return None
+
+
     def _extract_id_from_element(self, element) -> str:
         """요소에서 Naver ID (member_id)를 추출하는 통합 엔진"""
         try:
@@ -4959,50 +4980,52 @@ class NaverCafeCrawler:
             return []
             
         js_code = """
-        return (function() {
-            var str_result = "";
-            var ths = document.querySelectorAll('th');
-            var index = 0;
-            for (var i = 0; i < ths.length; i++) {
-                var th = ths[i];
-                var th_text = th.textContent.trim();
-                if (th_text.indexOf('카페 매니저') > -1 || th_text.indexOf('카페 스탭') > -1) {
-                    var parent_tr = th.parentNode;
-                    for (var j = 0; j < 3; j++) {
-                        if (parent_tr && parent_tr.tagName.toLowerCase() === 'tr') {
-                            break;
+        (function() {
+            try {
+                var str_result = "";
+                var ths = document.querySelectorAll('th');
+                var index = 0;
+                for (var i = 0; i < ths.length; i++) {
+                    var th = ths[i];
+                    if (!th) continue;
+                    var th_text = (th.textContent || "").trim();
+                    if (th_text.indexOf('카페 매니저') > -1 || th_text.indexOf('카페 스탭') > -1) {
+                        var parent_tr = th.parentNode;
+                        for (var j = 0; j < 3; j++) {
+                            if (parent_tr && parent_tr.tagName && parent_tr.tagName.toLowerCase() === 'tr') {
+                                break;
+                            }
+                            if (parent_tr) parent_tr = parent_tr.parentNode;
                         }
-                        parent_tr = parent_tr.parentNode;
-                    }
-                    if (parent_tr) {
-                        var a_tags = parent_tr.querySelectorAll('a');
-                        for (var k = 0; k < a_tags.length; k++) {
-                            var a = a_tags[k];
-                            var nick = a.textContent.trim();
-                            if (nick) {
-                                var id_attr = 'temp-leader-marketer-' + index;
-                                a.setAttribute('id', id_attr);
-                                str_result += nick + "^" + th_text + "^" + id_attr + "|";
-                                index++;
+                        if (parent_tr) {
+                            var a_tags = parent_tr.querySelectorAll('a');
+                            for (var k = 0; k < a_tags.length; k++) {
+                                var a = a_tags[k];
+                                if (!a) continue;
+                                var nick = (a.textContent || "").trim();
+                                if (nick) {
+                                    var id_attr = 'temp-leader-marketer-' + index;
+                                    a.setAttribute('id', id_attr);
+                                    str_result += nick + "^" + th_text + "^" + id_attr + "|";
+                                    index++;
+                                }
                             }
                         }
                     }
                 }
+                return JSON.stringify({ "result": str_result });
+            } catch (e) {
+                return JSON.stringify({ "error": e.message });
             }
-            var tempInput = document.getElementById('temp-marketer-data');
-            if (!tempInput) {
-                tempInput = document.createElement('input');
-                tempInput.setAttribute('id', 'temp-marketer-data');
-                tempInput.setAttribute('type', 'hidden');
-                document.body.appendChild(tempInput);
-            }
-            return JSON.stringify({ "result": str_result });
         })();
         """
         
         try:
-            ret_str = self.driver.execute_script(js_code)
+            ret_str = self._execute_js_via_cdp(js_code)
             ret = json.loads(ret_str) if isinstance(ret_str, str) else {}
+            if "error" in ret:
+                self._update_status(f"[운영진 추출] 자바스크립트 실행 오류: {ret['error']}")
+                return []
             raw_string_data = ret.get("result", "")
         except Exception as e_dom:
             self._update_status(f"[운영진 추출] 스태프 DOM 획득 중 에러: {e_dom}")
