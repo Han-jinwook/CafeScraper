@@ -216,8 +216,6 @@ def run_extraction_job(job_id: str, crawler: NaverCafeCrawler, mode: str, text_i
         log_to_job(job_id, f"🚨 작업 중 치명적 에러 발생: {e}")
         log_to_job(job_id, traceback.format_exc())
     finally:
-        # [수정] 2단계 추출이 끝났다고 해서 크롬 브라우저 세션을 강제로 닫지 않습니다!
-        # 사용자가 여러 번 재사용할 수 있도록 브라우저 생명주기는 1단계 버튼으로 수동 제어합니다.
         MARKETER_JOBS[job_id]["running"] = False
 
 def run_sending_job(job_id: str, crawler: NaverCafeCrawler, method: str, target_list: list, subject: str, content: str, delay_min: int, delay_max: int, smtp_settings: dict = None):
@@ -394,7 +392,45 @@ with _t1:
     with st.container(border=True, key="marketer_settings_card_1"):
         render_settings_card_title("카페스탭 ID 수집", icon="🔍")
         
-        # 1단계 브라우저 열기 버튼 배치 (앞선 타메뉴와 동일한 UX 보장)
+        # [자동로그인 아코디언 추가] 타 메뉴와 완벽하게 형태 통일
+        if "marketer_auto_login_expanded" not in st.session_state:
+            st.session_state.marketer_auto_login_expanded = False
+            
+        with st.expander("🔓 자동로그인 설정", expanded=st.session_state.marketer_auto_login_expanded):
+            auto_login_enabled = st.checkbox(
+                "브라우저 열 때 자동로그인 실행",
+                value=config.get("marketer_auto_login_enabled", True),
+                key="marketer_auto_login_enabled_input",
+                help="1단계 브라우저 열기 직후 저장된 계정으로 로그인을 시도합니다."
+            )
+            
+            _al_input_col, _al_btn_col = st.columns([3.8, 1.2], gap="small", vertical_alignment="bottom")
+            with _al_input_col:
+                naver_id = st.text_input(
+                    "네이버 아이디",
+                    value=config.get("marketer_naver_id", ""),
+                    key="marketer_naver_id_input",
+                    placeholder="아이디 입력"
+                )
+                naver_pw = st.text_input(
+                    "네이버 비밀번호",
+                    value=config.get("marketer_naver_pw", ""),
+                    key="marketer_naver_pw_input",
+                    type="password",
+                    placeholder="비밀번호 입력"
+                )
+            with _al_btn_col:
+                btn_save_login = st.button("저장", key="marketer_save_login_btn", use_container_width=True)
+                
+            if btn_save_login:
+                config["marketer_auto_login_enabled"] = auto_login_enabled
+                config["marketer_naver_id"] = naver_id
+                config["marketer_naver_pw"] = naver_pw
+                save_config(config)
+                st.success("로그인 정보가 저장되었습니다.")
+                st.rerun()
+                
+        st.markdown("---")
         st.markdown("**1단계: 수집용 브라우저 준비**")
         col_b1, col_b2 = st.columns([1, 1])
         with col_b1:
@@ -415,7 +451,7 @@ with _t1:
             st.session_state.marketer_logs = []
             st.session_state.marketer_logs.append(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 수집용 브라우저 실행 중...")
             
-            # 크롤러 재생성 및 실행
+            # 크롤러 생성
             crawler_instance = NaverCafeCrawler(debug_mode=True)
             st.session_state.marketer_crawler = crawler_instance
             
@@ -425,12 +461,27 @@ with _t1:
             crawler_instance.set_status_callback(log_cb)
             
             crawler_instance.start_browser()
-            # 네이버 로그인 폼으로 자동 이동
-            try:
-                crawler_instance.driver.get("https://nid.naver.com/nidlogin.login")
-            except:
-                pass
-            st.session_state.marketer_logs.append(f"[{datetime.now().strftime('%H:%M:%S')}] 🔑 네이버 로그인을 마쳐주세요. 로그인 세션 상태가 유지됩니다.")
+            
+            # 자동로그인 수행
+            auto_login_on = config.get("marketer_auto_login_enabled", True)
+            login_id = config.get("marketer_naver_id", "").strip()
+            login_pw = config.get("marketer_naver_pw", "")
+            
+            if auto_login_on and login_id and login_pw:
+                st.session_state.marketer_logs.append(f"[{datetime.now().strftime('%H:%M:%S')}] 🔑 자동로그인 시도 중...")
+                from app.scraper.naver import auto_login_naver_with_js
+                login_ok, reason = auto_login_naver_with_js(crawler_instance, login_id, login_pw)
+                if login_ok:
+                    st.session_state.marketer_logs.append(f"[{datetime.now().strftime('%H:%M:%S')}] ✅ 자동로그인 성공 ({reason})")
+                else:
+                    st.session_state.marketer_logs.append(f"[{datetime.now().strftime('%H:%M:%S')}] ⚠️ 자동로그인 실패: {reason}")
+            else:
+                try:
+                    crawler_instance.driver.get("https://nid.naver.com/nidlogin.login")
+                except:
+                    pass
+                st.session_state.marketer_logs.append(f"[{datetime.now().strftime('%H:%M:%S')}] 🔑 크롬 창에서 직접 네이버 로그인을 마쳐주세요.")
+                
             st.rerun()
             
         if btn_close_browser and st.session_state.marketer_crawler:
@@ -509,7 +560,7 @@ with _t1:
             # 스레드 작업 신규 등록
             job_id = str(uuid.uuid4())
             MARKETER_JOBS[job_id] = {
-                "logs": list(st.session_state.marketer_logs), # 기존 브라우저 기동 로그 유지
+                "logs": list(st.session_state.marketer_logs),
                 "progress": 0.0,
                 "status_text": "수집 준비 중...",
                 "running": True,
