@@ -54,6 +54,8 @@ if "MARKETER_JOBS" not in st.session_state:
 MARKETER_JOBS = st.session_state.MARKETER_JOBS
 
 # 세션 상태 기본값 정의
+if "marketer_crawler" not in st.session_state:
+    st.session_state.marketer_crawler = None
 if "marketer_logs" not in st.session_state:
     st.session_state.marketer_logs = []
 if "marketer_leaders" not in st.session_state:
@@ -94,8 +96,8 @@ def log_to_job(job_id: str, msg: str):
     if job_id in MARKETER_JOBS:
         MARKETER_JOBS[job_id]["logs"].append(f"[{timestamp}] {msg}")
 
-# 4. 백그라운드 작업 스레드 함수
-def run_extraction_job(job_id: str, mode: str, text_input: str, search_keyword: str, max_cafes: int):
+# 4. 백그라운드 작업 스레드 함수 (1단계 브라우저 인스턴스를 재사용)
+def run_extraction_job(job_id: str, crawler: NaverCafeCrawler, mode: str, text_input: str, search_keyword: str, max_cafes: int):
     if job_id not in MARKETER_JOBS:
         return
     MARKETER_JOBS[job_id]["running"] = True
@@ -150,26 +152,9 @@ def run_extraction_job(job_id: str, mode: str, text_input: str, search_keyword: 
         MARKETER_JOBS[job_id]["running"] = False
         return
 
-    crawler = None
     all_leaders = []
     try:
-        log_to_job(job_id, "🌐 undetected-chromedriver 브라우저 실행 중...")
-        crawler = NaverCafeCrawler(debug_mode=True)
-        
-        def crawler_log_callback(msg):
-            log_to_job(job_id, msg)
-        crawler.set_status_callback(crawler_log_callback)
-        
-        crawler.start_browser()
-        
-        # [로그인 개선] 사용자가 수동으로 로그인할 수 있도록 로그인 창으로 먼저 보내고 충분히 대기
-        log_to_job(job_id, "🔑 네이버 로그인 화면으로 이동합니다. 로그인이 필요한 경우 로그인해 주세요.")
-        try:
-            crawler.driver.get("https://nid.naver.com/nidlogin.login")
-        except:
-            pass
-        log_to_job(job_id, "⏳ 브라우저 세션 대기 중 (15초 대기...)")
-        time.sleep(15.0)
+        log_to_job(job_id, "🚀 1단계로 열린 브라우저 세션을 활용해 스탭 추출을 개시합니다.")
         
         for idx, cafe in enumerate(target_cafes):
             if MARKETER_JOBS[job_id]["stop_requested"]:
@@ -231,34 +216,22 @@ def run_extraction_job(job_id: str, mode: str, text_input: str, search_keyword: 
         log_to_job(job_id, f"🚨 작업 중 치명적 에러 발생: {e}")
         log_to_job(job_id, traceback.format_exc())
     finally:
-        if crawler:
-            try:
-                crawler.close()
-                log_to_job(job_id, "🔒 브라우저를 안전하게 종료했습니다.")
-            except:
-                pass
+        # [수정] 2단계 추출이 끝났다고 해서 크롬 브라우저 세션을 강제로 닫지 않습니다!
+        # 사용자가 여러 번 재사용할 수 있도록 브라우저 생명주기는 1단계 버튼으로 수동 제어합니다.
         MARKETER_JOBS[job_id]["running"] = False
 
-def run_sending_job(job_id: str, method: str, target_list: list, subject: str, content: str, delay_min: int, delay_max: int, smtp_settings: dict = None):
+def run_sending_job(job_id: str, crawler: NaverCafeCrawler, method: str, target_list: list, subject: str, content: str, delay_min: int, delay_max: int, smtp_settings: dict = None):
     if job_id not in MARKETER_JOBS:
         return
     MARKETER_JOBS[job_id]["running"] = True
     
-    crawler = None
     try:
         total = len(target_list)
         MARKETER_JOBS[job_id]["progress"] = 0.0
         MARKETER_JOBS[job_id]["status_text"] = f"발송 대기 중 (총 {total}건)"
         
         if method == "쪽지":
-            log_to_job(job_id, "🌐 쪽지 발송용 undetected-chromedriver 브라우저 실행 중...")
-            crawler = NaverCafeCrawler(debug_mode=True)
-            def log_cb(msg):
-                log_to_job(job_id, msg)
-            crawler.set_status_callback(log_cb)
-            crawler.start_browser()
-            log_to_job(job_id, "🔑 네이버 발송 계정 로그인이 필요합니다. (5초 대기...)")
-            time.sleep(5.0)
+            log_to_job(job_id, "🌐 1단계로 열린 브라우저 세션을 활용해 쪽지 발송을 진행합니다.")
             
             success_cnt = 0
             fail_cnt = 0
@@ -380,12 +353,6 @@ def run_sending_job(job_id: str, method: str, target_list: list, subject: str, c
         log_to_job(job_id, f"🚨 발송 작업 중 치명적 에러: {e}")
         log_to_job(job_id, traceback.format_exc())
     finally:
-        if crawler:
-            try:
-                crawler.close()
-                log_to_job(job_id, "🔒 발송 브라우저를 안전하게 종료했습니다.")
-            except:
-                pass
         MARKETER_JOBS[job_id]["running"] = False
         MARKETER_JOBS[job_id]["progress"] = 1.0
         MARKETER_JOBS[job_id]["status_text"] = "작업 완료"
@@ -406,6 +373,17 @@ if active_job_id and active_job_id in MARKETER_JOBS:
     if not job["running"]:
         st.session_state.marketer_active_job_id = None
 
+# 브라우저 실행 여부 감지
+browser_opened = False
+crawler_ref = st.session_state.get("marketer_crawler")
+if crawler_ref and getattr(crawler_ref, "driver", None):
+    try:
+        handles = crawler_ref.driver.window_handles or []
+        if len(handles) > 0:
+            browser_opened = True
+    except:
+        browser_opened = False
+
 # 6. UI 화면 그리기
 inject_settings_three_cards_css(key_basename="marketer_settings_card")
 
@@ -415,6 +393,57 @@ _t1, _t2, _t3 = st.columns([1, 1, 1], gap="medium")
 with _t1:
     with st.container(border=True, key="marketer_settings_card_1"):
         render_settings_card_title("카페스탭 ID 수집", icon="🔍")
+        
+        # 1단계 브라우저 열기 버튼 배치 (앞선 타메뉴와 동일한 UX 보장)
+        st.markdown("**1단계: 수집용 브라우저 준비**")
+        col_b1, col_b2 = st.columns([1, 1])
+        with col_b1:
+            btn_open_browser = st.button(
+                "1단계: 브라우저 열기 🌐",
+                use_container_width=True,
+                type="primary" if not browser_opened else "secondary",
+                disabled=st.session_state.marketer_running or browser_opened
+            )
+        with col_b2:
+            btn_close_browser = st.button(
+                "브라우저 닫기 🔒",
+                use_container_width=True,
+                disabled=not browser_opened
+            )
+            
+        if btn_open_browser:
+            st.session_state.marketer_logs = []
+            st.session_state.marketer_logs.append(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 수집용 브라우저 실행 중...")
+            
+            # 크롤러 재생성 및 실행
+            crawler_instance = NaverCafeCrawler(debug_mode=True)
+            st.session_state.marketer_crawler = crawler_instance
+            
+            def log_cb(msg):
+                timestamp = datetime.now().strftime("%H:%M:%S")
+                st.session_state.marketer_logs.append(f"[{timestamp}] {msg}")
+            crawler_instance.set_status_callback(log_cb)
+            
+            crawler_instance.start_browser()
+            # 네이버 로그인 폼으로 자동 이동
+            try:
+                crawler_instance.driver.get("https://nid.naver.com/nidlogin.login")
+            except:
+                pass
+            st.session_state.marketer_logs.append(f"[{datetime.now().strftime('%H:%M:%S')}] 🔑 네이버 로그인을 마쳐주세요. 로그인 세션 상태가 유지됩니다.")
+            st.rerun()
+            
+        if btn_close_browser and st.session_state.marketer_crawler:
+            try:
+                st.session_state.marketer_crawler.close()
+            except:
+                pass
+            st.session_state.marketer_crawler = None
+            st.session_state.marketer_logs.append(f"[{datetime.now().strftime('%H:%M:%S')}] 🔒 브라우저를 안전하게 닫았습니다.")
+            st.rerun()
+            
+        st.markdown("---")
+        st.markdown("**2단계: 카페 지정 및 스탭 추출**")
         
         target_mode = st.radio(
             "수집 방식 선택",
@@ -427,7 +456,7 @@ with _t1:
             target_cafes_input = st.text_area(
                 "대상 카페 URL 또는 ID (한 줄에 하나씩 입력)",
                 value=config.get("marketer_target_cafes_input", "joonggonara\nhttps://cafe.naver.com/campingfirst"),
-                height=120,
+                height=100,
                 help="수십 개의 카페 주소나 영문 ID를 한 줄에 하나씩 여러 개 입력할 수 있습니다."
             )
             search_keyword = ""
@@ -442,7 +471,7 @@ with _t1:
                 "최대 수집 카페 수",
                 min_value=1,
                 max_value=100,
-                value=int(config.get("marketer_max_cafes", 20)),
+                value=int(config.get("marketer_max_cafes", 5)),
                 step=5,
                 help="수집할 카페 개수의 최대 한도를 설정합니다."
             )
@@ -451,10 +480,10 @@ with _t1:
         btn_col1, btn_col2 = st.columns([1, 1])
         with btn_col1:
             run_extract = st.button(
-                "추출 시작 🚀",
+                "2단계: 추출 시작 🚀",
                 use_container_width=True,
-                type="primary",
-                disabled=st.session_state.marketer_running
+                type="primary" if browser_opened else "secondary",
+                disabled=st.session_state.marketer_running or not browser_opened
             )
         with btn_col2:
             stop_extract = st.button(
@@ -464,7 +493,10 @@ with _t1:
                 disabled=not st.session_state.marketer_running
             )
             
-        if run_extract:
+        if not browser_opened:
+            st.info("💡 먼저 **1단계: 브라우저 열기** 버튼을 눌러 크롬 창을 기동한 뒤 로그인 해주세요.")
+            
+        if run_extract and browser_opened:
             # 설정 저장
             config["marketer_target_mode"] = target_mode
             if target_mode == "직접 입력":
@@ -477,7 +509,7 @@ with _t1:
             # 스레드 작업 신규 등록
             job_id = str(uuid.uuid4())
             MARKETER_JOBS[job_id] = {
-                "logs": [],
+                "logs": list(st.session_state.marketer_logs), # 기존 브라우저 기동 로그 유지
                 "progress": 0.0,
                 "status_text": "수집 준비 중...",
                 "running": True,
@@ -494,7 +526,7 @@ with _t1:
             # 스레드 구동
             t = threading.Thread(
                 target=run_extraction_job,
-                args=(job_id, target_mode, target_cafes_input, search_keyword, max_cafes),
+                args=(job_id, st.session_state.marketer_crawler, target_mode, target_cafes_input, search_keyword, max_cafes),
                 daemon=True
             )
             t.start()
@@ -546,8 +578,8 @@ with _t2:
         btn_send_run = st.button(
             "자동 발송 시작 ✈️",
             use_container_width=True,
-            type="primary",
-            disabled=st.session_state.marketer_running or not st.session_state.marketer_leaders
+            type="primary" if browser_opened or send_method == "이메일" else "secondary",
+            disabled=st.session_state.marketer_running or not st.session_state.marketer_leaders or (send_method == "쪽지" and not browser_opened)
         )
         
         if btn_send_run:
@@ -570,7 +602,7 @@ with _t2:
             # 발송 스레드 작업 등록
             job_id = str(uuid.uuid4())
             MARKETER_JOBS[job_id] = {
-                "logs": [],
+                "logs": list(st.session_state.marketer_logs),
                 "progress": 0.0,
                 "status_text": "발송 준비 중...",
                 "running": True,
@@ -594,7 +626,7 @@ with _t2:
                 
             t = threading.Thread(
                 target=run_sending_job,
-                args=(job_id, send_method, st.session_state.marketer_leaders, memo_subj, memo_content, delay_range[0], delay_range[1], smtp_set),
+                args=(job_id, st.session_state.marketer_crawler, send_method, st.session_state.marketer_leaders, memo_subj, memo_content, delay_range[0], delay_range[1], smtp_set),
                 daemon=True
             )
             t.start()
