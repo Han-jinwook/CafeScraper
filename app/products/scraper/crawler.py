@@ -4900,15 +4900,13 @@ class NaverCafeCrawler:
                 tempInput.setAttribute('type', 'hidden');
                 document.body.appendChild(tempInput);
             }
-            tempInput.value = str_result;
-            return "success";
+            return { "result": str_result };
         })();
         """
         
         try:
-            self.driver.execute_script(js_code)
-            temp_input_el = self.driver.find_element(By.ID, "temp-marketer-data")
-            raw_string_data = temp_input_el.get_attribute("value")
+            ret = self.driver.execute_script(js_code)
+            raw_string_data = ret.get("result") if isinstance(ret, dict) else ""
         except Exception as e_dom:
             self._update_status(f"[운영진 추출] 스태프 DOM 획득 중 에러: {e_dom}")
             return []
