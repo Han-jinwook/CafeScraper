@@ -4900,13 +4900,14 @@ class NaverCafeCrawler:
                 tempInput.setAttribute('type', 'hidden');
                 document.body.appendChild(tempInput);
             }
-            return { "result": str_result };
+            return JSON.stringify({ "result": str_result });
         })();
         """
         
         try:
-            ret = self.driver.execute_script(js_code)
-            raw_string_data = ret.get("result") if isinstance(ret, dict) else ""
+            ret_str = self.driver.execute_script(js_code)
+            ret = json.loads(ret_str) if isinstance(ret_str, str) else {}
+            raw_string_data = ret.get("result", "")
         except Exception as e_dom:
             self._update_status(f"[운영진 추출] 스태프 DOM 획득 중 에러: {e_dom}")
             return []
