@@ -102,6 +102,12 @@ def run_extraction_job(job_id: str, crawler: NaverCafeCrawler, mode: str, text_i
         return
     MARKETER_JOBS[job_id]["running"] = True
     
+    # 크롤러 콜백을 백그라운드 스레드 안전 콜백으로 전환하여 Streamlit SessionState 격리 우회
+    def thread_log_cb(msg):
+        log_to_job(job_id, msg)
+    if crawler:
+        crawler.set_status_callback(thread_log_cb)
+    
     # 1. 카페 목록 준비
     target_cafes = []
     if mode == "직접 입력":
@@ -222,6 +228,12 @@ def run_sending_job(job_id: str, crawler: NaverCafeCrawler, method: str, target_
     if job_id not in MARKETER_JOBS:
         return
     MARKETER_JOBS[job_id]["running"] = True
+    
+    # 크롤러 콜백을 백그라운드 스레드 안전 콜백으로 전환하여 Streamlit SessionState 격리 우회
+    def thread_log_cb(msg):
+        log_to_job(job_id, msg)
+    if crawler:
+        crawler.set_status_callback(thread_log_cb)
     
     try:
         total = len(target_list)
