@@ -50,7 +50,6 @@ config = load_config()
 
 # 2. 전역 작업 상태 관리 (스레드 세션 동기화 해결용)
 if "MARKETER_JOBS" not in st.session_state:
-    # 핫 리로드 시 유실 방지를 위해 session_state에 보관하거나 글로벌 선언
     st.session_state.MARKETER_JOBS = {}
 MARKETER_JOBS = st.session_state.MARKETER_JOBS
 
@@ -59,6 +58,8 @@ if "marketer_logs" not in st.session_state:
     st.session_state.marketer_logs = []
 if "marketer_leaders" not in st.session_state:
     st.session_state.marketer_leaders = []
+if "marketer_target_cafes" not in st.session_state:
+    st.session_state.marketer_target_cafes = []
 if "marketer_running" not in st.session_state:
     st.session_state.marketer_running = False
 if "marketer_stop_requested" not in st.session_state:
@@ -142,6 +143,8 @@ def run_extraction_job(job_id: str, mode: str, text_input: str, search_keyword: 
         target_cafes = sorted(list(cafe_ids))[:max_cafes]
         log_to_job(job_id, f"  └ [성공] 총 {len(target_cafes)}개의 카페 ID를 수집했습니다: {', '.join(target_cafes)}")
         
+    MARKETER_JOBS[job_id]["target_cafes"] = target_cafes
+    
     if not target_cafes:
         log_to_job(job_id, "❌ 수집할 대상 카페가 존재하지 않습니다.")
         MARKETER_JOBS[job_id]["running"] = False
@@ -158,8 +161,15 @@ def run_extraction_job(job_id: str, mode: str, text_input: str, search_keyword: 
         crawler.set_status_callback(crawler_log_callback)
         
         crawler.start_browser()
-        log_to_job(job_id, "🔑 네이버 로그인이 필요한 경우 브라우저 창에서 진행해 주세요. (5초 대기...)")
-        time.sleep(5.0)
+        
+        # [로그인 개선] 사용자가 수동으로 로그인할 수 있도록 로그인 창으로 먼저 보내고 충분히 대기
+        log_to_job(job_id, "🔑 네이버 로그인 화면으로 이동합니다. 로그인이 필요한 경우 로그인해 주세요.")
+        try:
+            crawler.driver.get("https://nid.naver.com/nidlogin.login")
+        except:
+            pass
+        log_to_job(job_id, "⏳ 브라우저 세션 대기 중 (15초 대기...)")
+        time.sleep(15.0)
         
         for idx, cafe in enumerate(target_cafes):
             if MARKETER_JOBS[job_id]["stop_requested"]:
@@ -193,9 +203,20 @@ def run_extraction_job(job_id: str, mode: str, text_input: str, search_keyword: 
                 csv_path = dl_dir / f"{safe_name}_스탭_이메일_목록.csv"
                 
                 df = pd.DataFrame(all_leaders)
-                if 'source_cafe' in df.columns:
-                    cols = ['source_cafe'] + [c for c in df.columns if c != 'source_cafe']
-                    df = df[cols]
+                
+                # 한글 컬럼명 치환맵 저장 반영
+                rename_map = {
+                    'source_cafe': '수집 카페',
+                    'nick': '닉네임',
+                    'role': '역할',
+                    'naver_id': '네이버 ID',
+                    'email': '이메일'
+                }
+                df = df.rename(columns=rename_map)
+                cols_order = ['수집 카페', '닉네임', '역할', '네이버 ID', '이메일']
+                cols_order = [c for c in cols_order if c in df.columns]
+                df = df[cols_order]
+                
                 df.to_csv(csv_path, index=False, encoding="utf-8-sig")
                 log_to_job(job_id, f"💾 수집 결과가 다운로드 폴더에 저장되었습니다: {csv_path.name}")
                 
@@ -378,10 +399,11 @@ if active_job_id and active_job_id in MARKETER_JOBS:
     st.session_state.marketer_send_status_text = job["status_text"]
     st.session_state.marketer_running = job["running"]
     st.session_state.marketer_stop_requested = job["stop_requested"]
+    if "target_cafes" in job:
+        st.session_state.marketer_target_cafes = job["target_cafes"]
     if "leaders" in job:
         st.session_state.marketer_leaders = job["leaders"]
     if not job["running"]:
-        # 작업 종료 시
         st.session_state.marketer_active_job_id = None
 
 # 6. UI 화면 그리기
@@ -460,6 +482,7 @@ with _t1:
                 "status_text": "수집 준비 중...",
                 "running": True,
                 "stop_requested": False,
+                "target_cafes": [],
                 "leaders": []
             }
             st.session_state.marketer_active_job_id = job_id
@@ -621,11 +644,33 @@ with _t3:
             )
 
 # 7. 하단 데이터 리스트 표출
-if st.session_state.marketer_leaders:
+if st.session_state.marketer_target_cafes:
     st.markdown("---")
-    st.subheader("📋 수집된 운영진 리스트")
-    df_leaders = pd.DataFrame(st.session_state.marketer_leaders)
-    st.dataframe(df_leaders, use_container_width=True)
+    col_tbl1, col_tbl2 = st.columns([1, 2], gap="medium")
+    with col_tbl1:
+        st.subheader("📋 수집 대상 카페 리스트")
+        df_cafes = pd.DataFrame([{"번호": i+1, "카페 ID/주소": c} for i, c in enumerate(st.session_state.marketer_target_cafes)])
+        st.dataframe(df_cafes, use_container_width=True)
+    with col_tbl2:
+        st.subheader("📋 수집된 스탭 리스트")
+        if st.session_state.marketer_leaders:
+            df_leaders = pd.DataFrame(st.session_state.marketer_leaders)
+            # 한글 컬럼명 맵핑 반영
+            rename_map = {
+                'source_cafe': '수집 카페',
+                'nick': '닉네임',
+                'role': '역할',
+                'naver_id': '네이버 ID',
+                'email': '이메일'
+            }
+            df_leaders = df_leaders.rename(columns=rename_map)
+            # 한글로 정비된 순서 정렬
+            cols_order = ['수집 카페', '닉네임', '역할', '네이버 ID', '이메일']
+            cols_order = [c for c in cols_order if c in df_leaders.columns]
+            df_leaders = df_leaders[cols_order]
+            st.dataframe(df_leaders, use_container_width=True)
+        else:
+            st.info("현재 수집된 스탭 정보가 없습니다. (추출 완료 시 데이터가 여기에 표출됩니다.)")
 
 # 8. 백그라운드 동작 시 지속적인 UI 리플레시 폴링 루프
 if st.session_state.get("marketer_running", False):

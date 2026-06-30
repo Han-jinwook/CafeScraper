@@ -4863,7 +4863,7 @@ class NaverCafeCrawler:
             return []
             
         js_code = """
-        (function() {
+        return (function() {
             var str_result = "";
             var ths = document.querySelectorAll('th');
             var index = 0;
@@ -4901,6 +4901,7 @@ class NaverCafeCrawler:
                 document.body.appendChild(tempInput);
             }
             tempInput.value = str_result;
+            return "success";
         })();
         """
         
