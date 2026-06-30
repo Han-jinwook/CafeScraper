@@ -48,7 +48,13 @@ def save_config(cfg: dict) -> None:
 
 config = load_config()
 
-# 2. 세션 상태 정의
+# 2. 전역 작업 상태 관리 (스레드 세션 동기화 해결용)
+if "MARKETER_JOBS" not in st.session_state:
+    # 핫 리로드 시 유실 방지를 위해 session_state에 보관하거나 글로벌 선언
+    st.session_state.MARKETER_JOBS = {}
+MARKETER_JOBS = st.session_state.MARKETER_JOBS
+
+# 세션 상태 기본값 정의
 if "marketer_logs" not in st.session_state:
     st.session_state.marketer_logs = []
 if "marketer_leaders" not in st.session_state:
@@ -57,8 +63,8 @@ if "marketer_running" not in st.session_state:
     st.session_state.marketer_running = False
 if "marketer_stop_requested" not in st.session_state:
     st.session_state.marketer_stop_requested = False
-if "marketer_thread" not in st.session_state:
-    st.session_state.marketer_thread = None
+if "marketer_active_job_id" not in st.session_state:
+    st.session_state.marketer_active_job_id = None
 
 # 발송 진행률 상태
 if "marketer_send_progress" not in st.session_state:
@@ -82,34 +88,33 @@ def get_user_download_dir() -> Path:
     downloads.mkdir(parents=True, exist_ok=True)
     return downloads
 
-def log_message(msg: str):
+def log_to_job(job_id: str, msg: str):
     timestamp = datetime.now().strftime("%H:%M:%S")
-    st.session_state.marketer_logs.append(f"[{timestamp}] {msg}")
+    if job_id in MARKETER_JOBS:
+        MARKETER_JOBS[job_id]["logs"].append(f"[{timestamp}] {msg}")
 
 # 4. 백그라운드 작업 스레드 함수
-def run_extraction_job(mode: str, text_input: str, search_keyword: str, max_cafes: int):
-    st.session_state.marketer_running = True
-    st.session_state.marketer_stop_requested = False
+def run_extraction_job(job_id: str, mode: str, text_input: str, search_keyword: str, max_cafes: int):
+    if job_id not in MARKETER_JOBS:
+        return
+    MARKETER_JOBS[job_id]["running"] = True
     
     # 1. 카페 목록 준비
     target_cafes = []
     if mode == "직접 입력":
-        # 줄 단위로 분할하여 카페 URL/ID 추출
         lines = [line.strip() for line in text_input.split("\n") if line.strip()]
         for line in lines:
             target_cafes.append(line)
     else:
-        # 키워드 검색 수집
-        log_message(f"🔍 키워드 '{search_keyword}'로 네이버 카페 검색을 진행합니다...")
+        log_to_job(job_id, f"🔍 키워드 '{search_keyword}'로 네이버 카페 검색을 진행합니다...")
         import urllib.parse
         import requests
         from bs4 import BeautifulSoup
         import re
         
         cafe_ids = set()
-        # 최대 3페이지(45개 항목) 검색
         for page_idx in range(3):
-            if st.session_state.marketer_stop_requested:
+            if MARKETER_JOBS[job_id]["stop_requested"]:
                 break
             start_num = page_idx * 15 + 1
             encoded = urllib.parse.quote(search_keyword)
@@ -131,58 +136,56 @@ def run_extraction_job(mode: str, text_input: str, search_keyword: str, max_cafe
                                 if cid not in ("ca-fe", "ArticleRead", "ArticleList", "MyCafeIntro"):
                                     cafe_ids.add(cid)
             except Exception as e_search:
-                log_message(f"  ⚠️ 검색 {page_idx+1}페이지 수집 중 에러: {e_search}")
+                log_to_job(job_id, f"  ⚠️ 검색 {page_idx+1}페이지 수집 중 에러: {e_search}")
             time.sleep(0.5)
             
         target_cafes = sorted(list(cafe_ids))[:max_cafes]
-        log_message(f"  └ [성공] 총 {len(target_cafes)}개의 카페 ID를 수집했습니다: {', '.join(target_cafes)}")
+        log_to_job(job_id, f"  └ [성공] 총 {len(target_cafes)}개의 카페 ID를 수집했습니다: {', '.join(target_cafes)}")
         
     if not target_cafes:
-        log_message("❌ 수집할 대상 카페가 존재하지 않습니다.")
-        st.session_state.marketer_running = False
+        log_to_job(job_id, "❌ 수집할 대상 카페가 존재하지 않습니다.")
+        MARKETER_JOBS[job_id]["running"] = False
         return
 
     crawler = None
     all_leaders = []
     try:
-        log_message("🌐 undetected-chromedriver 브라우저 실행 중...")
+        log_to_job(job_id, "🌐 undetected-chromedriver 브라우저 실행 중...")
         crawler = NaverCafeCrawler(debug_mode=True)
-        # 로그 콜백 연결
+        
         def crawler_log_callback(msg):
-            log_message(msg)
+            log_to_job(job_id, msg)
         crawler.set_status_callback(crawler_log_callback)
         
         crawler.start_browser()
-        log_message("🔑 네이버 로그인이 필요한 경우 브라우저 창에서 진행해 주세요. (5초 대기...)")
+        log_to_job(job_id, "🔑 네이버 로그인이 필요한 경우 브라우저 창에서 진행해 주세요. (5초 대기...)")
         time.sleep(5.0)
         
         for idx, cafe in enumerate(target_cafes):
-            if st.session_state.marketer_stop_requested:
-                log_message("⚠️ 사용자에 의해 작업 중단이 요청되었습니다.")
+            if MARKETER_JOBS[job_id]["stop_requested"]:
+                log_to_job(job_id, "⚠️ 사용자에 의해 작업 중단이 요청되었습니다.")
                 break
                 
-            log_message(f"🔄 [{idx+1}/{len(target_cafes)}] '{cafe}' 스탭 추출 시작...")
+            log_to_job(job_id, f"🔄 [{idx+1}/{len(target_cafes)}] '{cafe}' 스탭 추출 시작...")
             try:
                 leaders = crawler.extract_cafe_leaders(cafe)
                 if leaders:
                     for l in leaders:
-                        l['source_cafe'] = cafe  # 수집 출처 기록
+                        l['source_cafe'] = cafe
                     all_leaders.extend(leaders)
-                    log_message(f"  => 성공: {len(leaders)}명 추출 완료")
+                    log_to_job(job_id, f"  => 성공: {len(leaders)}명 추출 완료")
                 else:
-                    log_message("  => 추출된 스탭 정보가 없습니다.")
+                    log_to_job(job_id, "  => 추출된 스탭 정보가 없습니다.")
             except Exception as e_cafe:
-                log_message(f"  => 에러 발생: {e_cafe}")
+                log_to_job(job_id, f"  => 에러 발생: {e_cafe}")
                 
-            time.sleep(random.uniform(1.5, 3.0)) # 카페 간 지연
+            time.sleep(random.uniform(1.5, 3.0))
             
         if all_leaders:
-            st.session_state.marketer_leaders = all_leaders
+            MARKETER_JOBS[job_id]["leaders"] = all_leaders
             
-            # 다운로드 폴더에 즉시 CSV 다이렉트 저장
             try:
                 dl_dir = get_user_download_dir()
-                # 파일명 생성
                 safe_name = search_keyword.strip() if mode == "키워드 검색" else "직접입력"
                 safe_name = re.sub(r'[\/:*?"<>|]', '', safe_name)
                 if not safe_name:
@@ -190,69 +193,68 @@ def run_extraction_job(mode: str, text_input: str, search_keyword: str, max_cafe
                 csv_path = dl_dir / f"{safe_name}_스탭_이메일_목록.csv"
                 
                 df = pd.DataFrame(all_leaders)
-                # 컬럼 순서 정비
                 if 'source_cafe' in df.columns:
                     cols = ['source_cafe'] + [c for c in df.columns if c != 'source_cafe']
                     df = df[cols]
                 df.to_csv(csv_path, index=False, encoding="utf-8-sig")
-                log_message(f"💾 수집 결과가 다운로드 폴더에 저장되었습니다: {csv_path.name}")
+                log_to_job(job_id, f"💾 수집 결과가 다운로드 폴더에 저장되었습니다: {csv_path.name}")
                 
-                # 윈도우 탐색기 열기 및 포커싱
                 os.startfile(dl_dir)
-                log_message("📁 윈도우 탐색기를 자동으로 실행했습니다.")
+                log_to_job(job_id, "📁 윈도우 탐색기를 자동으로 실행했습니다.")
             except Exception as e_save:
-                log_message(f"⚠️ 파일 저장 또는 탐색기 기동 실패: {e_save}")
+                log_to_job(job_id, f"⚠️ 파일 저장 또는 탐색기 기동 실패: {e_save}")
         else:
-            log_message("❌ 추출된 최종 스탭 정보가 하나도 없습니다.")
+            log_to_job(job_id, "❌ 추출된 최종 스탭 정보가 하나도 없습니다.")
             
     except Exception as e:
-        log_message(f"🚨 작업 중 치명적 에러 발생: {e}")
-        log_message(traceback.format_exc())
+        log_to_job(job_id, f"🚨 작업 중 치명적 에러 발생: {e}")
+        log_to_job(job_id, traceback.format_exc())
     finally:
         if crawler:
             try:
                 crawler.close()
-                log_message("🔒 브라우저를 안전하게 종료했습니다.")
+                log_to_job(job_id, "🔒 브라우저를 안전하게 종료했습니다.")
             except:
                 pass
-        st.session_state.marketer_running = False
+        MARKETER_JOBS[job_id]["running"] = False
 
-def run_sending_job(method: str, target_list: list, subject: str, content: str, delay_min: int, delay_max: int, smtp_settings: dict = None):
-    st.session_state.marketer_running = True
-    st.session_state.marketer_stop_requested = False
+def run_sending_job(job_id: str, method: str, target_list: list, subject: str, content: str, delay_min: int, delay_max: int, smtp_settings: dict = None):
+    if job_id not in MARKETER_JOBS:
+        return
+    MARKETER_JOBS[job_id]["running"] = True
     
     crawler = None
     try:
         total = len(target_list)
-        st.session_state.marketer_send_progress = 0.0
-        st.session_state.marketer_send_status_text = f"발송 대기 중 (총 {total}건)"
+        MARKETER_JOBS[job_id]["progress"] = 0.0
+        MARKETER_JOBS[job_id]["status_text"] = f"발송 대기 중 (총 {total}건)"
         
         if method == "쪽지":
-            log_message("🌐 쪽지 발송용 undetected-chromedriver 브라우저 실행 중...")
+            log_to_job(job_id, "🌐 쪽지 발송용 undetected-chromedriver 브라우저 실행 중...")
             crawler = NaverCafeCrawler(debug_mode=True)
             def log_cb(msg):
-                log_message(msg)
+                log_to_job(job_id, msg)
             crawler.set_status_callback(log_cb)
             crawler.start_browser()
-            log_message("🔑 네이버 발송 계정 로그인이 필요합니다. (5초 대기...)")
+            log_to_job(job_id, "🔑 네이버 발송 계정 로그인이 필요합니다. (5초 대기...)")
             time.sleep(5.0)
             
             success_cnt = 0
             fail_cnt = 0
             
             for idx, item in enumerate(target_list):
-                if st.session_state.marketer_stop_requested:
-                    log_message("⚠️ 사용자에 의해 작업 중단이 요청되었습니다.")
+                if MARKETER_JOBS[job_id]["stop_requested"]:
+                    log_to_job(job_id, "⚠️ 사용자에 의해 작업 중단이 요청되었습니다.")
                     break
                     
                 target_id = item.get("naver_id")
                 if not target_id:
                     continue
                     
-                st.session_state.marketer_send_status_text = f"쪽지 발송 진행 중 ({idx+1}/{total})"
-                st.session_state.marketer_send_progress = float(idx + 1) / float(total)
+                MARKETER_JOBS[job_id]["status_text"] = f"쪽지 발송 진행 중 ({idx+1}/{total})"
+                MARKETER_JOBS[job_id]["progress"] = float(idx + 1) / float(total)
                 
-                log_message(f"[{idx+1}/{total}] [{target_id}] 쪽지 발송 시도...")
+                log_to_job(job_id, f"[{idx+1}/{total}] [{target_id}] 쪽지 발송 시도...")
                 try:
                     memo_url = f"https://note.naver.com/note/write.nhn?targetUserId={target_id}"
                     crawler.driver.get(memo_url)
@@ -260,7 +262,6 @@ def run_sending_job(method: str, target_list: list, subject: str, content: str, 
                     
                     crawler.driver.switch_to.default_content()
                     
-                    # 제목 폼 입력
                     try:
                         title_input = crawler.driver.find_element(By.CSS_SELECTOR, "input[name='title'], #title")
                         title_input.clear()
@@ -268,17 +269,14 @@ def run_sending_job(method: str, target_list: list, subject: str, content: str, 
                     except:
                         pass
                         
-                    # 내용 폼 입력
                     content_textarea = crawler.driver.find_element(By.CSS_SELECTOR, "textarea[name='noteContent'], #noteContent, textarea.write_area")
                     content_textarea.clear()
                     content_textarea.send_keys(content)
                     
-                    # 보내기 클릭
                     send_btn = crawler.driver.find_element(By.CSS_SELECTOR, "button.btn_send, #btn_send, a.btn_send")
                     crawler.driver.execute_script("arguments[0].click();", send_btn)
                     time.sleep(1.5)
                     
-                    # Alert 수락
                     try:
                         time.sleep(0.5)
                         crawler.driver.switch_to.alert.accept()
@@ -286,18 +284,17 @@ def run_sending_job(method: str, target_list: list, subject: str, content: str, 
                         pass
                         
                     success_cnt += 1
-                    log_message(f"  => [성공] {target_id} 쪽지 발송 성공")
+                    log_to_job(job_id, f"  => [성공] {target_id} 쪽지 발송 성공")
                 except Exception as ex:
                     fail_cnt += 1
-                    log_message(f"  => [실패] {target_id} 쪽지 발송 실패: {ex}")
+                    log_to_job(job_id, f"  => [실패] {target_id} 쪽지 발송 실패: {ex}")
                     
-                # 대기
-                if idx < total - 1 and not st.session_state.marketer_stop_requested:
+                if idx < total - 1 and not MARKETER_JOBS[job_id]["stop_requested"]:
                     delay = random.uniform(delay_min, delay_max)
-                    log_message(f"  [대기] {delay:.1f}초 동안 휴식 대기 중 (봇 의심 방지)")
+                    log_to_job(job_id, f"  [대기] {delay:.1f}초 동안 휴식 대기 중 (봇 의심 방지)")
                     time.sleep(delay)
                     
-            log_message(f"[쪽지 발송 완료] 총 {total}건 중 성공: {success_cnt}건, 실패: {fail_cnt}건")
+            log_to_job(job_id, f"[쪽지 발송 완료] 총 {total}건 중 성공: {success_cnt}건, 실패: {fail_cnt}건")
             
         elif method == "이메일" and smtp_settings:
             import smtplib
@@ -309,24 +306,24 @@ def run_sending_job(method: str, target_list: list, subject: str, content: str, 
             smtp_user = smtp_settings["user"]
             smtp_pass = smtp_settings["pass"]
             
-            log_message(f"📧 SMTP 서버 연결 시도: {server_host}:{server_port} | ID: {smtp_user}")
+            log_to_job(job_id, f"📧 SMTP 서버 연결 시도: {server_host}:{server_port} | ID: {smtp_user}")
             
             success_cnt = 0
             fail_cnt = 0
             
             for idx, item in enumerate(target_list):
-                if st.session_state.marketer_stop_requested:
-                    log_message("⚠️ 사용자에 의해 작업 중단이 요청되었습니다.")
+                if MARKETER_JOBS[job_id]["stop_requested"]:
+                    log_to_job(job_id, "⚠️ 사용자에 의해 작업 중단이 요청되었습니다.")
                     break
                     
                 email = item.get("email")
                 if not email:
                     continue
                     
-                st.session_state.marketer_send_status_text = f"메일 발송 진행 중 ({idx+1}/{total})"
-                st.session_state.marketer_send_progress = float(idx + 1) / float(total)
+                MARKETER_JOBS[job_id]["status_text"] = f"메일 발송 진행 중 ({idx+1}/{total})"
+                MARKETER_JOBS[job_id]["progress"] = float(idx + 1) / float(total)
                 
-                log_message(f"[{idx+1}/{total}] [{email}] 메일 발송 시도...")
+                log_to_job(job_id, f"[{idx+1}/{total}] [{email}] 메일 발송 시도...")
                 try:
                     msg = MIMEMultipart()
                     sender_email = f"{smtp_user}@naver.com" if "naver" in server_host.lower() and "@" not in smtp_user else smtp_user
@@ -346,34 +343,48 @@ def run_sending_job(method: str, target_list: list, subject: str, content: str, 
                     server.quit()
                     
                     success_cnt += 1
-                    log_message(f"  => [성공] {email} 메일 발송 성공")
+                    log_to_job(job_id, f"  => [성공] {email} 메일 발송 성공")
                 except Exception as ex:
                     fail_cnt += 1
-                    log_message(f"  => [실패] {email} 메일 발송 실패: {ex}")
+                    log_to_job(job_id, f"  => [실패] {email} 메일 발송 실패: {ex}")
                     
-                # 대기
-                if idx < total - 1 and not st.session_state.marketer_stop_requested:
+                if idx < total - 1 and not MARKETER_JOBS[job_id]["stop_requested"]:
                     delay = random.uniform(delay_min, delay_max)
-                    log_message(f"  [대기] {delay:.1f}초 동안 휴식 대기 중 (봇 의심 방지)")
+                    log_to_job(job_id, f"  [대기] {delay:.1f}초 동안 휴식 대기 중 (봇 의심 방지)")
                     time.sleep(delay)
                     
-            log_message(f"[메일 발송 완료] 총 {total}건 중 성공: {success_cnt}건, 실패: {fail_cnt}건")
+            log_to_job(job_id, f"[메일 발송 완료] 총 {total}건 중 성공: {success_cnt}건, 실패: {fail_cnt}건")
             
     except Exception as e:
-        log_message(f"🚨 발송 작업 중 치명적 에러: {e}")
-        log_message(traceback.format_exc())
+        log_to_job(job_id, f"🚨 발송 작업 중 치명적 에러: {e}")
+        log_to_job(job_id, traceback.format_exc())
     finally:
         if crawler:
             try:
                 crawler.close()
-                log_message("🔒 발송 브라우저를 안전하게 종료했습니다.")
+                log_to_job(job_id, "🔒 발송 브라우저를 안전하게 종료했습니다.")
             except:
                 pass
-        st.session_state.marketer_running = False
-        st.session_state.marketer_send_progress = 1.0
-        st.session_state.marketer_send_status_text = "작업 완료"
+        MARKETER_JOBS[job_id]["running"] = False
+        MARKETER_JOBS[job_id]["progress"] = 1.0
+        MARKETER_JOBS[job_id]["status_text"] = "작업 완료"
 
-# 5. UI 화면 그리기
+# 5. 백그라운드 스레드 상태 동기화 처리
+active_job_id = st.session_state.get("marketer_active_job_id")
+if active_job_id and active_job_id in MARKETER_JOBS:
+    job = MARKETER_JOBS[active_job_id]
+    st.session_state.marketer_logs = job["logs"]
+    st.session_state.marketer_send_progress = job["progress"]
+    st.session_state.marketer_send_status_text = job["status_text"]
+    st.session_state.marketer_running = job["running"]
+    st.session_state.marketer_stop_requested = job["stop_requested"]
+    if "leaders" in job:
+        st.session_state.marketer_leaders = job["leaders"]
+    if not job["running"]:
+        # 작업 종료 시
+        st.session_state.marketer_active_job_id = None
+
+# 6. UI 화면 그리기
 inject_settings_three_cards_css(key_basename="marketer_settings_card")
 
 st.markdown("#### ⚙️ 카페스탭 ID 수집 설정")
@@ -381,7 +392,7 @@ _t1, _t2, _t3 = st.columns([1, 1, 1], gap="medium")
 
 with _t1:
     with st.container(border=True, key="marketer_settings_card_1"):
-        render_settings_card_title("🔍 카페스탭 ID 수집", icon="ia-info")
+        render_settings_card_title("카페스탭 ID 수집", icon="🔍")
         
         target_mode = st.radio(
             "수집 방식 선택",
@@ -441,26 +452,42 @@ with _t1:
                 config["marketer_max_cafes"] = max_cafes
             save_config(config)
             
-            st.session_state.marketer_logs = []
-            log_message("카페 스탭 추출 작업을 백그라운드 스레드로 시작합니다...")
+            # 스레드 작업 신규 등록
+            job_id = str(uuid.uuid4())
+            MARKETER_JOBS[job_id] = {
+                "logs": [],
+                "progress": 0.0,
+                "status_text": "수집 준비 중...",
+                "running": True,
+                "stop_requested": False,
+                "leaders": []
+            }
+            st.session_state.marketer_active_job_id = job_id
+            st.session_state.marketer_running = True
+            st.session_state.marketer_stop_requested = False
+            
+            log_to_job(job_id, "카페 스탭 추출 작업을 백그라운드 스레드로 시작합니다...")
             
             # 스레드 구동
             t = threading.Thread(
                 target=run_extraction_job,
-                args=(target_mode, target_cafes_input, search_keyword, max_cafes)
+                args=(job_id, target_mode, target_cafes_input, search_keyword, max_cafes),
+                daemon=True
             )
-            st.session_state.marketer_thread = t
             t.start()
             st.rerun()
             
         if stop_extract:
+            active_job_id = st.session_state.get("marketer_active_job_id")
+            if active_job_id and active_job_id in MARKETER_JOBS:
+                MARKETER_JOBS[active_job_id]["stop_requested"] = True
+                log_to_job(active_job_id, "작업 중단이 요청되었습니다. 진행 중인 루프 종료 대기 중...")
             st.session_state.marketer_stop_requested = True
-            log_message("작업 중단이 요청되었습니다. 진행 중인 루프 종료 대기 중...")
             st.rerun()
 
 with _t2:
     with st.container(border=True, key="marketer_settings_card_2"):
-        render_settings_card_title("✉️ 자동 발송 메시지 설정", icon="mail")
+        render_settings_card_title("메일 & 쪽지 자동발송", icon="✉️")
         
         send_method = st.radio(
             "발송 수단 선택",
@@ -517,8 +544,21 @@ with _t2:
                 config["marketer_email_content"] = memo_content
             save_config(config)
             
-            st.session_state.marketer_logs = []
-            log_message(f"자동 {send_method} 발송 작업을 스레드로 구동합니다...")
+            # 발송 스레드 작업 등록
+            job_id = str(uuid.uuid4())
+            MARKETER_JOBS[job_id] = {
+                "logs": [],
+                "progress": 0.0,
+                "status_text": "발송 준비 중...",
+                "running": True,
+                "stop_requested": False,
+                "leaders": st.session_state.marketer_leaders
+            }
+            st.session_state.marketer_active_job_id = job_id
+            st.session_state.marketer_running = True
+            st.session_state.marketer_stop_requested = False
+            
+            log_to_job(job_id, f"자동 {send_method} 발송 작업을 스레드로 구동합니다...")
             
             smtp_set = None
             if send_method == "이메일":
@@ -531,15 +571,15 @@ with _t2:
                 
             t = threading.Thread(
                 target=run_sending_job,
-                args=(send_method, st.session_state.marketer_leaders, memo_subj, memo_content, delay_range[0], delay_range[1], smtp_set)
+                args=(job_id, send_method, st.session_state.marketer_leaders, memo_subj, memo_content, delay_range[0], delay_range[1], smtp_set),
+                daemon=True
             )
-            st.session_state.marketer_thread = t
             t.start()
             st.rerun()
 
 with _t3:
     with st.container(border=True, key="marketer_settings_card_3"):
-        render_settings_card_title("📊 작업 진행 모니터링", icon="cpu")
+        render_settings_card_title("작업 진행 모니터링", icon="📊")
         
         # 진행률 표시
         if st.session_state.marketer_running:
@@ -567,7 +607,6 @@ with _t3:
         # 로그 클립보드 복사 및 고객센터 링크 연동
         col_log_btn1, col_log_btn2 = st.columns([1, 1])
         with col_log_btn1:
-            # Streamlit 내장 copy
             st.download_button(
                 "📋 로그 다운로드",
                 data=log_content,
@@ -576,16 +615,19 @@ with _t3:
                 use_container_width=True
             )
         with col_log_btn2:
-            # 고객센터로 바로가기 링크 (3Monster 보안 규정 - 고객지원 쇼룸 노출 유도)
             st.markdown(
                 '<a href="https://kmong.com" target="_blank" style="text-decoration:none;"><button style="width:100%;height:38px;border-radius:4px;border:1px solid #cbd5e1;background:#ffffff;color:#1e3a8a;font-weight:600;cursor:pointer;">💬 3Monster 고객센터</button></a>',
                 unsafe_allow_html=True
             )
 
-# 6. 하단 데이터 리스트 표출
+# 7. 하단 데이터 리스트 표출
 if st.session_state.marketer_leaders:
     st.markdown("---")
     st.subheader("📋 수집된 운영진 리스트")
     df_leaders = pd.DataFrame(st.session_state.marketer_leaders)
     st.dataframe(df_leaders, use_container_width=True)
 
+# 8. 백그라운드 동작 시 지속적인 UI 리플레시 폴링 루프
+if st.session_state.get("marketer_running", False):
+    time.sleep(1.0)
+    st.rerun()
