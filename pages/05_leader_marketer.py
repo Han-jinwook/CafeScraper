@@ -469,7 +469,7 @@ with _t1:
             
             if auto_login_on and login_id and login_pw:
                 st.session_state.marketer_logs.append(f"[{datetime.now().strftime('%H:%M:%S')}] 🔑 자동로그인 시도 중...")
-                from app.scraper.naver import auto_login_naver_with_js
+                from app.utils.naver_login import auto_login_naver_with_js
                 login_ok, reason = auto_login_naver_with_js(crawler_instance, login_id, login_pw)
                 if login_ok:
                     st.session_state.marketer_logs.append(f"[{datetime.now().strftime('%H:%M:%S')}] ✅ 자동로그인 성공 ({reason})")
