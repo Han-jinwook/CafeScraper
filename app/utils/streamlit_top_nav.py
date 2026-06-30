@@ -32,8 +32,8 @@ def render_main_top_nav(*, active: str) -> None:
     active: "app" | "event" | "commenter"
     """
     # 멀티페이지(pages/*.py)는 app.py 단일 진입과 달리 상단 헤더·첫 블록이 겹쳐
-    # 탭 버튼 위가 잘려 보일 수 있어 본문 상단 패딩만 소폭 추가 (50% 수준으로 최적화).
-    _block_padding_top = "0.2rem"
+    # 탭 버튼 위가 잘려 보일 수 있어 본문 상단 패딩을 여유롭게 보정.
+    _block_padding_top = "1.5rem"
 
     st.markdown(
         f"""
@@ -89,14 +89,14 @@ def render_main_top_nav(*, active: str) -> None:
             }}
             /* 상단 메뉴: switch_page 버튼 — 예전 HTML nav 링크와 동일한 칩 스타일 */
             [class*="st-key-{_TOP_NAV_CONTAINER_KEY}"] {{
-                margin-top: -1.6rem !important;
+                margin-top: -0.8rem !important;
                 margin-bottom: 0px !important;
                 border-bottom: 1px solid rgba(192,201,195,0.35) !important;
                 padding-bottom: 0.45rem !important;
             }}
             /* 제목 헤더 컨테이너: 상단 및 하단 여백 축소 */
             [class*="st-key-dashboard_header"] {{
-                margin-top: -1.6rem !important;
+                margin-top: -0.5rem !important;
                 margin-bottom: -1.0rem !important;
             }}
             [class*="st-key-{_TOP_NAV_CONTAINER_KEY}"] div[data-testid="column"] {{
