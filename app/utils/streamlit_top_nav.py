@@ -13,7 +13,6 @@ SETTINGS_CARD_TITLE_ICON_CLASS = "cafe-monster-settings-card-title-icon"
 PAGE_HOME = "app.py"
 PAGE_EVENT = "pages/03_event_comment_lottery.py"
 PAGE_COMMENTER = "pages/04_auto_commenter.py"
-PAGE_MARKETER = "pages/05_leader_marketer.py"
 
 # (session active 키, 스크립트 경로, 표시 라벨) — 순서 고정.
 # `st.switch_page`로 같은 Streamlit 세션·탭 내 전환(외부 `<a href>` 새 탭·연결 끊김 완화).
@@ -21,7 +20,6 @@ _NAV_PAGE_LINKS: tuple[tuple[str, str, str], ...] = (
     ("app", PAGE_HOME, "카페 수집"),
     ("event", PAGE_EVENT, "이벤트 댓글 분석"),
     ("commenter", PAGE_COMMENTER, "자동 댓글러"),
-    ("marketer", PAGE_MARKETER, "카페스탭 ID 수집"),
 )
 
 _TOP_NAV_CONTAINER_KEY = "cafe_monster_top_nav"
