@@ -81,10 +81,37 @@ def auto_login_naver_with_js(crawler_obj, user_id: str, user_pw: str) -> tuple:
             return False, "캡챠 감지(입력 후)"
 
         try:
-            login_btn = driver.find_element(By.CSS_SELECTOR, "#log\\.login, button[type='submit']")
-            login_btn.click()
-        except Exception:
-            return False, "로그인 버튼 클릭 실패"
+            login_submitted = False
+            for sel in ["#log\\.login", "button[type='submit']", ".btn_login_wrap button", "#log_login"]:
+                try:
+                    btn = driver.find_element(By.CSS_SELECTOR, sel)
+                    if btn and btn.is_displayed():
+                        try:
+                            btn.click()
+                            login_submitted = True
+                            break
+                        except Exception:
+                            driver.execute_script("arguments[0].click();", btn)
+                            login_submitted = True
+                            break
+                except Exception:
+                    continue
+
+            if not login_submitted:
+                try:
+                    pw_el.send_keys(Keys.RETURN)
+                    login_submitted = True
+                except Exception:
+                    pass
+
+            if not login_submitted:
+                driver.execute_script(
+                    "if(document.getElementById('log.login')) document.getElementById('log.login').click(); "
+                    "else if(document.forms['frmNIDLogin']) document.forms['frmNIDLogin'].submit(); "
+                    "else if(document.querySelector('button[type=\"submit\"]')) document.querySelector('button[type=\"submit\"]').click();"
+                )
+        except Exception as _btn_err:
+            return False, f"로그인 버튼 클릭 실패: {_btn_err}"
 
         time.sleep(random.uniform(1.8, 2.5))
 

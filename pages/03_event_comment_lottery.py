@@ -2159,7 +2159,7 @@ with step_col1:
     if st.button(
         "1단계: 브라우저 열기",
         use_container_width=True,
-        disabled=bool(st.session_state.event_running) or event_browser_opened,
+        disabled=bool(st.session_state.get("event_running", False)),
         type="primary" if not event_browser_opened else "secondary",
         key="event_open_browser_btn",
     ):
@@ -2617,6 +2617,24 @@ if st.session_state.event_run_pending and st.session_state.event_running:
                 update_logs(
                     f"[DBG_RANGE] board={b_idx}/{len(board_urls)} start={_brd_s.strftime('%Y-%m-%d')} end={_brd_e.strftime('%Y-%m-%d')}"
                 )
+                def _live_board_callback(msg: str | None):
+                    if not msg:
+                        return
+                    update_logs(msg)
+                    try:
+                        if any(k in msg for k in ("🧭", "🚀", "🔎", "✅", "☕", "📎", "📌")):
+                            _detail_placeholder.markdown(
+                                f"<div style='font-size:0.95rem;color:#1e3a8a;font-weight:700;padding:2px 0 6px 0;'>{msg}</div>",
+                                unsafe_allow_html=True,
+                            )
+                    except Exception:
+                        pass
+
+                try:
+                    st.session_state.event_crawler.set_status_callback(_live_board_callback)
+                except Exception:
+                    pass
+
                 articles = []
                 _page_cursor = 1
                 _board_batch = 50
@@ -3226,7 +3244,12 @@ try:
                 except Exception as _del_e:
                     st.error(f"삭제 실패: {_del_e}")
         with _post_btn2:
-            if st.button("🔄 집계 다시 실행", use_container_width=True, key="post_analysis_rerun_ticket"):
+            if st.button(
+                "🔄 집계 다시 실행",
+                use_container_width=True,
+                key="post_analysis_rerun_ticket",
+                help="글자수 기준이나 사진 기준 등 조건 숫자를 수정했을 때 수동으로 다시 집계하는 버튼입니다. (항목 삭제 시에는 자동으로 즉시 반영됩니다.)",
+            ):
                 st.rerun()
     if not df_post.empty:
         st.markdown("#### 🎫 조건1 참여자 티켓수 집계")

@@ -2076,8 +2076,12 @@ class NaverCafeCrawler:
 
     def start_browser(self) -> None:
         if self.driver:
-            self._update_status("브라우저가 이미 실행 중입니다.")
-            return
+            try:
+                _ = self.driver.current_url
+                self._update_status("브라우저가 이미 실행 중입니다.")
+                return
+            except Exception:
+                self.driver = None
         
         try:
             # undetected_chromedriver 옵션 설정
@@ -2091,91 +2095,11 @@ class NaverCafeCrawler:
             # 로컬 설치 버전으로 version_main 고정 (기능 동일, 호환만 보장).
             _vm = _detect_installed_chrome_major_version()
             
-            if self.session0_bypass and os.name == "nt":
-                self._update_status("🚀 [Session 0 우회 모드] 대화형 세션에서 크롬 브라우저 기동 시도 중...")
-                
-                # 1. 크롬 실행 파일 경로 찾기
-                chrome_exe = ""
-                pf = os.environ.get("PROGRAMFILES", r"C:\Program Files")
-                pfx86 = os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)")
-                la = os.environ.get("LOCALAPPDATA", "")
-                candidates = [
-                    os.path.join(pf, r"Google\Chrome\Application\chrome.exe"),
-                    os.path.join(pfx86, r"Google\Chrome\Application\chrome.exe"),
-                    os.path.join(la, r"Google\Chrome\Application\chrome.exe") if la else "",
-                ]
-                w = shutil.which("chrome") or shutil.which("chrome.exe")
-                if w:
-                    candidates.append(w)
-                for exe in candidates:
-                    if exe and os.path.isfile(exe):
-                        chrome_exe = exe
-                        break
-                
-                if not chrome_exe:
-                    raise FileNotFoundError("Google Chrome 실행 파일(chrome.exe)을 찾을 수 없습니다.")
-                
-                chrome_exe_short = _get_short_path_name(chrome_exe)
-                
-                # 2. 프로필 경로 결정 및 숏 경로화
-                profile_dir = self.chrome_profile_path
-                if not profile_dir:
-                    profile_dir = os.path.expandvars(r"%LOCALAPPDATA%\CafeScraper\chrome_profile_interactive")
-                os.makedirs(profile_dir, exist_ok=True)
-                profile_dir_short = _get_short_path_name(profile_dir)
-                
-                port = 9222
-                
-                # 3. schtasks 스케줄 작업으로 대화형 크롬 구동
-                task_name = "CafeScraper_Chrome_Interactive"
-                cmd = f'{chrome_exe_short} --remote-debugging-port={port} --user-data-dir={profile_dir_short} --window-size=960,1080'
-                
-                # 기존 작업 정리
-                subprocess.run(f'schtasks /delete /tn "{task_name}" /f', shell=True, capture_output=True)
-                
-                create_cmd = f'schtasks /create /tn "{task_name}" /tr "{cmd}" /sc once /sd 2026/01/01 /st 00:00 /ru "%USERNAME%" /it /f'
-                res_create = subprocess.run(create_cmd, shell=True, capture_output=True, text=True)
-                if res_create.returncode != 0:
-                    raise RuntimeError(f"schtasks 작업 생성 실패: {res_create.stderr}")
-                    
-                res_run = subprocess.run(f'schtasks /run /tn "{task_name}"', shell=True, capture_output=True, text=True)
-                if res_run.returncode != 0:
-                    raise RuntimeError(f"schtasks 작업 실행 실패: {res_run.stderr}")
-                    
-                # 작업 등록 해제 (실행된 프로세스는 유지됨)
-                subprocess.run(f'schtasks /delete /tn "{task_name}" /f', shell=True, capture_output=True)
-                
-                # 4. 디버깅 포트 활성화 대기 (최대 10초)
-                self._update_status("⏳ 대화형 크롬 포트 활성화 대기 중...")
-                port_active = False
-                wait_url = f"http://127.0.0.1:{port}/json/version"
-                for _ in range(20):
-                    try:
-                        res = requests.get(wait_url, timeout=1)
-                        if res.status_code == 200:
-                            port_active = True
-                            break
-                    except Exception:
-                        pass
-                    time.sleep(0.5)
-                
-                if not port_active:
-                    raise RuntimeError("대화형 크롬의 디버깅 포트가 켜지지 않았습니다.")
-                
-                # 5. undetected_chromedriver 로 연결
-                self._update_status("🔌 대화형 크롬에 드라이버 연결 중...")
-                options.debugger_address = f"127.0.0.1:{port}"
-                _kw = {"options": options, "use_subprocess": True}
-                if _vm is not None:
-                    _kw["version_main"] = _vm
-                self.driver = uc.Chrome(**_kw)
-                
-            else:
-                self._update_status("🚀 undetected-chromedriver로 크롬 브라우저 시작 중...")
-                _kw = {"options": options, "use_subprocess": True}
-                if _vm is not None:
-                    _kw["version_main"] = _vm
-                self.driver = uc.Chrome(**_kw)
+            self._update_status("🚀 undetected-chromedriver로 크롬 브라우저 시작 중...")
+            _kw = {"options": options, "use_subprocess": True}
+            if _vm is not None:
+                _kw["version_main"] = _vm
+            self.driver = uc.Chrome(**_kw)
                 
             self.driver.set_page_load_timeout(30)
             self.driver.get("https://cafe.naver.com")
@@ -3657,25 +3581,24 @@ class NaverCafeCrawler:
                 except:
                     pass
 
-                if _is_on_cafe:
+                try:
+                    self._switch_to_cafe_iframe()
+                    self.driver.execute_script("location.href = arguments[0];", page_url)
+                    self._sleep_scaled(1.8)
+                except Exception:
                     try:
-                        self._switch_to_cafe_iframe()
-                        self.driver.execute_script("location.href = arguments[0];", page_url)
-                        self._sleep_scaled(1.5)
-                    except Exception:
                         self.driver.switch_to.default_content()
-                        self.driver.get(page_url)
-                        self._sleep_scaled(2.2)
-                else:
+                    except Exception:
+                        pass
                     self.driver.get(page_url)
                     self._sleep_scaled(2.2)
-                self._switch_to_cafe_iframe()
+                    self._switch_to_cafe_iframe()
                 self.driver.execute_script("window.scrollTo(0, 900);")
                 self._sleep_scaled(0.7)
 
                 rows_inner = self.driver.find_elements(
                     By.CSS_SELECTOR,
-                    "div[class*='ArticleItem'], li[class*='article'], div.article-board table tbody tr"
+                    "div[class*='ArticleItem'], li[class*='article'], li[class*='ArticleItem'], li[class*='Article'], tr[class*='article'], div.article-board table tbody tr, table[class*='Article'] tbody tr, #article-list li, .article-board > ul > li, #main-area table tbody tr, table tbody tr"
                 )
                 if not rows_inner:
                     return None, None, 0, ""
@@ -3830,19 +3753,22 @@ class NaverCafeCrawler:
                         f"(범위: {m_max.strftime('%Y-%m-%d')} ~ {m_min.strftime('%Y-%m-%d')})"
                     )
                     m_min_d = m_min.date() if isinstance(m_min, datetime) else m_min
+                    m_max_d = m_max.date() if isinstance(m_max, datetime) else m_max
                     if te < m_min_d:
                         left = mid + 1
+                    elif te > m_max_d:
+                        found = mid
+                        right = mid - 1
                     else:
                         found = mid
                         right = mid - 1
 
                 jump_page = max(1, int(found) - 1)
                 self._update_status(
-                    f"✅ 해당 기간의 페이지를 찾았습니다. {jump_page}페이지부터 수집을 시작합니다."
+                    f"✅ 해당 기간의 시작 지점을 찾았습니다. 안전을 위해 {jump_page}페이지부터 수집을 시작합니다."
                 )
                 return jump_page
 
-            # 목표 종료일이 1페이지보다 최신인 경우(아주 최근 범위): 1페이지 시작
             self._update_status("✅ 해당 기간이 최신 구간으로 판단되어 1페이지부터 시작합니다.")
             return 1
             
@@ -3854,9 +3780,7 @@ class NaverCafeCrawler:
         )
 
         all_articles = []
-        # 정확도 우선: 자동 점프가 경계 페이지를 과거로 건너뛰는 사례가 있어
-        # 기본은 순차 탐색으로 고정한다. (성능보다 누락 방지 우선)
-        use_auto_locate = False
+        use_auto_locate = True
         if use_auto_locate:
             page = _auto_locate_start_page(start_page)
         else:
