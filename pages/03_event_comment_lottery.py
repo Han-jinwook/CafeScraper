@@ -34,8 +34,11 @@ from app.utils.streamlit_top_nav import (
 )
 
 
+from app.utils.auth_helper import CafeMonsterAuthHelper
+from app.utils.app_version import read_app_version
+_APP_SEMVER = read_app_version()
 st.set_page_config(
-    page_title="이벤트 댓글 수집",
+    page_title=f"{CafeMonsterAuthHelper.get_display_product_name()} v{_APP_SEMVER}",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -2243,6 +2246,18 @@ with step_col2:
             disabled=bool(st.session_state.event_running) or (not event_step2_ready),
             key="event_start_run_btn",
         ):
+            has_lic, lic_limit = CafeMonsterAuthHelper.check_product_license("EventStats")
+            if not has_lic:
+                used_count = CafeMonsterAuthHelper.get_trial_used_count("EventStats")
+                if used_count >= 50:
+                    st.error("🚫 [체험판 한도 초과] 이벤트 활동 분석기 무료체험판 한도(50건)를 모두 소진하셨습니다. 정식 라이선스를 등록해 주세요.")
+                    st.stop()
+            elif lic_limit is not None and lic_limit > 0:
+                comments_cnt = get_event_comments_count(EVENT_DB_PATH)
+                posts_cnt = get_event_posts_count(EVENT_DB_PATH)
+                if (comments_cnt + posts_cnt) >= lic_limit:
+                    st.error(f"🚫 [라이선스 한도 초과] 본 라이선스의 수집 한도({lic_limit}건)를 모두 소진하셨습니다.")
+                    st.stop()
             if not st.session_state.event_crawler or not st.session_state.event_crawler.driver:
                 st.error("먼저 브라우저를 열어주세요.")
             elif not event_any_condition_enabled:
@@ -2304,6 +2319,26 @@ with step_col2:
                     st.session_state.event_final_summary_report = None
                     st.session_state.event_analysis_signature = ""
                     st.rerun()
+
+def _check_and_increment_limits():
+    has_lic, lic_limit = CafeMonsterAuthHelper.check_product_license("EventStats")
+    if not has_lic:
+        used_count = CafeMonsterAuthHelper.get_trial_used_count("EventStats")
+        new_count = used_count + 1
+        CafeMonsterAuthHelper.save_trial_used_count("EventStats", new_count)
+        if new_count >= 50:
+            st.session_state.event_running = False
+            st.session_state.event_run_pending = False
+            update_logs("🚫 무료체험판 수집 한도(50건)에 도달하여 수집을 안전하게 중단합니다.")
+            st.rerun()
+    elif lic_limit is not None and lic_limit > 0:
+        comments_cnt = get_event_comments_count(EVENT_DB_PATH)
+        posts_cnt = get_event_posts_count(EVENT_DB_PATH)
+        if (comments_cnt + posts_cnt) >= lic_limit:
+            st.session_state.event_running = False
+            st.session_state.event_run_pending = False
+            update_logs(f"🚫 라이선스 수집 한도({lic_limit}건)에 도달하여 수집을 안전하게 중단합니다.")
+            st.rerun()
 
 if st.session_state.event_running and not st.session_state.get("event_run_pending", False):
     _run_label = str(st.session_state.get("event_progress_label", "진행 중...") or "진행 중...")
@@ -2513,6 +2548,7 @@ if st.session_state.event_run_pending and st.session_state.event_running:
                     update_logs(f"등급별 방문수 단계: {_mr.get('message') or '실패'}")
                 else:
                     mentor_rows_saved = upsert_event_mentor_visits(EVENT_DB_PATH, _mrows)
+                    _check_and_increment_limits()
                     update_logs(
                         f"등급별 방문수: 표 {len(_mrows)}행 수집 → DB 반영 {mentor_rows_saved}건"
                     )
@@ -2803,6 +2839,7 @@ if st.session_state.event_run_pending and st.session_state.event_running:
                             comments_excluded=0,
                             author_nickname=resolved_author_nick,
                         )
+                        _check_and_increment_limits()
 
                     title = (art.get("title") or "")[:30]
                     if comment_enabled:
@@ -2896,6 +2933,7 @@ if st.session_state.event_run_pending and st.session_state.event_running:
                                 comments_excluded=excluded_now,
                                 author_nickname=resolved_author_nick,
                             )
+                            _check_and_increment_limits()
 
                             stable_success_streak += 1
                             if stable_success_streak >= 5:

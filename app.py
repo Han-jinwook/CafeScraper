@@ -29,10 +29,11 @@ from app.utils.naver_login import (
 from selenium.webdriver.common.by import By
 import shutil
 
+from app.utils.auth_helper import CafeMonsterAuthHelper
 # 페이지 설정 (브라우저 탭 제목 — 버전은 version.txt 와 동기)
 _APP_SEMVER = read_app_version()
 st.set_page_config(
-    page_title=f"[카페 몬스터] 카페 추출기 Pro v{_APP_SEMVER}",
+    page_title=f"{CafeMonsterAuthHelper.get_display_product_name()} v{_APP_SEMVER}",
     page_icon="☕",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -1826,6 +1827,24 @@ def _render_cafe_main_workspace():
                 if not step2_ready:
                     st.error("먼저 1단계에서 브라우저를 열고 로그인을 완료해주세요.")
                 else:
+                    has_lic, lic_limit = CafeMonsterAuthHelper.check_product_license("CafeCrawler")
+                    if not has_lic:
+                        used_count = CafeMonsterAuthHelper.get_trial_used_count("CafeCrawler")
+                        if used_count >= 50:
+                            st.error("🚫 [체험판 한도 초과] 카페 수집기 무료체험판 한도(50건)를 모두 소진하셨습니다. 정식 라이선스를 등록해 주세요.")
+                            st.stop()
+                    elif lic_limit is not None and lic_limit > 0:
+                        try:
+                            conn_chk = sqlite3.connect(DB_PATH)
+                            c_chk = conn_chk.cursor()
+                            c_chk.execute("SELECT COUNT(*) FROM posts")
+                            db_cnt = c_chk.fetchone()[0]
+                            conn_chk.close()
+                            if db_cnt >= lic_limit:
+                                st.error(f"🚫 [라이선스 한도 초과] 본 라이선스의 수집 한도({lic_limit}건)를 모두 소진하셨습니다.")
+                                st.stop()
+                        except:
+                            pass
                     st.session_state.crawl_last_status_message = ""
                     collect_mode = _normalize_collect_mode(
                         st.session_state.get("collect_mode_input", config.get("collect_mode", "posts_and_comments"))
@@ -2085,6 +2104,31 @@ def _render_cafe_main_workspace():
             st.session_state.crawl_stop_requested = False
             update_logs("♻️ 체크포인트에서 작업을 재개합니다.")
             st.rerun()
+
+    def _check_and_increment_limits():
+        has_lic, lic_limit = CafeMonsterAuthHelper.check_product_license("CafeCrawler")
+        if not has_lic:
+            used_count = CafeMonsterAuthHelper.get_trial_used_count("CafeCrawler")
+            new_count = used_count + 1
+            CafeMonsterAuthHelper.save_trial_used_count("CafeCrawler", new_count)
+            if new_count >= 50:
+                st.session_state.crawl_running = False
+                update_logs("🚫 무료체험판 수집 한도(50건)에 도달하여 수집을 안전하게 중단합니다.")
+                st.rerun()
+        elif lic_limit is not None and lic_limit > 0:
+            try:
+                active_db = st.session_state.get("active_db_path_main", DB_PATH)
+                conn_chk = sqlite3.connect(active_db)
+                c_chk = conn_chk.cursor()
+                c_chk.execute("SELECT COUNT(*) FROM posts")
+                db_cnt = c_chk.fetchone()[0]
+                conn_chk.close()
+                if db_cnt >= lic_limit:
+                    st.session_state.crawl_running = False
+                    update_logs(f"🚫 라이선스 수집 한도({lic_limit}건)에 도달하여 수집을 안전하게 중단합니다.")
+                    st.rerun()
+            except:
+                pass
 
     # 비동기처럼 동작하도록 한 건씩 처리 (중단 버튼 즉시 반영 가능)
     if st.session_state.crawl_running:
@@ -2591,6 +2635,7 @@ def _render_cafe_main_workspace():
                                     update_logs(f"⚠️ 등급 미확보: '{art['title'][:20]}...'")
                                 conn_u.commit()
                                 conn_u.close()
+                                _check_and_increment_limits()
                             except Exception as meta_err:
                                 ctx["error_count"] = int(ctx.get("error_count", 0)) + 1
                                 update_logs(f"⚠️ 등급 보강 실패: {meta_err}")
@@ -2633,6 +2678,7 @@ def _render_cafe_main_workspace():
                                     final_level = "탈퇴"
                                 art["member_level"] = final_level
                                 save_to_sqlite(art, detail['comments'])
+                                _check_and_increment_limits()
                             
                                 lvl_log = art.get("member_level", "")
                                 update_logs(f"✅ '{art['title'][:20]}...' 저장 완료 (등급: {lvl_log})")

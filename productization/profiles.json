@@ -55,15 +55,15 @@
   },
   "commenter": {
     "brand_name_ko": "카페 몬스터",
-    "display_name": "[카페 몬스터] 스텔스 댓글러",
-    "system_id": "CafeMonster_StealthComment",
+    "display_name": "[카페 몬스터] 자동댓글러",
+    "system_id": "CafeMonster_AutoCommenter",
     "version": "V1.0",
     "entry_script": "app.py",
-    "page_title": "[카페 몬스터] 스텔스 댓글러 V1.0",
+    "page_title": "[카페 몬스터] 자동댓글러 V1.0",
     "pages": [
       {
         "path": "pages/04_auto_commenter.py",
-        "name": "스텔스 댓글러"
+        "name": "자동댓글러"
       }
     ]
   },

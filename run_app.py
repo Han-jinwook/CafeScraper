@@ -246,6 +246,42 @@ def main() -> None:
     base_dir = get_base_dir()
     setup_logging(exe_dir)
 
+    # 1. 자동 업데이트 확인
+    try:
+        from updater import MonsterUpdater
+        update_info = MonsterUpdater.check_for_updates()
+        if update_info:
+            _boot_log(exe_dir, f"새 버전 발견: {update_info['version']}. 다운로드 중...")
+            import tkinter as tk
+            from tkinter import messagebox
+            root_tk = tk.Tk()
+            root_tk.withdraw()
+            if messagebox.askyesno(
+                "업데이트 알림",
+                f"새로운 버전({update_info['version']})이 출시되었습니다.\n업데이트를 다운로드하고 프로그램을 재시작하시겠습니까?",
+                parent=root_tk
+            ):
+                temp_zip = os.path.join(exe_dir, "cafescraper_update.zip")
+                if MonsterUpdater.download_update(update_info["download_url"], temp_zip):
+                    _boot_log(exe_dir, "다운로드 완료. 업데이트 적용 및 재시작...")
+                    MonsterUpdater.apply_update_and_restart(temp_zip)
+                    sys.exit(0)
+                else:
+                    messagebox.showerror("업데이트 실패", "업데이트 파일 다운로드에 실패했습니다.", parent=root_tk)
+            root_tk.destroy()
+    except Exception as update_err:
+        _boot_log(exe_dir, f"업데이트 감지 중 오류 발생: {update_err}")
+
+    # 2. 라이선스 인증 Flow (customtkinter GUI)
+    try:
+        from auth_gui import run_auth_flow
+        authenticated = run_auth_flow(is_pro=True)
+        if not authenticated:
+            _boot_log(exe_dir, "인증 취소 또는 실패로 런처 종료")
+            sys.exit(0)
+    except Exception as auth_err:
+        _boot_log(exe_dir, f"인증 GUI 실행 오류: {auth_err}")
+
     app_script = os.path.join(base_dir, "app.py")
     if not os.path.isfile(app_script):
         logging.error("app.py not found at: %s", app_script)

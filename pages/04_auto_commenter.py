@@ -37,8 +37,11 @@ from app.utils.streamlit_top_nav import (
 )
 from app.utils.naver_login import auto_login_naver_with_js
 
+from app.utils.auth_helper import CafeMonsterAuthHelper
+from app.utils.app_version import read_app_version
+_APP_SEMVER = read_app_version()
 st.set_page_config(
-    page_title="댓글 자동화 - CafeScraper",
+    page_title=f"{CafeMonsterAuthHelper.get_display_product_name()} v{_APP_SEMVER}",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -1495,6 +1498,25 @@ with _col3:
                     elif not final_template.strip():
                         st.error("내용 없음")
                     else:
+                        has_lic, lic_limit = CafeMonsterAuthHelper.check_product_license("AutoComment")
+                        if not has_lic:
+                            used_count = CafeMonsterAuthHelper.get_trial_used_count("AutoComment")
+                            if used_count >= 50:
+                                st.error("🚫 [체험판 한도 초과] 자동댓글러 무료체험판 한도(50건)를 모두 소진하셨습니다. 정식 라이선스를 등록해 주세요.")
+                                st.stop()
+                        elif lic_limit is not None and lic_limit > 0:
+                            try:
+                                conn_chk = sqlite3.connect(COMMENTER_DB_PATH)
+                                c_chk = conn_chk.cursor()
+                                c_chk.execute("SELECT COUNT(*) FROM commenter_targets WHERE comment_status = 'success'")
+                                row = c_chk.fetchone()
+                                conn_chk.close()
+                                db_cnt = int(row[0]) if row and row[0] is not None else 0
+                                if db_cnt >= lic_limit:
+                                    st.error(f"🚫 [라이선스 한도 초과] 본 라이선스의 수집/작업 한도({lic_limit}건)를 모두 소진하셨습니다.")
+                                    st.stop()
+                            except:
+                                pass
                         # Piling DB 생성 및 할당
                         from app.utils.paths import generate_new_db_path
                         new_db_path = generate_new_db_path("auto_commenter")
@@ -1848,6 +1870,32 @@ with st.container(border=True, key="commenter_target_table_box"):
             "위 **타겟 수집 설정**을 저장한 뒤 **실행 제어 → 2단계**를 실행하면 수집된 글이 여기 표에 나타납니다."
         )
 
+def _check_and_increment_limits():
+    has_lic, lic_limit = CafeMonsterAuthHelper.check_product_license("AutoComment")
+    if not has_lic:
+        used_count = CafeMonsterAuthHelper.get_trial_used_count("AutoComment")
+        new_count = used_count + 1
+        CafeMonsterAuthHelper.save_trial_used_count("AutoComment", new_count)
+        if new_count >= 50:
+            _commenter_reset_run_state()
+            log_msg("🚫 무료체험판 작업 한도(50건)에 도달하여 댓글 작성을 안전하게 중단합니다.")
+            st.rerun()
+    elif lic_limit is not None and lic_limit > 0:
+        try:
+            active_db = st.session_state.get("active_db_path_commenter", COMMENTER_DB_PATH)
+            conn_chk = sqlite3.connect(active_db)
+            c_chk = conn_chk.cursor()
+            c_chk.execute("SELECT COUNT(*) FROM commenter_targets WHERE comment_status = 'success'")
+            row = c_chk.fetchone()
+            conn_chk.close()
+            db_cnt = int(row[0]) if row and row[0] is not None else 0
+            if db_cnt >= lic_limit:
+                _commenter_reset_run_state()
+                log_msg(f"🚫 라이선스 수집/작업 한도({lic_limit}건)에 도달하여 작업을 안전하게 중단합니다.")
+                st.rerun()
+        except:
+            pass
+
 if st.session_state.get("is_running", False):
     if st.session_state.get("commenter_stop_requested"):
         st.warning(
@@ -1933,6 +1981,7 @@ if st.session_state.get("is_running", False):
                     )
                     if res["status"] == "success":
                         log_msg("✅ 작성 성공")
+                        _check_and_increment_limits()
                     else:
                         log_msg(f"❌ 실패: {res['message']}")
                     st.session_state.commenter_run_index = idx + 1
