@@ -529,6 +529,13 @@ def _render_commenter_db_section() -> None:
         # Initialize the new DB immediately
         init_event_db(str(new_db_path))
         
+        # 세션 상태에 저장된 메모리 타겟 데이터 및 인덱스 초기화
+        st.session_state.target_df = None
+        st.session_state.commenter_target_df_full = None
+        st.session_state.commenter_run_index = 0
+        if st.session_state.get("commenter"):
+            st.session_state.commenter.db_path = str(new_db_path)
+            
         st.success("🧹 통계가 초기화되었습니다. 새 작업 환경에서 시작합니다.")
         st.rerun()
 
