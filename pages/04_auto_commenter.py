@@ -1508,8 +1508,8 @@ with _col3:
                         has_lic, lic_limit = CafeMonsterAuthHelper.check_product_license("AutoComment")
                         if not has_lic:
                             used_count = CafeMonsterAuthHelper.get_trial_used_count("AutoComment")
-                            if used_count >= 50:
-                                st.error("🚫 [체험판 한도 초과] 자동댓글러 무료체험판 한도(50건)를 모두 소진하셨습니다. 정식 라이선스를 등록해 주세요.")
+                            if used_count >= 1000:
+                                st.error("🚫 [체험판 한도 초과] 자동댓글러 무료체험판 한도(1,000건)를 모두 소진하셨습니다. 정식 라이선스를 등록해 주세요.")
                                 st.stop()
                         elif lic_limit is not None and lic_limit > 0:
                             try:
@@ -1904,9 +1904,9 @@ def _check_and_increment_limits():
         used_count = CafeMonsterAuthHelper.get_trial_used_count("AutoComment")
         new_count = used_count + 1
         CafeMonsterAuthHelper.save_trial_used_count("AutoComment", new_count)
-        if new_count >= 50:
+        if new_count >= 1000:
             _commenter_reset_run_state()
-            log_msg("🚫 무료체험판 작업 한도(50건)에 도달하여 댓글 작성을 안전하게 중단합니다.")
+            log_msg("🚫 무료체험판 작업 한도(1,000건)에 도달하여 댓글 작성을 안전하게 중단합니다.")
             st.rerun()
     elif lic_limit is not None and lic_limit > 0:
         try:
