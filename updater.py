@@ -66,26 +66,44 @@ class MonsterUpdater:
             
             bat_path = os.path.join(app_dir, "monster_update_helper.bat")
             
-            extracted_folder = None
-            extracted_exe_name = None
+            extracted_folder = "monster_update_temp"
+            extracted_exe_name = "CafeScraper.exe"
             
             if not os.path.isabs(update_package_path):
                 update_package_path = os.path.join(app_dir, update_package_path)
             
             if update_package_path.endswith('.zip'):
                 import zipfile
-                logger.info("📦 압축 해제 중...")
+                import shutil
+                logger.info("📦 임시 폴더에 압축 해제 중...")
+                temp_extract_dir = os.path.join(app_dir, "monster_update_temp")
+                if os.path.exists(temp_extract_dir):
+                    shutil.rmtree(temp_extract_dir, ignore_errors=True)
+                os.makedirs(temp_extract_dir, exist_ok=True)
+                
                 with zipfile.ZipFile(update_package_path, 'r') as zip_ref:
-                    top_levels = set([name.split('/')[0] for name in zip_ref.namelist() if '/' in name])
-                    if top_levels:
-                        extracted_folder = list(top_levels)[0]
-                        extracted_exe_name = "CafeScraper.exe"
-                    
-                    zip_ref.extractall(app_dir)
+                    zip_ref.extractall(temp_extract_dir)
                 os.remove(update_package_path)
+                
+                # 압축 해제된 폴더 내부 탐색
+                items = os.listdir(temp_extract_dir)
+                # 만약 폴더 하나만 들어있고 그게 _internal이 아니라면 (구버전 중첩 구조 대응)
+                if len(items) == 1 and os.path.isdir(os.path.join(temp_extract_dir, items[0])) and items[0] != "_internal":
+                    extracted_folder = os.path.join("monster_update_temp", items[0])
+                    sub_items = os.listdir(os.path.join(temp_extract_dir, items[0]))
+                    for si in sub_items:
+                        if si.endswith(".exe"):
+                            extracted_exe_name = si
+                            break
+                else:
+                    # 신규 플랫 압축 구조 (최상위에 exe와 _internal이 바로 존재)
+                    for item in items:
+                        if item.endswith(".exe"):
+                            extracted_exe_name = item
+                            break
             
-            if not extracted_folder:
-                logger.error("업데이트 패키지 내 구조를 분석할 수 없습니다.")
+            if not extracted_exe_name:
+                logger.error("업데이트 패키지 내 실행 파일(.exe)을 찾을 수 없습니다.")
                 return False
             
             bat_content = f"""@echo off
