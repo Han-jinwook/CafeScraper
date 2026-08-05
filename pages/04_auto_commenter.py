@@ -1561,6 +1561,27 @@ with _col3:
                 elif _show_preview:
                     st.caption("작업 진행 중에는 미리보기를 잠시 숨깁니다.")
 
+            # 실시간 로그 콘솔 노출
+            if st.session_state.get("comment_logs"):
+                st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
+                log_content = "\n".join(st.session_state.comment_logs)
+                log_html = f"""
+                <p style="margin:0 0 4px 0;font-size:0.85rem;font-weight:600;color:#475569;">📋 실시간 작업 로그</p>
+                <div style="
+                    background-color: #0f172a;
+                    color: #38bdf8;
+                    font-family: 'Courier New', Courier, monospace;
+                    font-size: 0.8rem;
+                    padding: 8px;
+                    border-radius: 6px;
+                    height: 160px;
+                    overflow-y: auto;
+                    white-space: pre-wrap;
+                    border: 1px solid #334155;
+                ">{html.escape(log_content)}</div>
+                """
+                st.markdown(log_html, unsafe_allow_html=True)
+
 st.markdown("<div style='height:0.5rem'></div>", unsafe_allow_html=True)
 # 실제 write_comment 루프는 파일 하단(표·메트릭 아래)에서 실행 →
 # 여기서 먼저 표가 그려지므로 직전까지 댓글결과가 보입니다.
