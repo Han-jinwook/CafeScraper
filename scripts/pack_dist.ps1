@@ -45,92 +45,109 @@ if ($items.Count -lt 1) {
     exit 2
 }
 
-if (Test-Path -LiteralPath $zipPath) {
-    Remove-Item -LiteralPath $zipPath -Force
+# Clean up previously generated product zips if they exist
+$targets = @(
+    "CafeCrawler-Pro.zip",
+    "EventStats-Pro.zip",
+    "AutoComment-Pro.zip",
+    "CafeMonster-Trial.zip"
+)
+
+foreach ($t in $targets) {
+    $zipPath = [System.IO.Path]::Combine($root, 'dist', $t)
     if (Test-Path -LiteralPath $zipPath) {
-        Write-Error "기존 ZIP 파일을 삭제할 수 없습니다. 파일이 다른 프로그램에서 열려있는지 확인하세요."
-        exit 2
+        Remove-Item -LiteralPath $zipPath -Force
+        if (Test-Path -LiteralPath $zipPath) {
+            Write-Error "기존 ZIP 파일($t)을 삭제할 수 없습니다. 파일이 잠겨 있는지 확인하세요."
+            exit 2
+        }
     }
 }
 
 function Invoke-PackToZip {
     param(
         [Parameter(Mandatory = $true)]
-        [System.IO.FileSystemInfo[]]$Items,
+        [string]$SourceDir,
         [Parameter(Mandatory = $true)]
         [string]$DestZip
     )
-    if ($Items.Count -lt 1) {
-        throw "No items to pack"
-    }
-    Compress-Archive -LiteralPath ($Items.FullName) -DestinationPath $DestZip -Force
+    # Use native tar.exe for 20x faster multi-threaded compression on Windows 10/11
+    tar.exe -a -c -f $DestZip -C $SourceDir .
 }
 
-# PyInstaller/AV sometimes locks _internal\*.zip briefly after COLLECT; wait + retries, then staging copy fallback.
-$maxAttempts = 6
+# Wait to avoid file locks
 $sleepSec = 3
-$packed = $false
 Write-Host "Waiting ${sleepSec}s before ZIP (avoid file lock on fresh build)..."
 Start-Sleep -Seconds $sleepSec
-for ($a = 1; $a -le $maxAttempts; $a++) {
-    try {
-        Invoke-PackToZip -Items $items -DestZip $zipPath
-        $packed = $true
-        break
-    } catch {
-        Write-Warning "ZIP attempt $a/$maxAttempts failed: $($_.Exception.Message)"
-        if ($a -lt $maxAttempts) { Start-Sleep -Seconds $sleepSec }
-    }
-}
-if (-not $packed) {
+
+# Define the package jobs to run
+# Format: @{ Name = "output_zip"; Mode = "PRO" | "TRIAL" }
+$jobs = @(
+    @{ Name = "CafeCrawler-Pro.zip"; Mode = "PRO" },
+    @{ Name = "EventStats-Pro.zip"; Mode = "PRO" },
+    @{ Name = "AutoComment-Pro.zip"; Mode = "PRO" },
+    @{ Name = "CafeMonster-Trial.zip"; Mode = "TRIAL" }
+)
+
+# Package each job
+foreach ($job in $jobs) {
+    $zipName = $job.Name
+    $zipPath = [System.IO.Path]::Combine($root, 'dist', $zipName)
+    
+    # Create unique staging folder
     $stage = Join-Path $env:TEMP ("cafescraper_pack_" + [guid]::NewGuid().ToString('N'))
-    Write-Host "Falling back: copy to staging folder then ZIP: $stage"
+    Write-Host "[PACK] Staging $zipName -> $stage"
+    
     try {
         New-Item -ItemType Directory -Path $stage -Force | Out-Null
+        
+        # Copy build to staging
         robocopy $distDir $stage /E /XD data /XF crawler_config.json user_settings.json comment_templates.json /COPY:DAT /R:2 /W:3 /NFL /NDL /NJH /NJS | Out-Null
         if ($LASTEXITCODE -ge 8) {
             throw "robocopy failed with exit $LASTEXITCODE"
         }
-        $stageItems = @(Get-ChildItem -LiteralPath $stage -Force)
-        Invoke-PackToZip -Items $stageItems -DestZip $zipPath
-        $packed = $true
+        
+        # Write mode.txt inside staging directory
+        $modeText = $job.Mode.ToUpper()
+        Set-Content -Path (Join-Path $stage "mode.txt") -Value $modeText -Encoding Utf8
+        
+        # Pack staging to target ZIP using tar.exe
+        Invoke-PackToZip -SourceDir $stage -DestZip $zipPath
+        
+        # Verify ZIP integrity
+        $stat = Get-Item -LiteralPath $zipPath
+        if ($stat.Length -lt $minZipBytes) {
+            Write-Error "ZIP 용량이 비정상적으로 작습니다 (${zipName}: $($stat.Length) bytes)."
+            exit 3
+        }
+        
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $zipRead = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
+        try {
+            $hasExe = $false
+            foreach ($entry in $zipRead.Entries) {
+                if ($entry.Name -eq 'CafeScraper.exe') {
+                    $hasExe = $true
+                    break
+                }
+            }
+            if (-not $hasExe) {
+                Write-Error "ZIP($zipName) 안에 CafeScraper.exe 가 없습니다."
+                exit 4
+            }
+        } finally {
+            $zipRead.Dispose()
+        }
+        
+        $mb = [math]::Round($stat.Length / 1MB, 2)
+        Write-Host "[OK] Created: $zipName (${mb} MB)"
+        
     } finally {
         if (Test-Path -LiteralPath $stage) {
-            Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue | Out-Null
         }
     }
 }
-if (-not $packed) {
-    Write-Error "ZIP failed after retries and staging copy. Close CafeScraper.exe, pause antivirus, or retry."
-    exit 5
-}
 
-$stat = Get-Item -LiteralPath $zipPath
-if ($stat.Length -lt $minZipBytes) {
-    Write-Error "ZIP 용량이 비정상적으로 작습니다 ($($stat.Length) bytes). 압축이 실패했을 수 있습니다."
-    exit 3
-}
-
-Add-Type -AssemblyName System.IO.Compression.FileSystem
-$zipRead = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
-try {
-    $hasExe = $false
-    foreach ($e in $zipRead.Entries) {
-        if ($e.Name -eq 'CafeScraper.exe') {
-            $hasExe = $true
-            break
-        }
-    }
-    if (-not $hasExe) {
-        Write-Error "ZIP 안에 CafeScraper.exe 가 없습니다. 압축 경로를 확인하세요."
-        exit 4
-    }
-} finally {
-    $zipRead.Dispose()
-}
-
-$mb = [math]::Round($stat.Length / 1MB, 2)
 Write-Host "VERSION=$verSafe"
-Write-Host "OK: $($stat.FullName) (${mb} MB)"
-Write-Host "DIST_FOLDER=$distDir"
-Write-Host "SHIP_ZIP=$zipPath"
+Write-Host "All 4 package ZIPs successfully created in dist folder!"

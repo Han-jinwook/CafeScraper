@@ -86,7 +86,7 @@ def main():
         print(f"[ERROR] Failed to create GitHub Release: {res.status_code} - {res.text}")
         sys.exit(1)
         
-    # Upload the 4 ZIP files from root directory
+    # Upload the 4 ZIP files from dist directory
     zip_files = [
         "CafeCrawler-Pro.zip",
         "EventStats-Pro.zip",
@@ -95,7 +95,8 @@ def main():
     ]
     
     for z in zip_files:
-        success = upload_zip(z, github_pat, upload_url, headers)
+        zip_path = os.path.join("dist", z)
+        success = upload_zip(zip_path, github_pat, upload_url, headers)
         if not success:
             print(f"[WARNING] Failed to upload {z}")
             

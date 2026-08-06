@@ -13,11 +13,34 @@ ctk.set_default_color_theme("blue")
 
 logger = logging.getLogger(__name__)
 
+def get_packaging_mode():
+    try:
+        import sys
+        if getattr(sys, "frozen", False):
+            target_dir = os.path.dirname(sys.executable)
+        else:
+            target_dir = os.path.dirname(os.path.abspath(__file__))
+        mode_path = os.path.join(target_dir, "mode.txt")
+        if os.path.exists(mode_path):
+            with open(mode_path, "r", encoding="utf-8") as f:
+                return f.read().strip().upper()
+    except Exception:
+        pass
+    return "PRO" # Default fallback is PRO for security
+
 class AuthWindow(ctk.CTk):
     def __init__(self, is_pro=True):
         super().__init__()
 
-        self.is_pro = is_pro
+        # Determine is_pro from mode.txt if present, otherwise default to the passed is_pro
+        mode = get_packaging_mode()
+        if mode == "TRIAL":
+            self.is_pro = False
+        elif mode == "PRO":
+            self.is_pro = True
+        else:
+            self.is_pro = is_pro
+
         self.title("⚡ [카페 몬스터] CafeMonster 시작하기")
         
         # Center the window
@@ -63,6 +86,7 @@ class AuthWindow(ctk.CTk):
 
         self.label_title = ctk.CTkLabel(self.title_container, text="CafeMonster", 
                                         font=("Arial", 36, "bold"), text_color="#A855F7")
+                                        
         self.label_title.pack(side="left")
 
         # 2. Main Container
@@ -92,18 +116,19 @@ class AuthWindow(ctk.CTk):
         self.entry_key.pack(padx=15, fill="x", pady=10)
 
         self.btn_auth_submit = ctk.CTkButton(self.auth_stage, text="라이선스 인증 및 시작", 
-                                            font=("Arial", 16, "bold"),
-                                            fg_color=self.brand_purple, hover_color="#6d28d9",
-                                            height=55, corner_radius=16, command=self.authenticate)
+                                             font=("Arial", 16, "bold"),
+                                             fg_color=self.brand_purple, hover_color="#6d28d9",
+                                             height=55, corner_radius=16, command=self.authenticate)
         self.btn_auth_submit.pack(pady=(15, 10), padx=15, fill="x")
 
-        # Trial flow welcome button
-        self.btn_goto_trial = ctk.CTkButton(self.auth_stage, text="정품 키가 없으신가요? (1회 한정 50건 체험하기)", 
-                                           font=("Arial", 12, "underline"),
-                                           fg_color="transparent", text_color="#A855F7",
-                                           hover_color=self.bg_dark,
-                                           height=30, command=self.show_welcome_stage)
-        self.btn_goto_trial.pack(side="bottom", pady=5)
+        # Trial flow welcome button (Only show if not strictly PRO mode)
+        if not self.is_pro:
+            self.btn_goto_trial = ctk.CTkButton(self.auth_stage, text="정품 키가 없으신가요? (1회 한정 50건 체험하기)", 
+                                               font=("Arial", 12, "underline"),
+                                               fg_color="transparent", text_color="#A855F7",
+                                               hover_color=self.bg_dark,
+                                               height=30, command=self.show_welcome_stage)
+            self.btn_goto_trial.pack(side="bottom", pady=5)
         
         # --- Stage 2: Welcome/Trial Stage ---
         self.welcome_stage = ctk.CTkFrame(self.main_card, fg_color="transparent")
@@ -130,9 +155,13 @@ class AuthWindow(ctk.CTk):
                                           height=30, command=self.show_auth_stage)
         self.btn_goto_auth.pack(side="bottom", pady=10)
         
-        # Default view setup (Show welcome stage first)
-        self.auth_stage.pack_forget()
-        self.welcome_stage.pack(fill="both", expand=True, padx=20, pady=20)
+        # Default view setup based on is_pro
+        if self.is_pro:
+            self.welcome_stage.pack_forget()
+            self.auth_stage.pack(fill="both", expand=True, padx=20, pady=20)
+        else:
+            self.auth_stage.pack_forget()
+            self.welcome_stage.pack(fill="both", expand=True, padx=20, pady=20)
 
         self.status_label = ctk.CTkLabel(self.main_card, text="", 
                                         font=("Arial", 12, "bold"), text_color="#F59E0B")
