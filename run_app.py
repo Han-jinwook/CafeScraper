@@ -281,6 +281,13 @@ def main() -> None:
             sys.exit(0)
     except Exception as auth_err:
         _boot_log(exe_dir, f"인증 GUI 실행 오류: {auth_err}")
+        import tkinter as tk
+        from tkinter import messagebox
+        root_tk = tk.Tk()
+        root_tk.withdraw()
+        messagebox.showerror("인증 오류", f"라이선스 인증 창을 실행하는 중 오류가 발생했습니다.\n오류: {auth_err}", parent=root_tk)
+        root_tk.destroy()
+        sys.exit(1)
 
     app_script = os.path.join(base_dir, "app.py")
     if not os.path.isfile(app_script):
