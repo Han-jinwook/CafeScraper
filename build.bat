@@ -32,7 +32,7 @@ set "DISTDIR="
 
 for /f "usebackq tokens=* delims=" %%v in ("%~dp0version.txt") do (
 
-    set "DISTDIR=cafescraper_V%%v"
+    set "DISTDIR=CafeMonster-V%%v\cafescraper_V%%v"
 
     goto :have_distdir
 
@@ -286,7 +286,12 @@ if errorlevel 1 (
 
 )
 
-
+REM Move PyInstaller output to the parent versioned directory
+for /f "usebackq tokens=* delims=" %%v in ("%~dp0version.txt") do (
+    if not exist "%~dp0dist\CafeMonster-V%%v" mkdir "%~dp0dist\CafeMonster-V%%v"
+    if exist "%~dp0dist\CafeMonster-V%%v\cafescraper_V%%v" rmdir /s /q "%~dp0dist\CafeMonster-V%%v\cafescraper_V%%v"
+    move "%~dp0dist\cafescraper_V%%v" "%~dp0dist\CafeMonster-V%%v\cafescraper_V%%v"
+)
 
 if not exist "%~dp0dist\%DISTDIR%\CafeScraper.exe" (
 

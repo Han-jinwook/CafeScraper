@@ -21,11 +21,9 @@ if ($verSafe -ne $ver) {
     exit 2
 }
 
-$distFolder = "cafescraper_V${verSafe}"
+$distFolder = [System.IO.Path]::Combine("CafeMonster-V${verSafe}", "cafescraper_V${verSafe}")
 $distDir = [System.IO.Path]::Combine($root, 'dist', $distFolder)
 $exePath = Join-Path $distDir 'CafeScraper.exe'
-$zipName = "cafescraper_V${verSafe}.zip"
-$zipPath = Join-Path $root $zipName
 $minZipBytes = 35MB
 
 if (-not (Test-Path -LiteralPath $exePath)) {
@@ -54,7 +52,7 @@ $targets = @(
 )
 
 foreach ($t in $targets) {
-    $zipPath = [System.IO.Path]::Combine($root, 'dist', $t)
+    $zipPath = [System.IO.Path]::Combine($root, 'dist', "CafeMonster-V${verSafe}", $t)
     if (Test-Path -LiteralPath $zipPath) {
         Remove-Item -LiteralPath $zipPath -Force
         if (Test-Path -LiteralPath $zipPath) {
@@ -63,7 +61,6 @@ foreach ($t in $targets) {
         }
     }
 }
-
 function Invoke-PackToZip {
     param(
         [Parameter(Mandatory = $true)]
@@ -71,28 +68,32 @@ function Invoke-PackToZip {
         [Parameter(Mandatory = $true)]
         [string]$DestZip
     )
-    # Use native tar.exe for 20x faster multi-threaded compression on Windows 10/11
-    tar.exe -a -c -f $DestZip -C $SourceDir .
+    # Use python's shutil.make_archive for ultra-fast, 100% Windows Explorer compatible zipping
+    $zipBase = $DestZip -replace '\.zip$', ''
+    python -c "import shutil; shutil.make_archive(r'$zipBase', 'zip', r'$SourceDir')"
 }
-
 # Wait to avoid file locks
 $sleepSec = 3
 Write-Host "Waiting ${sleepSec}s before ZIP (avoid file lock on fresh build)..."
 Start-Sleep -Seconds $sleepSec
 
 # Define the package jobs to run
-# Format: @{ Name = "output_zip"; Mode = "PRO" | "TRIAL" }
+# Format: @{ Name = "output_zip"; Mode = "PRO_CAFECRAWLER" | "PRO_EVENTSTATS" | "PRO_AUTOCOMMENT" | "TRIAL" }
 $jobs = @(
-    @{ Name = "CafeCrawler-Pro.zip"; Mode = "PRO" },
-    @{ Name = "EventStats-Pro.zip"; Mode = "PRO" },
-    @{ Name = "AutoComment-Pro.zip"; Mode = "PRO" },
+    @{ Name = "CafeCrawler-Pro.zip"; Mode = "PRO_CAFECRAWLER" },
+    @{ Name = "EventStats-Pro.zip"; Mode = "PRO_EVENTSTATS" },
+    @{ Name = "AutoComment-Pro.zip"; Mode = "PRO_AUTOCOMMENT" },
     @{ Name = "CafeMonster-Trial.zip"; Mode = "TRIAL" }
 )
 
 # Package each job
 foreach ($job in $jobs) {
     $zipName = $job.Name
-    $zipPath = [System.IO.Path]::Combine($root, 'dist', $zipName)
+    $parentDir = [System.IO.Path]::Combine($root, 'dist', "CafeMonster-V${verSafe}")
+    if (-not (Test-Path -LiteralPath $parentDir)) {
+        New-Item -ItemType Directory -Path $parentDir -Force | Out-Null
+    }
+    $zipPath = [System.IO.Path]::Combine($parentDir, $zipName)
     
     # Create unique staging folder
     $stage = Join-Path $env:TEMP ("cafescraper_pack_" + [guid]::NewGuid().ToString('N'))

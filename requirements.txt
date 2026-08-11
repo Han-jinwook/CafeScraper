@@ -11,4 +11,5 @@ streamlit==1.39.0
 pandas>=2.0.0
 pyperclip>=1.8.0
 pywebview>=5.0
-
+customtkinter==6.0.0
+darkdetect==0.8.0

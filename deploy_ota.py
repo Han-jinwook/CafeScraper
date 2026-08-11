@@ -95,7 +95,7 @@ def main():
     ]
     
     for z in zip_files:
-        zip_path = os.path.join("dist", z)
+        zip_path = os.path.join("dist", f"CafeMonster-V{version}", z)
         success = upload_zip(zip_path, github_pat, upload_url, headers)
         if not success:
             print(f"[WARNING] Failed to upload {z}")

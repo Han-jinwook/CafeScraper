@@ -19,9 +19,8 @@ else:
 LICENSE_FILE = os.path.join(USER_SETTINGS_PATH, "license.dat")
 CACHE_FILE = os.path.join(USER_SETTINGS_PATH, "license_cache.json")
 TRIAL_SETTINGS_FILE = os.path.join(USER_SETTINGS_PATH, "trial_settings.json")
-
 SUPABASE_URL = "https://suwinftalfgybvrnzruz.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN1d2luZnRhbGZneWJ2cm56cnV6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzYzMDQ3OTEsImV4cCI6MjA5MTg4MDc5MX0.OJAE_djjwIxR1pDNVx45HprOcAtU8gZopGJx8hvJMt4"
+SUPABASE_KEY = "sb_publishable_jUwQ1BWvG6F2H9GyELUoFw_mUOHbgWD"
 
 class CafeMonsterAuthHelper:
     _cached_active_products = None
@@ -120,15 +119,17 @@ class CafeMonsterAuthHelper:
         }
 
         # 2.1 HWID에 바인딩된 활성 라이선스들 조회 (REST API 0.5초 타임아웃 제한)
-        url = f"{SUPABASE_URL.rstrip('/')}/rest/v1/licenses?bound_value=eq.{hwid}&status=eq.active&select=product_id,expire_date,collection_limit"
+        url = f"{SUPABASE_URL.rstrip('/')}/rest/v1/licenses?bound_value=eq.{hwid}&status=eq.active&select=product_id,expire_date,collection_limit,serial_key,first_run_date"
         try:
-            res = requests.get(url, headers=headers, timeout=0.5)
+            res = requests.get(url, headers=headers, timeout=3.0)
             if res.status_code == 200:
                 data = res.json()
                 for item in data:
                     prod = item.get("product_id")
                     exp = item.get("expire_date")
                     limit = item.get("collection_limit")
+                    key = item.get("serial_key")
+                    first_run = item.get("first_run_date")
                     # 만료일 체크
                     if exp:
                         try:
@@ -141,6 +142,20 @@ class CafeMonsterAuthHelper:
                     if prod:
                         active_prods.add(prod)
                         limits[prod] = limit
+                        
+                        # 실행일자(first_run_date) 누락 시 백필 수행
+                        if not first_run and key:
+                            try:
+                                from 라이브러리.auth import MonsterAuth
+                                auth_prod = MonsterAuth(
+                                    product_id=prod,
+                                    license_key=key,
+                                    supabase_url=SUPABASE_URL,
+                                    supabase_key=SUPABASE_KEY
+                                )
+                                auth_prod.verify_license()
+                            except Exception as ex:
+                                logger.error(f"Failed to backfill first_run_date in get_active_products: {ex}")
         except Exception as e:
             logger.error(f"Failed to query active licenses by HWID: {e}")
 
@@ -150,7 +165,7 @@ class CafeMonsterAuthHelper:
             try:
                 # 저장된 키가 어떤 product_id 용인지 먼저 조회
                 url_key = f"{SUPABASE_URL.rstrip('/')}/rest/v1/licenses?serial_key=eq.{key}&select=product_id"
-                res_key = requests.get(url_key, headers=headers, timeout=0.5)
+                res_key = requests.get(url_key, headers=headers, timeout=3.0)
                 if res_key.status_code == 200:
                     key_data = res_key.json()
                     if key_data:
@@ -330,8 +345,10 @@ class CafeMonsterAuthHelper:
 
     @classmethod
     def check_license_status(cls) -> bool:
-        """현재 HWID에 바인딩된 유효 라이선스가 1개라도 존재하는지 확인합니다."""
-        cls.clear_cache()
+        """현재 HWID에 바인딩된 유효 라이선스가 1개라도 존재하는지 확인합니다.
+        캐시가 유효한 경우 캐시를 사용하여 즉시 반환합니다 (창 자동 닫기용)."""
+        # 캐시를 지우지 않고 기존 캐시를 먼저 활용하여 빠르게 통과시킴
+        # (validate_and_bind_key 호출 시 캐시가 갱신되므로 안전)
         active = cls.get_active_products()
         return len(active) > 0
 
@@ -363,9 +380,9 @@ class CafeMonsterAuthHelper:
         try:
             with open(CACHE_FILE, "r", encoding="utf-8") as f:
                 cache = json.load(f)
-            # 유효 기한 1일 (24시간) 체크
+            # 유효 기한 30일 체크 (1회 인증 후 30일간 자동 통과)
             updated_at = cache.get("updated_at", 0)
-            if time.time() - updated_at > 24 * 3600:
+            if time.time() - updated_at > 30 * 24 * 3600:
                 return None
             return cache
         except Exception:

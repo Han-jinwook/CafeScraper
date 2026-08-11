@@ -6,6 +6,7 @@ import html
 
 import streamlit as st
 import streamlit.components.v1 as components
+from app.utils.auth_helper import CafeMonsterAuthHelper
 
 SETTINGS_CARD_TITLE_CLASS = "cafe-monster-settings-card-title"
 SETTINGS_CARD_TITLE_ICON_CLASS = "cafe-monster-settings-card-title-icon"
@@ -31,7 +32,57 @@ def render_main_top_nav(*, active: str) -> None:
     """
     # 멀티페이지(pages/*.py)는 app.py 단일 진입과 달리 상단 헤더·첫 블록이 겹쳐
     # 탭 버튼 위가 잘려 보일 수 있어 본문 상단 패딩을 여유롭게 보정.
-    _block_padding_top = "1.5rem"
+    _block_padding_top = "0.75rem"
+    
+    active_licenses = CafeMonsterAuthHelper.get_active_products()
+
+    # 정품 보유 여부에 따른 개별 버튼 스타일 정의 (Pro vs Trial)
+    trial_styles = ""
+    for nav_key, prod_id in [("app", "CafeCrawler"), ("event", "EventStats"), ("commenter", "AutoComment")]:
+        if prod_id in active_licenses:
+            # 정품 (Pro) 디자인
+            trial_styles += f"""
+            /* 정품 - 미선택 */
+            [class*="st-key-cm_topnav_{nav_key}"] div[data-testid="stButton"] > button:not(:disabled) {{
+                background: #ffffff !important;
+                border: 1.5px solid #3b82f6 !important; /* 강렬한 블루 테두리 */
+                color: #1d4ed8 !important; /* 선명한 블루 텍스트 */
+            }}
+            [class*="st-key-cm_topnav_{nav_key}"] div[data-testid="stButton"] > button:not(:disabled):hover {{
+                background: #eff6ff !important;
+                border-color: #2563eb !important;
+                color: #1e40af !important;
+            }}
+            /* 정품 - 선택됨 (활성화) */
+            [class*="st-key-cm_topnav_{nav_key}"] div[data-testid="stButton"] > button:disabled {{
+                background: #004d3d !important; /* 선명한 포레스트 그린 */
+                border: 1.5px solid #004d3d !important;
+                color: #ffffff !important;
+                opacity: 1 !important;
+            }}
+            """
+        else:
+            # 무료체험 (Trial) 디자인
+            trial_styles += f"""
+            /* 무료체험 - 미선택 */
+            [class*="st-key-cm_topnav_{nav_key}"] div[data-testid="stButton"] > button:not(:disabled) {{
+                background: #e2e8f0 !important; /* 어두운 회색 배경 */
+                border: 1.5px solid #94a3b8 !important; /* 회색 테두리 */
+                color: #475569 !important; /* 어두운 회색 글씨 */
+            }}
+            [class*="st-key-cm_topnav_{nav_key}"] div[data-testid="stButton"] > button:not(:disabled):hover {{
+                background: #cbd5e1 !important;
+                border-color: #64748b !important;
+                color: #334155 !important;
+            }}
+            /* 무료체험 - 선택됨 (활성화) */
+            [class*="st-key-cm_topnav_{nav_key}"] div[data-testid="stButton"] > button:disabled {{
+                background: #475569 !important; /* 차분한 어두운 회색 활성화 */
+                border: 1.5px solid #334155 !important;
+                color: #ffffff !important;
+                opacity: 1 !important;
+            }}
+            """
 
     st.markdown(
         f"""
@@ -87,19 +138,25 @@ def render_main_top_nav(*, active: str) -> None:
             }}
             /* 상단 메뉴: switch_page 버튼 — 예전 HTML nav 링크와 동일한 칩 스타일 */
             [class*="st-key-{_TOP_NAV_CONTAINER_KEY}"] {{
-                margin-top: -0.8rem !important;
+                margin-top: -0.5rem !important;
                 margin-bottom: 0px !important;
                 border-bottom: 1px solid rgba(192,201,195,0.35) !important;
-                padding-bottom: 0.45rem !important;
+                padding-bottom: 0.4rem !important;
             }}
-            /* 제목 헤더 컨테이너: 상단 및 하단 여백 축소 */
+            /* 탭 컬럼들이 수직으로 균일하게 정렬되도록 */
+            [class*="st-key-{_TOP_NAV_CONTAINER_KEY}"] div[data-testid="column"] {{
+                display: flex !important;
+                align-items: center !important;
+            }}
+            /* 제목 헤더 컨테이너: 탭과의 여백 약 1cm 수준으로 축소 */
             [class*="st-key-dashboard_header"] {{
-                margin-top: -0.5rem !important;
+                margin-top: -1.5rem !important;
                 margin-bottom: -1.0rem !important;
             }}
-            [class*="st-key-{_TOP_NAV_CONTAINER_KEY}"] div[data-testid="column"] {{
+            [class*="st-key-{_TOP_NAV_CONTAINER_KEY}"] div[data-testid="column"] div[data-testid="stVerticalBlock"] {{
                 flex: 1 1 0% !important;
                 min-width: 0 !important;
+                width: 100% !important;
             }}
             [class*="st-key-{_TOP_NAV_CONTAINER_KEY}"] div[data-testid="stButton"] {{
                 width: 100% !important;
@@ -125,11 +182,21 @@ def render_main_top_nav(*, active: str) -> None:
                 color: #191c1d !important;
             }}
             [class*="st-key-{_TOP_NAV_CONTAINER_KEY}"] div[data-testid="stButton"] > button:disabled {{
+                width: 100% !important;
+                min-height: 2.55rem !important;
+                justify-content: center !important;
+                text-align: center !important;
+                font-weight: 600 !important;
+                font-size: 0.92rem !important;
+                line-height: 1.35 !important;
+                padding: 0.55rem 0.35rem !important;
+                border-radius: 0.45rem !important;
+                border: 1px solid #003629 !important;
                 background: #003629 !important;
-                border-color: #003629 !important;
                 color: #ffffff !important;
                 opacity: 1 !important;
                 cursor: default !important;
+                box-sizing: border-box !important;
             }}
 
             /* 전 페이지 공통: 드롭다운(selectbox) 호버 시 입력(I-beam) 커서가 아닌 포인터 적용 */
@@ -160,6 +227,9 @@ def render_main_top_nav(*, active: str) -> None:
             input::-ms-clear {{
                 display: none !important;
             }}
+
+            /* 동적 체험판 스타일 삽입 */
+            {trial_styles}
         </style>
         """,
         unsafe_allow_html=True,
@@ -168,9 +238,21 @@ def render_main_top_nav(*, active: str) -> None:
     with st.container(key=_TOP_NAV_CONTAINER_KEY):
         cols = st.columns(len(_NAV_PAGE_LINKS), gap="small")
         for col, (nav_key, page_path, label) in zip(cols, _NAV_PAGE_LINKS, strict=True):
+            prod_id = None
+            if nav_key == "app":
+                prod_id = "CafeCrawler"
+            elif nav_key == "event":
+                prod_id = "EventStats"
+            elif nav_key == "commenter":
+                prod_id = "AutoComment"
+                
+            display_label = label
+            if prod_id and prod_id not in active_licenses:
+                display_label = f"{label} (무료체험 50건)"
+
             with col:
                 go = st.button(
-                    label,
+                    display_label,
                     key=f"cm_topnav_{nav_key}",
                     type="secondary",
                     use_container_width=True,

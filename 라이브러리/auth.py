@@ -94,7 +94,8 @@ class MonsterAuth:
                 except ValueError:
                     expire_date = datetime.strptime(expire_date_str[:19], "%Y-%m-%dT%H:%M:%S")
                 
-                if expire_date < datetime.utcnow():
+                expire_date_naive = expire_date.replace(tzinfo=None)
+                if expire_date_naive < datetime.utcnow():
                     self._update_status("expired")
                     return False, "만료된 라이선스 키입니다. 기간 연장이 필요합니다.", 0
 
@@ -106,6 +107,11 @@ class MonsterAuth:
             if bound_value:
                 if bound_value != self.hwid:
                     return False, "이미 다른 PC에 등록된 라이선스 키입니다. (1PC 1Key 원칙)", 0
+                
+                # 기기는 올바르게 바인딩되어 있으나 실행일자(first_run_date) 기록이 누락된 경우 동기화 보완
+                first_run_date = license_info.get("first_run_date")
+                if not first_run_date:
+                    self._update_first_run_date()
             else:
                 # 바인딩되지 않은 키(unused)인 경우 현재 HWID를 강제 등록하고 활성화(active) 처리
                 success = self._bind_device()
@@ -120,17 +126,27 @@ class MonsterAuth:
             return False, f"서버 통신 오류가 발생했습니다: {str(e)}", 0
 
     def _bind_device(self):
-        """현재 HWID를 Supabase에 영구 바인딩합니다."""
+        """현재 HWID를 Supabase에 영구 바인딩하고 첫 실행일자를 기록합니다."""
         url = f"{self.supabase_url.rstrip('/')}/rest/v1/licenses?serial_key=eq.{self.license_key}"
         payload = {
             "bound_value": self.hwid,
-            "status": "active"
+            "status": "active",
+            "first_run_date": datetime.utcnow().isoformat()
         }
         try:
             res = requests.patch(url, headers=self._get_headers(), json=payload, timeout=self.timeout)
             return res.status_code in [200, 201, 204]
         except Exception:
             return False
+
+    def _update_first_run_date(self):
+        """실행일자(first_run_date) 기록이 누락된 경우 현재 서버 시간에 맞춰 업데이트합니다."""
+        url = f"{self.supabase_url.rstrip('/')}/rest/v1/licenses?serial_key=eq.{self.license_key}"
+        payload = {"first_run_date": datetime.utcnow().isoformat()}
+        try:
+            requests.patch(url, headers=self._get_headers(), json=payload, timeout=self.timeout)
+        except Exception:
+            pass
 
     def _update_status(self, new_status):
         """라이선스 상태 값을 원격으로 변경합니다."""

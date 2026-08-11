@@ -34,14 +34,30 @@ class AuthWindow(ctk.CTk):
 
         # Determine is_pro from mode.txt if present, otherwise default to the passed is_pro
         mode = get_packaging_mode()
+        self.mode = mode
         if mode == "TRIAL":
             self.is_pro = False
-        elif mode == "PRO":
+        elif mode.startswith("PRO"):
             self.is_pro = True
         else:
             self.is_pro = is_pro
 
-        self.title("⚡ [카페 몬스터] CafeMonster 시작하기")
+        # Dynamic title based on product mode
+        if mode == "PRO_CAFECRAWLER":
+            self.title("⚡ [카페 수집기 Pro] 시작하기")
+            self.display_name = "카페 수집기 Pro"
+        elif mode == "PRO_EVENTSTATS":
+            self.title("⚡ [이벤트 활동 분석기 Pro] 시작하기")
+            self.display_name = "이벤트 활동 분석기 Pro"
+        elif mode == "PRO_AUTOCOMMENT":
+            self.title("⚡ [자동댓글러 Pro] 시작하기")
+            self.display_name = "자동댓글러 Pro"
+        elif mode == "TRIAL":
+            self.title("⚡ [카페 몬스터 - 무료체험판] 시작하기")
+            self.display_name = "통합 체험판"
+        else:
+            self.title("⚡ [카페 몬스터] CafeMonster 시작하기")
+            self.display_name = "CafeMonster"
         
         # Center the window
         width = 480
@@ -101,7 +117,11 @@ class AuthWindow(ctk.CTk):
         self.auth_stage = ctk.CTkFrame(self.main_card, fg_color="transparent")
         self.auth_stage.pack(fill="both", expand=True, padx=20, pady=20)
 
-        self.lbl_auth_title = ctk.CTkLabel(self.auth_stage, text="정품 인증", 
+        auth_title_text = "정품 인증"
+        if hasattr(self, "display_name") and self.display_name:
+            auth_title_text = f"{self.display_name} 정품 인증"
+
+        self.lbl_auth_title = ctk.CTkLabel(self.auth_stage, text=auth_title_text, 
                                            font=("Arial", 22, "bold"), text_color=self.text_white)
         self.lbl_auth_title.pack(pady=(10, 5))
         
