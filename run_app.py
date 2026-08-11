@@ -261,12 +261,23 @@ def main() -> None:
                 f"새로운 버전({update_info['version']})이 출시되었습니다.\n업데이트를 다운로드하고 프로그램을 재시작하시겠습니까?",
                 parent=root_tk
             ):
+                # 다운로드 상태창 띄우기
+                dl_win = tk.Toplevel(root_tk)
+                dl_win.title("업데이트 다운로드")
+                dl_win.geometry("300x100")
+                dl_win.attributes("-topmost", True)
+                tk.Label(dl_win, text=f"v{update_info['version']} 다운로드 중입니다...\n\n(약 1~2분 소요될 수 있습니다)").pack(expand=True)
+                dl_win.update()
+
                 temp_zip = os.path.join(exe_dir, "cafescraper_update.zip")
                 if MonsterUpdater.download_update(update_info["download_url"], temp_zip):
                     _boot_log(exe_dir, "다운로드 완료. 업데이트 적용 및 재시작...")
+                    tk.Label(dl_win, text="다운로드 완료! 재시작합니다...", fg="blue").pack()
+                    dl_win.update()
                     MonsterUpdater.apply_update_and_restart(temp_zip)
                     sys.exit(0)
                 else:
+                    dl_win.destroy()
                     messagebox.showerror("업데이트 실패", "업데이트 파일 다운로드에 실패했습니다.", parent=root_tk)
             root_tk.destroy()
     except Exception as update_err:
