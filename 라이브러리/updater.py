@@ -36,8 +36,8 @@ class MonsterUpdater:
         }
 
         try:
-            # 0.5초 타임아웃 강제화
-            response = requests.get(url, headers=headers, timeout=0.5)
+            # 3.0초 타임아웃 강제화
+            response = requests.get(url, headers=headers, timeout=3.0)
             response.raise_for_status()
             data = response.json()
 
@@ -51,7 +51,7 @@ class MonsterUpdater:
                     }
             return None
         except requests.exceptions.Timeout:
-            logger.warning("업데이트 체크 시간 초과 (0.5초 제한)")
+            logger.warning("업데이트 체크 시간 초과 (3.0초 제한)")
             return None
         except Exception as e:
             logger.error(f"업데이트 체크 중 예외 발생: {e}")

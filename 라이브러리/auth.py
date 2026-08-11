@@ -27,7 +27,7 @@ class MonsterAuth:
         self.supabase_key = supabase_key or os.getenv("SUPABASE_KEY")
         
         self.hwid = self._get_hwid()
-        self.timeout = 0.5  # 0.5초 타임아웃 강제화 (Monster 강령 준수)
+        self.timeout = 3.0  # 3.0초 타임아웃 강제화
 
     def _get_hwid(self):
         """기기 고유 식별자(HWID)를 정밀 산출합니다."""
@@ -121,7 +121,7 @@ class MonsterAuth:
             return True, "정상 인증되었습니다.", collection_limit
 
         except requests.exceptions.Timeout:
-            return False, "인증 서버 응답 초과 (0.5초 제한). 네트워크를 확인해주세요.", 0
+            return False, "인증 서버 응답 초과 (3.0초 제한). 네트워크를 확인해주세요.", 0
         except Exception as e:
             return False, f"서버 통신 오류가 발생했습니다: {str(e)}", 0
 
