@@ -23,7 +23,10 @@ def get_packaging_mode():
         mode_path = os.path.join(target_dir, "mode.txt")
         if os.path.exists(mode_path):
             with open(mode_path, "r", encoding="utf-8") as f:
-                return f.read().strip().upper()
+                content = f.read().strip().upper()
+                if content.startswith('\ufeff'):
+                    content = content[1:]
+                return content
     except Exception:
         pass
     return "PRO" # Default fallback is PRO for security
@@ -187,8 +190,7 @@ class AuthWindow(ctk.CTk):
                                         font=("Arial", 12, "bold"), text_color="#F59E0B")
         self.status_label.pack(side="bottom", pady=15)
 
-        # Check initial license status silently
-        self.check_initial_status()
+
 
     def show_auth_stage(self):
         self.welcome_stage.pack_forget()
@@ -200,19 +202,7 @@ class AuthWindow(ctk.CTk):
         self.welcome_stage.pack(fill="both", expand=True, padx=20, pady=20)
         self.status_label.configure(text="")
 
-    def check_initial_status(self):
-        import threading
-        def check():
-            try:
-                # If they already have any active licenses saved locally, launch immediately!
-                if CafeMonsterAuthHelper.check_license_status():
-                    self.authenticated = True
-                    self.after(0, self.destroy)
-            except Exception as e:
-                logger.error(f"Initial check error: {e}")
-                
-        t = threading.Thread(target=check, daemon=True)
-        t.start()
+
 
     def start_trial_flow(self):
         self.status_label.configure(text="⏳ 체험판 초기화 중...", text_color="#A855F7")
@@ -251,6 +241,12 @@ class AuthWindow(ctk.CTk):
 
 def run_auth_flow(is_pro=True):
     try:
+        # 1. 캐시 및 네트워크를 통한 사전 인증 체크 (동기 방식)
+        # 창이 뜨기 전에 확인하여 Race Condition(창이 깜빡이거나 닫히지 않는 문제)을 방지합니다.
+        if CafeMonsterAuthHelper.check_license_status():
+            return True
+            
+        # 2. 인증이 없거나 실패한 경우에만 GUI 띄우기
         app = AuthWindow(is_pro=is_pro)
         app.mainloop()
         return app.authenticated

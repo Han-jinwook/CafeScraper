@@ -15,15 +15,31 @@ class MonsterUpdater:
     """
     
     CURRENT_VERSION = read_app_version()
-    PRODUCT_ID = "CafeCrawler"
     
+    @classmethod
+    def _get_product_id(cls):
+        try:
+            app_dir = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else os.path.dirname(os.path.abspath(__file__))
+            mode_path = os.path.join(app_dir, "mode.txt")
+            if os.path.exists(mode_path):
+                with open(mode_path, "r", encoding="utf-8") as f:
+                    content = f.read().strip().upper()
+                    if content.startswith('\ufeff'):
+                        content = content[1:]
+                    if content == "PRO_CAFECRAWLER": return "CafeCrawler"
+                    if content == "PRO_EVENTSTATS": return "EventStats"
+                    if content == "PRO_AUTOCOMMENT": return "AutoComment"
+        except Exception:
+            pass
+        return "CafeCrawler"
+
     @classmethod
     def check_for_updates(cls):
         try:
             logger.info("🔍 [라이브러리 검증] 최신 버전 확인 중...")
             
             update_info = CommonUpdater.check_for_updates(
-                product_id=cls.PRODUCT_ID,
+                product_id=cls._get_product_id(),
                 current_version=cls.CURRENT_VERSION,
                 supabase_url=SUPABASE_URL,
                 supabase_key=SUPABASE_KEY

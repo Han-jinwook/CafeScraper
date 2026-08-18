@@ -150,7 +150,7 @@ def render_main_top_nav(*, active: str) -> None:
             }}
             /* 제목 헤더 컨테이너: 탭과의 여백 약 1cm 수준으로 축소 */
             [class*="st-key-dashboard_header"] {{
-                margin-top: -1.5rem !important;
+                margin-top: -2.5rem !important;
                 margin-bottom: -1.0rem !important;
             }}
             [class*="st-key-{_TOP_NAV_CONTAINER_KEY}"] div[data-testid="column"] div[data-testid="stVerticalBlock"] {{

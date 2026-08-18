@@ -108,9 +108,9 @@ foreach ($job in $jobs) {
             throw "robocopy failed with exit $LASTEXITCODE"
         }
         
-        # Write mode.txt inside staging directory
+        # Write mode.txt inside staging directory (use ascii to avoid BOM in PowerShell 5.1)
         $modeText = $job.Mode.ToUpper()
-        Set-Content -Path (Join-Path $stage "mode.txt") -Value $modeText -Encoding Utf8
+        Set-Content -Path (Join-Path $stage "mode.txt") -Value $modeText -Encoding ascii
         
         # Pack staging to target ZIP using tar.exe
         Invoke-PackToZip -SourceDir $stage -DestZip $zipPath

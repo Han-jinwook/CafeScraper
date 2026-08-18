@@ -39,6 +39,8 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
+render_main_top_nav(active="app")
+
 # 커스텀 CSS: 판매용 UI 톤 정리(기능 영향 없음)
 st.markdown("""
 <style>
@@ -890,8 +892,6 @@ if "cafe_connect_side_mode" not in st.session_state:
     st.session_state.cafe_connect_side_mode = "reset" if str(config.get("cafe_url", "") or "").strip() else "save"
 if "auto_login_after_reset_save_mode" not in st.session_state:
     st.session_state.auto_login_after_reset_save_mode = not bool(str(config.get("naver_id", "") or "").strip())
-
-render_main_top_nav(active="app")
 
 def _render_cafe_dashboard_header() -> None:
     _logo_path = Path(__file__).resolve().parent / "assets" / "CafeMonster_logo.png"
