@@ -148,9 +148,9 @@ def render_main_top_nav(*, active: str) -> None:
                 display: flex !important;
                 align-items: center !important;
             }}
-            /* 제목 헤더 컨테이너: 탭과의 여백 약 1cm 수준으로 축소 (50% 더 축소) */
+            /* 제목 헤더 컨테이너: 탭과의 여백 대폭 축소 */
             [class*="st-key-dashboard_header"] {{
-                margin-top: -3.75rem !important;
+                margin-top: -5.5rem !important;
                 margin-bottom: -1.0rem !important;
             }}
             [class*="st-key-{_TOP_NAV_CONTAINER_KEY}"] div[data-testid="column"] div[data-testid="stVerticalBlock"] {{
