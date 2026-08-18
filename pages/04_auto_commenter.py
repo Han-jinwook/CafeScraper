@@ -41,7 +41,7 @@ from app.utils.auth_helper import CafeMonsterAuthHelper
 from app.utils.app_version import read_app_version
 _APP_SEMVER = read_app_version()
 st.set_page_config(
-    page_title=f"{CafeMonsterAuthHelper.get_display_product_name()} v{_APP_SEMVER}",
+    page_title=f"카페 몬스터 [자동 댓글러] v{_APP_SEMVER}",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -771,7 +771,7 @@ def _render_commenter_dashboard_header() -> None:
                     render_logo_png(_logo_path, width_px=64)
                 with _hdr_title:
                     st.markdown(
-                        '<h2 style="margin: 0px; padding:0; line-height:1.2; font-size:1.15rem; color: #1e3a8a !important; font-weight: 700 !important;">자동 댓글러</h2>',
+                        '<h2 style="margin: 0px; padding:0; line-height:1.2; font-size:1.45rem; color: #1e3a8a !important; font-weight: 700 !important;">카페 몬스터 [자동 댓글러]</h2>',
                         unsafe_allow_html=True,
                     )
             with col_right:
@@ -826,7 +826,7 @@ def _render_commenter_dashboard_header() -> None:
                     render_logo_png(_logo_path, width_px=80)
                 with _hdr_title:
                     st.markdown(
-                        '<h2 style="margin: 0px; padding:0; line-height:1.2; font-size:1.35rem; color: #1e3a8a !important; font-weight: 700 !important;">자동 댓글러</h2>',
+                        '<h2 style="margin: 0px; padding:0; line-height:1.2; font-size:1.45rem; color: #1e3a8a !important; font-weight: 700 !important;">카페 몬스터 [자동 댓글러]</h2>',
                         unsafe_allow_html=True,
                     )
             with col_right:
