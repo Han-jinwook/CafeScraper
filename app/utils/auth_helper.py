@@ -25,6 +25,7 @@ SUPABASE_KEY = "sb_publishable_jUwQ1BWvG6F2H9GyELUoFw_mUOHbgWD"
 class CafeMonsterAuthHelper:
     _cached_active_products = None
     _cached_limits = {}  # product_id -> limit
+    _cached_exp_dates = {}  # product_id -> exp_date_str
     _hwid = None
 
     @classmethod
@@ -142,6 +143,7 @@ class CafeMonsterAuthHelper:
                     if prod:
                         active_prods.add(prod)
                         limits[prod] = limit
+                        cls._cached_exp_dates[prod] = exp
                         
                         # 실행일자(first_run_date) 누락 시 백필 수행
                         if not first_run and key:
@@ -199,6 +201,38 @@ class CafeMonsterAuthHelper:
         if product_id in active:
             return True, cls._cached_limits.get(product_id)
         return False, None
+
+    @classmethod
+    def get_license_badge_html(cls, product_id: str) -> str:
+        """해당 제품의 라이선스 플랜 및 만료 기간 배지 HTML을 생성합니다."""
+        active = cls.get_active_products()
+        if product_id not in active:
+            return '<div style="margin-top:4px;"><span style="font-size:0.80rem; background:#fee2e2; color:#991b1b; padding:2px 8px; border-radius:4px; font-weight:600; border:1px solid #fca5a5;">🔒 무료 체험판 (50건 제한)</span></div>'
+        
+        limit = cls._cached_limits.get(product_id)
+        exp_str = cls._cached_exp_dates.get(product_id)
+        
+        plan_name = "정액 라이선스 (Pro)"
+        if limit:
+            plan_name = f"라이선스 ({limit:,}건 수집)"
+            
+        badge_html = f'<div style="margin-top:4px; display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap;"><span style="font-size:0.80rem; background:#dcfce7; color:#166534; padding:2px 8px; border-radius:4px; font-weight:600; border:1px solid #86efac;">✅ {plan_name}</span>'
+        
+        if exp_str:
+            try:
+                exp_clean = exp_str.replace('Z', '+00:00')
+                exp_dt = datetime.datetime.fromisoformat(exp_clean)
+                now_dt = datetime.datetime.now(datetime.timezone.utc)
+                diff_days = (exp_dt - now_dt).days
+                date_formatted = exp_dt.strftime("%Y.%m.%d")
+                if diff_days >= 0:
+                    badge_html += f'<span style="font-size:0.80rem; background:#e0f2fe; color:#075985; padding:2px 8px; border-radius:4px; font-weight:600; border:1px solid #7dd3fc;">📅 만료일: {date_formatted} (D-{diff_days}일)</span>'
+                else:
+                    badge_html += f'<span style="font-size:0.80rem; background:#fee2e2; color:#991b1b; padding:2px 8px; border-radius:4px; font-weight:600; border:1px solid #fca5a5;">⚠️ 만료됨 ({date_formatted})</span>'
+            except Exception:
+                pass
+        badge_html += '</div>'
+        return badge_html
 
     @classmethod
     def get_display_product_name(cls) -> str:
