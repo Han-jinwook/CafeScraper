@@ -9,7 +9,7 @@ import subprocess
 import hashlib
 import uuid
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 
 class MonsterAuth:
     """
@@ -111,10 +111,10 @@ class MonsterAuth:
                 # 기기는 올바르게 바인딩되어 있으나 실행일자(first_run_date) 기록이 누락된 경우 동기화 보완
                 first_run_date = license_info.get("first_run_date")
                 if not first_run_date:
-                    self._update_first_run_date()
+                    self._update_first_run_date(license_info)
             else:
-                # 바인딩되지 않은 키(unused)인 경우 현재 HWID를 강제 등록하고 활성화(active) 처리
-                success = self._bind_device()
+                # 바인딩되지 않은 키(unused)인 경우 현재 HWID를 강제 등록하고 첫 실행일 기준 만료일 자동 재계산
+                success = self._bind_device(license_info)
                 if not success:
                     return False, "기기 바인딩 등록 중 오류가 발생했습니다.", 0
 
@@ -125,24 +125,55 @@ class MonsterAuth:
         except Exception as e:
             return False, f"서버 통신 오류가 발생했습니다: {str(e)}", 0
 
-    def _bind_device(self):
-        """현재 HWID를 Supabase에 영구 바인딩하고 첫 실행일자를 기록합니다."""
+    def _bind_device(self, license_info=None):
+        """현재 HWID를 Supabase에 영구 바인딩하고 첫 실행일자 및 만료일자를 첫 실행 시점 기준으로 재계산하여 기록합니다."""
         url = f"{self.supabase_url.rstrip('/')}/rest/v1/licenses?serial_key=eq.{self.license_key}"
+        now_dt = datetime.utcnow()
         payload = {
             "bound_value": self.hwid,
             "status": "active",
-            "first_run_date": datetime.utcnow().isoformat()
+            "first_run_date": now_dt.isoformat()
         }
+
+        if license_info:
+            lic_type = license_info.get("license_type", "")
+            months_to_add = 1
+            if lic_type == "3M":
+                months_to_add = 3
+            elif lic_type == "6M":
+                months_to_add = 6
+            elif lic_type == "1Y":
+                months_to_add = 12
+
+            # 첫 실행 시점 기준으로 만료일자 재계산 (+30일 * 개월수)
+            new_expire = now_dt + timedelta(days=30 * months_to_add)
+            payload["expire_date"] = new_expire.isoformat()
+
         try:
             res = requests.patch(url, headers=self._get_headers(), json=payload, timeout=self.timeout)
             return res.status_code in [200, 201, 204]
         except Exception:
             return False
 
-    def _update_first_run_date(self):
-        """실행일자(first_run_date) 기록이 누락된 경우 현재 서버 시간에 맞춰 업데이트합니다."""
+    def _update_first_run_date(self, license_info=None):
+        """실행일자(first_run_date) 기록이 누락된 경우 현재 서버 시간에 맞춰 첫 실행일 및 만료일을 업데이트합니다."""
         url = f"{self.supabase_url.rstrip('/')}/rest/v1/licenses?serial_key=eq.{self.license_key}"
-        payload = {"first_run_date": datetime.utcnow().isoformat()}
+        now_dt = datetime.utcnow()
+        payload = {"first_run_date": now_dt.isoformat()}
+
+        if license_info:
+            lic_type = license_info.get("license_type", "")
+            months_to_add = 1
+            if lic_type == "3M":
+                months_to_add = 3
+            elif lic_type == "6M":
+                months_to_add = 6
+            elif lic_type == "1Y":
+                months_to_add = 12
+
+            new_expire = now_dt + timedelta(days=30 * months_to_add)
+            payload["expire_date"] = new_expire.isoformat()
+
         try:
             requests.patch(url, headers=self._get_headers(), json=payload, timeout=self.timeout)
         except Exception:
