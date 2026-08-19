@@ -212,9 +212,23 @@ class CafeMonsterAuthHelper:
         limit = cls._cached_limits.get(product_id)
         exp_str = cls._cached_exp_dates.get(product_id)
         
-        plan_name = "STANDARD Pro (무제한)"
+        is_premium = False
+        if exp_str:
+            try:
+                exp_clean = exp_str.replace('Z', '+00:00')
+                exp_dt = datetime.datetime.fromisoformat(exp_clean)
+                now_dt = datetime.datetime.now(datetime.timezone.utc)
+                if (exp_dt - now_dt).days > 45:
+                    is_premium = True
+            except Exception:
+                pass
+
         if limit:
-            plan_name = f"DELUXE ({limit:,}건 제한)"
+            plan_name = f"STANDARD (1개월 / {limit:,}건 제한)"
+        elif is_premium:
+            plan_name = "PREMIUM (3개월 / 무제한)"
+        else:
+            plan_name = "DELUXE (1개월 / 무제한)"
             
         badge_html = f'<div style="margin-top:4px; display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap;"><span style="font-size:0.80rem; background:#dcfce7; color:#166534; padding:2px 8px; border-radius:4px; font-weight:600; border:1px solid #86efac;">✅ {plan_name}</span>'
         
