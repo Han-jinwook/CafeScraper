@@ -36,7 +36,7 @@ datas = []
 binaries = []
 hiddenimports = []
 
-for pkg in ('streamlit', 'altair', 'pyarrow', 'pandas', 'customtkinter'):
+for pkg in ('streamlit', 'altair', 'pyarrow', 'pandas', 'customtkinter', 'pythonnet', 'clr_loader'):
     tmp_ret = collect_all(pkg)
     datas += tmp_ret[0]
     binaries += tmp_ret[1]

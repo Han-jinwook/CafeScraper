@@ -237,6 +237,9 @@ def _try_webview(url: str, exe_dir: str, child_proc: subprocess.Popen) -> None:
                 )
         except OSError:
             pass
+        _boot_log(exe_dir, f"기본 브라우저 오픈 폴백: {url}")
+        import webbrowser
+        webbrowser.open(url)
 
 
 def main() -> None:
