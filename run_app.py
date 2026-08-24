@@ -324,6 +324,8 @@ def main() -> None:
     env["STREAMLIT_SERVER_ADDRESS"] = "127.0.0.1"
 
     child = _popen_streamlit_child(port, exe_dir, env)
+    import atexit
+    atexit.register(lambda: _terminate_process(child, exe_dir))
     try:
         _boot_log(exe_dir, f"Streamlit 자식 PID={child.pid}")
     except Exception:
