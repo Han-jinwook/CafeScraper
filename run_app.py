@@ -269,14 +269,33 @@ def main() -> None:
                 dl_win.title("업데이트 다운로드")
                 dl_win.geometry("300x100")
                 dl_win.attributes("-topmost", True)
-                tk.Label(dl_win, text=f"v{update_info['version']} 다운로드 중입니다...\n\n(약 1~2분 소요될 수 있습니다)").pack(expand=True)
+                lbl = tk.Label(dl_win, text=f"v{update_info['version']} 다운로드 중입니다...\n\n(약 10~20초 소요됩니다)", font=("맑은 고딕", 10))
+                lbl.pack(expand=True)
                 dl_win.update()
 
+                import threading
+                dl_success = False
                 temp_zip = os.path.join(exe_dir, "cafescraper_update.zip")
-                if MonsterUpdater.download_update(update_info["download_url"], temp_zip):
-                    _boot_log(exe_dir, "다운로드 완료. 업데이트 적용 및 재시작...")
-                    tk.Label(dl_win, text="다운로드 완료! 재시작합니다...", fg="blue").pack()
+
+                def _do_dl():
+                    nonlocal dl_success
+                    dl_success = MonsterUpdater.download_update(update_info["download_url"], temp_zip)
+
+                t_dl = threading.Thread(target=_do_dl, daemon=True)
+                t_dl.start()
+
+                dot_count = 0
+                while t_dl.is_alive():
+                    dot_count = (dot_count + 1) % 4
+                    lbl.config(text=f"v{update_info['version']} 최신 파일 패치 다운로드 중{'.' * dot_count}\n\n잠시만 기다려 주세요.")
                     dl_win.update()
+                    time.sleep(0.3)
+
+                if dl_success:
+                    _boot_log(exe_dir, "다운로드 완료. 업데이트 적용 및 재시작...")
+                    lbl.config(text="다운로드 완료! 업데이트를 적용하고 재시작합니다...", fg="blue")
+                    dl_win.update()
+                    time.sleep(1.0)
                     MonsterUpdater.apply_update_and_restart(temp_zip)
                     sys.exit(0)
                 else:

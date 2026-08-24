@@ -29,6 +29,49 @@ class CafeMonsterAuthHelper:
     _hwid = None
 
     @classmethod
+    def get_current_product_id(cls) -> str:
+        """현재 실행 중인 에디션(CafeCrawler, EventStats, AutoComment)의 product_id를 식별합니다."""
+        try:
+            exe_dir = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else os.path.dirname(os.path.abspath(__file__))
+            mode_file = os.path.join(exe_dir, "mode.txt")
+            if os.path.exists(mode_file):
+                with open(mode_file, "r", encoding="utf-8") as f:
+                    mode = f.read().strip().upper()
+                    if mode == "PRO_CAFECRAWLER": return "CafeCrawler"
+                    if mode == "PRO_EVENTSTATS": return "EventStats"
+                    if mode == "PRO_AUTOCOMMENT": return "AutoComment"
+                    if mode == "TRIAL": return "CafeCrawler"
+        except Exception:
+            pass
+        exe_stem = os.path.splitext(os.path.basename(sys.executable))[0]
+        if "EventStats" in exe_stem: return "EventStats"
+        if "AutoComment" in exe_stem: return "AutoComment"
+        if "CafeCrawler" in exe_stem: return "CafeCrawler"
+        return "CafeCrawler"
+
+    @classmethod
+    def get_user_settings_path(cls) -> str:
+        prod_id = cls.get_current_product_id()
+        if sys.platform == "win32":
+            p = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "MarketingMonster", prod_id)
+        else:
+            p = os.path.join(os.path.expanduser("~"), ".config", "MarketingMonster", prod_id)
+        os.makedirs(p, exist_ok=True)
+        return p
+
+    @classmethod
+    def get_license_file_path(cls) -> str:
+        return os.path.join(cls.get_user_settings_path(), "license.dat")
+
+    @classmethod
+    def get_cache_file_path(cls) -> str:
+        return os.path.join(cls.get_user_settings_path(), "license_cache.json")
+
+    @classmethod
+    def get_trial_settings_file_path(cls) -> str:
+        return os.path.join(cls.get_user_settings_path(), "trial_settings.json")
+
+    @classmethod
     def get_hwid(cls) -> str:
         if not cls._hwid:
             try:
@@ -37,14 +80,15 @@ class CafeMonsterAuthHelper:
             except Exception as e:
                 logger.error(f"Error fetching HWID via MonsterAuth: {e}")
                 cls._hwid = "UNKNOWN_HWID"
-        return cls._hwid
+            return cls._hwid
 
     @classmethod
     def load_saved_keys(cls) -> list[str]:
-        if not os.path.exists(LICENSE_FILE):
+        lic_file = cls.get_license_file_path()
+        if not os.path.exists(lic_file):
             return []
         try:
-            with open(LICENSE_FILE, "r", encoding="utf-8") as f:
+            with open(lic_file, "r", encoding="utf-8") as f:
                 return [line.strip() for line in f if line.strip()]
         except Exception:
             return []
@@ -53,11 +97,12 @@ class CafeMonsterAuthHelper:
     def save_key(cls, key: str) -> bool:
         """새 라이선스 키를 로컬 파일에 추가 저장합니다."""
         try:
+            lic_file = cls.get_license_file_path()
             keys = cls.load_saved_keys()
             if key not in keys:
                 keys.append(key)
-                os.makedirs(os.path.dirname(LICENSE_FILE), exist_ok=True)
-                with open(LICENSE_FILE, "w", encoding="utf-8") as f:
+                os.makedirs(os.path.dirname(lic_file), exist_ok=True)
+                with open(lic_file, "w", encoding="utf-8") as f:
                     for k in keys:
                         f.write(f"{k}\n")
             # 캐시 무효화
@@ -392,13 +437,12 @@ class CafeMonsterAuthHelper:
             return False, f"서버 연결 오류: {e}"
 
     @classmethod
-    def check_license_status(cls) -> bool:
-        """현재 HWID에 바인딩된 유효 라이선스가 1개라도 존재하는지 확인합니다.
-        캐시가 유효한 경우 캐시를 사용하여 즉시 반환합니다 (창 자동 닫기용)."""
-        # 캐시를 지우지 않고 기존 캐시를 먼저 활용하여 빠르게 통과시킴
-        # (validate_and_bind_key 호출 시 캐시가 갱신되므로 안전)
+    def check_license_status(cls, target_product_id: str = None) -> bool:
+        """현재 실행 중인 에디션(target_product_id)의 유효 라이선스가 바인딩되어 있는지 확인합니다."""
+        if not target_product_id:
+            target_product_id = cls.get_current_product_id()
         active = cls.get_active_products()
-        return len(active) > 0
+        return target_product_id in active
 
     @classmethod
     def start_trial(cls) -> tuple[bool, str]:
