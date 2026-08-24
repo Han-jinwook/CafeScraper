@@ -77,13 +77,12 @@ $sleepSec = 3
 Write-Host "Waiting ${sleepSec}s before ZIP (avoid file lock on fresh build)..."
 Start-Sleep -Seconds $sleepSec
 
-# Define the package jobs to run
-# Format: @{ Name = "output_zip"; Mode = "PRO_CAFECRAWLER" | "PRO_EVENTSTATS" | "PRO_AUTOCOMMENT" | "TRIAL" }
+# Format: @{ Name = "output_zip"; Mode = "PRO_CAFECRAWLER" | "PRO_EVENTSTATS" | "PRO_AUTOCOMMENT" | "TRIAL"; ExeName = "CafeCrawler.exe" | ... }
 $jobs = @(
-    @{ Name = "CafeCrawler-Pro.zip"; Mode = "PRO_CAFECRAWLER" },
-    @{ Name = "EventStats-Pro.zip"; Mode = "PRO_EVENTSTATS" },
-    @{ Name = "AutoComment-Pro.zip"; Mode = "PRO_AUTOCOMMENT" },
-    @{ Name = "CafeMonster-Trial.zip"; Mode = "TRIAL" }
+    @{ Name = "CafeCrawler-Pro.zip"; Mode = "PRO_CAFECRAWLER"; ExeName = "CafeCrawler.exe" },
+    @{ Name = "EventStats-Pro.zip"; Mode = "PRO_EVENTSTATS"; ExeName = "EventStats.exe" },
+    @{ Name = "AutoComment-Pro.zip"; Mode = "PRO_AUTOCOMMENT"; ExeName = "AutoComment.exe" },
+    @{ Name = "CafeMonster-Trial.zip"; Mode = "TRIAL"; ExeName = "CafeMonster-Trial.exe" }
 )
 
 # Package each job
@@ -112,6 +111,13 @@ foreach ($job in $jobs) {
         $modeText = $job.Mode.ToUpper()
         Set-Content -Path (Join-Path $stage "mode.txt") -Value $modeText -Encoding ascii
         
+        # Rename CafeScraper.exe to custom product exe name (e.g. CafeCrawler.exe, EventStats.exe, etc.)
+        $oldExe = Join-Path $stage "CafeScraper.exe"
+        $targetExeName = $job.ExeName
+        if (Test-Path -LiteralPath $oldExe) {
+            Rename-Item -Path $oldExe -NewName $targetExeName -Force
+        }
+        
         # Pack staging to target ZIP using tar.exe
         Invoke-PackToZip -SourceDir $stage -DestZip $zipPath
         
@@ -127,13 +133,13 @@ foreach ($job in $jobs) {
         try {
             $hasExe = $false
             foreach ($entry in $zipRead.Entries) {
-                if ($entry.Name -eq 'CafeScraper.exe') {
+                if ($entry.Name -eq $targetExeName) {
                     $hasExe = $true
                     break
                 }
             }
             if (-not $hasExe) {
-                Write-Error "ZIP($zipName) 안에 CafeScraper.exe 가 없습니다."
+                Write-Error "ZIP($zipName) 안에 $targetExeName 가 없습니다."
                 exit 4
             }
         } finally {
