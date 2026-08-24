@@ -193,7 +193,6 @@ class CafeMonsterAuthHelper:
                         # 실행일자(first_run_date) 누락 시 백필 수행
                         if not first_run and key:
                             try:
-                                from 라이브러리.auth import MonsterAuth
                                 auth_prod = MonsterAuth(
                                     product_id=prod,
                                     license_key=key,
@@ -467,10 +466,11 @@ class CafeMonsterAuthHelper:
     # --- 로컬 캐시 관리 헬퍼 ---
     @classmethod
     def _read_local_cache(cls) -> dict | None:
-        if not os.path.exists(CACHE_FILE):
+        cache_path = cls.get_cache_file_path()
+        if not os.path.exists(cache_path):
             return None
         try:
-            with open(CACHE_FILE, "r", encoding="utf-8") as f:
+            with open(cache_path, "r", encoding="utf-8") as f:
                 cache = json.load(f)
             # 유효 기한 30일 체크 (1회 인증 후 30일간 자동 통과)
             updated_at = cache.get("updated_at", 0)
@@ -488,8 +488,9 @@ class CafeMonsterAuthHelper:
                 "limits": limits,
                 "updated_at": time.time()
             }
-            os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
-            with open(CACHE_FILE, "w", encoding="utf-8") as f:
+            cache_path = cls.get_cache_file_path()
+            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+            with open(cache_path, "w", encoding="utf-8") as f:
                 json.dump(cache, f, ensure_ascii=False, indent=2)
         except Exception:
             pass

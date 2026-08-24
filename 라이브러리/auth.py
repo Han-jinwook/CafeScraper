@@ -137,16 +137,7 @@ class MonsterAuth:
 
         if license_info:
             lic_type = license_info.get("license_type", "")
-            months_to_add = 1
-            if lic_type == "3M":
-                months_to_add = 3
-            elif lic_type == "6M":
-                months_to_add = 6
-            elif lic_type == "1Y":
-                months_to_add = 12
-
-            # 첫 실행 시점 기준으로 만료일자 재계산 (+30일 * 개월수)
-            new_expire = now_dt + timedelta(days=30 * months_to_add)
+            new_expire = self._calculate_expire_date(now_dt, lic_type)
             payload["expire_date"] = new_expire.isoformat()
 
         try:
@@ -163,21 +154,35 @@ class MonsterAuth:
 
         if license_info:
             lic_type = license_info.get("license_type", "")
-            months_to_add = 1
-            if lic_type == "3M":
-                months_to_add = 3
-            elif lic_type == "6M":
-                months_to_add = 6
-            elif lic_type == "1Y":
-                months_to_add = 12
-
-            new_expire = now_dt + timedelta(days=30 * months_to_add)
+            new_expire = self._calculate_expire_date(now_dt, lic_type)
             payload["expire_date"] = new_expire.isoformat()
 
         try:
             requests.patch(url, headers=self._get_headers(), json=payload, timeout=self.timeout)
         except Exception:
             pass
+
+    def _calculate_expire_date(self, start_dt, license_type):
+        """한국인 정서 기준 달력 월 만료일 계산 (8/24 시작 -> 3개월: 11/23 23:59:59)."""
+        months_to_add = 1
+        if license_type in ["3M", "PREMIUM"]:
+            months_to_add = 3
+        elif license_type == "6M":
+            months_to_add = 6
+        elif license_type == "1Y":
+            months_to_add = 12
+        elif license_type == "LIFETIME":
+            return start_dt.replace(year=start_dt.year + 99)
+
+        import calendar
+        year = start_dt.year + (start_dt.month + months_to_add - 1) // 12
+        month = (start_dt.month + months_to_add - 1) % 12 + 1
+        max_day = calendar.monthrange(year, month)[1]
+        day = min(start_dt.day, max_day)
+        
+        target_dt = start_dt.replace(year=year, month=month, day=day, hour=23, minute=59, second=59)
+        expire_dt = target_dt - timedelta(days=1)
+        return expire_dt
 
     def _update_status(self, new_status):
         """라이선스 상태 값을 원격으로 변경합니다."""
