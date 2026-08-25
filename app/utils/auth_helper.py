@@ -26,6 +26,7 @@ class CafeMonsterAuthHelper:
     _cached_active_products = None
     _cached_limits = {}  # product_id -> limit
     _cached_exp_dates = {}  # product_id -> exp_date_str
+    _cached_license_types = {}  # product_id -> license_type_str
     _hwid = None
 
     @classmethod
@@ -151,6 +152,8 @@ class CafeMonsterAuthHelper:
         if local_cache is not None:
             cls._cached_active_products = set(local_cache.get("products", []))
             cls._cached_limits = local_cache.get("limits", {})
+            cls._cached_exp_dates = local_cache.get("exp_dates", {})
+            cls._cached_license_types = local_cache.get("license_types", {})
             return cls._cached_active_products
 
         # 2. 서버 및 키 검증
@@ -165,7 +168,7 @@ class CafeMonsterAuthHelper:
         }
 
         # 2.1 HWID에 바인딩된 활성 라이선스들 조회 (REST API 0.5초 타임아웃 제한)
-        url = f"{SUPABASE_URL.rstrip('/')}/rest/v1/licenses?bound_value=eq.{hwid}&status=eq.active&select=product_id,expire_date,collection_limit,serial_key,first_run_date"
+        url = f"{SUPABASE_URL.rstrip('/')}/rest/v1/licenses?bound_value=eq.{hwid}&status=eq.active&select=product_id,expire_date,collection_limit,serial_key,first_run_date,license_type"
         try:
             res = requests.get(url, headers=headers, timeout=3.0)
             if res.status_code == 200:
@@ -176,6 +179,7 @@ class CafeMonsterAuthHelper:
                     limit = item.get("collection_limit")
                     key = item.get("serial_key")
                     first_run = item.get("first_run_date")
+                    l_type = item.get("license_type")
                     # 만료일 체크
                     if exp:
                         try:
@@ -189,6 +193,7 @@ class CafeMonsterAuthHelper:
                         active_prods.add(prod)
                         limits[prod] = limit
                         cls._cached_exp_dates[prod] = exp
+                        cls._cached_license_types[prod] = l_type
                         
                         # 실행일자(first_run_date) 누락 시 백필 수행
                         if not first_run and key:
@@ -210,12 +215,14 @@ class CafeMonsterAuthHelper:
         for key in saved_keys:
             try:
                 # 저장된 키가 어떤 product_id 용인지 먼저 조회
-                url_key = f"{SUPABASE_URL.rstrip('/')}/rest/v1/licenses?serial_key=eq.{key}&select=product_id"
+                url_key = f"{SUPABASE_URL.rstrip('/')}/rest/v1/licenses?serial_key=eq.{key}&select=product_id,license_type,expire_date"
                 res_key = requests.get(url_key, headers=headers, timeout=3.0)
                 if res_key.status_code == 200:
                     key_data = res_key.json()
                     if key_data:
                         prod_id = key_data[0].get("product_id")
+                        l_type = key_data[0].get("license_type")
+                        exp = key_data[0].get("expire_date")
                         if prod_id and prod_id not in active_prods:
                             # 해당 제품 ID로 바인딩 및 인증 수행
                             auth_prod = MonsterAuth(
@@ -228,6 +235,8 @@ class CafeMonsterAuthHelper:
                             if success:
                                 active_prods.add(prod_id)
                                 limits[prod_id] = col_limit
+                                cls._cached_license_types[prod_id] = l_type
+                                cls._cached_exp_dates[prod_id] = exp
             except Exception as e:
                 logger.error(f"Failed to validate key {key}: {e}")
 
@@ -255,40 +264,41 @@ class CafeMonsterAuthHelper:
         
         limit = cls._cached_limits.get(product_id)
         exp_str = cls._cached_exp_dates.get(product_id)
+        lic_type = (cls._cached_license_types.get(product_id) or "").upper()
         
-        is_premium = False
+        diff_days = None
+        date_formatted = None
         if exp_str:
             try:
                 exp_clean = exp_str.replace('Z', '+00:00')
                 exp_dt = datetime.datetime.fromisoformat(exp_clean)
-                now_dt = datetime.datetime.now(datetime.timezone.utc)
-                if (exp_dt - now_dt).days > 45:
-                    is_premium = True
+                # KST 기준 변환 (UTC+9)
+                kst_tz = datetime.timezone(datetime.timedelta(hours=9))
+                exp_dt_kst = exp_dt.astimezone(kst_tz)
+                now_kst = datetime.datetime.now(kst_tz)
+                diff_days = (exp_dt_kst.date() - now_kst.date()).days
+                date_formatted = exp_dt_kst.strftime("%Y.%m.%d")
             except Exception:
                 pass
 
         if limit:
             plan_name = f"STANDARD (1개월 / {limit:,}건 제한)"
-        elif is_premium:
+        elif lic_type in ["3M", "PREMIUM"] or (diff_days is not None and diff_days > 45):
             plan_name = "PREMIUM (3개월 / 무제한)"
+        elif lic_type in ["6M"]:
+            plan_name = "6M (6개월 / 무제한)"
+        elif lic_type in ["1Y"]:
+            plan_name = "1Y (1년 / 무제한)"
         else:
             plan_name = "DELUXE (1개월 / 무제한)"
             
         badge_html = f'<div style="margin-top:4px; display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap;"><span style="font-size:0.80rem; background:#dcfce7; color:#166534; padding:2px 8px; border-radius:4px; font-weight:600; border:1px solid #86efac;">✅ {plan_name}</span>'
         
-        if exp_str:
-            try:
-                exp_clean = exp_str.replace('Z', '+00:00')
-                exp_dt = datetime.datetime.fromisoformat(exp_clean)
-                now_dt = datetime.datetime.now(datetime.timezone.utc)
-                diff_days = (exp_dt - now_dt).days
-                date_formatted = exp_dt.strftime("%Y.%m.%d")
-                if diff_days >= 0:
-                    badge_html += f'<span style="font-size:0.80rem; background:#e0f2fe; color:#075985; padding:2px 8px; border-radius:4px; font-weight:600; border:1px solid #7dd3fc;">📅 만료일: {date_formatted} (D-{diff_days}일)</span>'
-                else:
-                    badge_html += f'<span style="font-size:0.80rem; background:#fee2e2; color:#991b1b; padding:2px 8px; border-radius:4px; font-weight:600; border:1px solid #fca5a5;">⚠️ 만료됨 ({date_formatted})</span>'
-            except Exception:
-                pass
+        if date_formatted and diff_days is not None:
+            if diff_days >= 0:
+                badge_html += f'<span style="font-size:0.80rem; background:#e0f2fe; color:#075985; padding:2px 8px; border-radius:4px; font-weight:600; border:1px solid #7dd3fc;">📅 만료일: {date_formatted} (D-{diff_days}일)</span>'
+            else:
+                badge_html += f'<span style="font-size:0.80rem; background:#fee2e2; color:#991b1b; padding:2px 8px; border-radius:4px; font-weight:600; border:1px solid #fca5a5;">⚠️ 만료됨 ({date_formatted})</span>'
         badge_html += '</div>'
         return badge_html
 
@@ -486,6 +496,8 @@ class CafeMonsterAuthHelper:
             cache = {
                 "products": list(products),
                 "limits": limits,
+                "exp_dates": cls._cached_exp_dates,
+                "license_types": cls._cached_license_types,
                 "updated_at": time.time()
             }
             cache_path = cls.get_cache_file_path()

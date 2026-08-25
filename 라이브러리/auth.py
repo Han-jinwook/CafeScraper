@@ -9,7 +9,7 @@ import subprocess
 import hashlib
 import uuid
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 class MonsterAuth:
     """
@@ -163,7 +163,7 @@ class MonsterAuth:
             pass
 
     def _calculate_expire_date(self, start_dt, license_type):
-        """한국인 정서 기준 달력 월 만료일 계산 (8/24 시작 -> 3개월: 11/23 23:59:59)."""
+        """한국인 정서 기준 달력 월 만료일 계산 (8/24 시작 -> 3개월: 11/23 23:59:59 KST = 14:59:59 UTC)."""
         months_to_add = 1
         if license_type in ["3M", "PREMIUM"]:
             months_to_add = 3
@@ -175,14 +175,21 @@ class MonsterAuth:
             return start_dt.replace(year=start_dt.year + 99)
 
         import calendar
-        year = start_dt.year + (start_dt.month + months_to_add - 1) // 12
-        month = (start_dt.month + months_to_add - 1) % 12 + 1
+        kst_tz = timezone(timedelta(hours=9))
+        if start_dt.tzinfo is None:
+            start_kst = start_dt.replace(tzinfo=timezone.utc).astimezone(kst_tz)
+        else:
+            start_kst = start_dt.astimezone(kst_tz)
+
+        year = start_kst.year + (start_kst.month + months_to_add - 1) // 12
+        month = (start_kst.month + months_to_add - 1) % 12 + 1
         max_day = calendar.monthrange(year, month)[1]
-        day = min(start_dt.day, max_day)
+        day = min(start_kst.day, max_day)
         
-        target_dt = start_dt.replace(year=year, month=month, day=day, hour=23, minute=59, second=59)
-        expire_dt = target_dt - timedelta(days=1)
-        return expire_dt
+        target_kst = start_kst.replace(year=year, month=month, day=day, hour=23, minute=59, second=59, microsecond=0)
+        # 당일 시작 기준 1일 전 23:59:59 KST (8/24 -> 11/23 23:59:59 KST)
+        expire_kst = target_kst - timedelta(days=1)
+        return expire_kst.astimezone(timezone.utc)
 
     def _update_status(self, new_status):
         """라이선스 상태 값을 원격으로 변경합니다."""

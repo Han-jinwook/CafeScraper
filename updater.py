@@ -123,14 +123,16 @@ class MonsterUpdater:
                 return False
             
             bat_content = f"""@echo off
-timeout /t 2 /nobreak > nul
 taskkill /f /im "{os.path.basename(current_exe)}" > nul 2>&1
 taskkill /f /im "CafeScraper.exe" > nul 2>&1
+taskkill /f /im "CafeCrawler.exe" > nul 2>&1
+taskkill /f /im "EventStats.exe" > nul 2>&1
+taskkill /f /im "AutoComment.exe" > nul 2>&1
 timeout /t 1 /nobreak > nul
 
 if exist "{app_dir}\\_internal" rmdir /s /q "{app_dir}\\_internal"
-xcopy /E /Y /C /Q "{os.path.join(app_dir, extracted_folder, '*')}" "{app_dir}\\"
-rmdir /s /q "{os.path.join(app_dir, extracted_folder)}"
+robocopy "{os.path.join(app_dir, extracted_folder)}" "{app_dir}" /E /MOVE /NFL /NDL /NJH /NJS > nul 2>&1
+if exist "{os.path.join(app_dir, 'monster_update_temp')}" rmdir /s /q "{os.path.join(app_dir, 'monster_update_temp')}" > nul 2>&1
 start "" "{os.path.join(app_dir, extracted_exe_name)}"
 del "%~f0"
 """
