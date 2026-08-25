@@ -249,59 +249,14 @@ def main() -> None:
     base_dir = get_base_dir()
     setup_logging(exe_dir)
 
-    # 1. 자동 업데이트 확인
+    # 1. 자동 업데이트 확인 (Modern CustomTkinter GUI)
     try:
         from updater import MonsterUpdater
         update_info = MonsterUpdater.check_for_updates()
         if update_info:
-            _boot_log(exe_dir, f"새 버전 발견: {update_info['version']}. 다운로드 중...")
-            import tkinter as tk
-            from tkinter import messagebox
-            root_tk = tk.Tk()
-            root_tk.withdraw()
-            if messagebox.askyesno(
-                "업데이트 알림",
-                f"새로운 버전({update_info['version']})이 출시되었습니다.\n업데이트를 다운로드하고 프로그램을 재시작하시겠습니까?",
-                parent=root_tk
-            ):
-                # 다운로드 상태창 띄우기
-                dl_win = tk.Toplevel(root_tk)
-                dl_win.title("업데이트 다운로드")
-                dl_win.geometry("300x100")
-                dl_win.attributes("-topmost", True)
-                lbl = tk.Label(dl_win, text=f"v{update_info['version']} 다운로드 중입니다...\n\n(약 10~20초 소요됩니다)", font=("맑은 고딕", 10))
-                lbl.pack(expand=True)
-                dl_win.update()
-
-                import threading
-                dl_success = False
-                temp_zip = os.path.join(exe_dir, "cafescraper_update.zip")
-
-                def _do_dl():
-                    nonlocal dl_success
-                    dl_success = MonsterUpdater.download_update(update_info["download_url"], temp_zip)
-
-                t_dl = threading.Thread(target=_do_dl, daemon=True)
-                t_dl.start()
-
-                dot_count = 0
-                while t_dl.is_alive():
-                    dot_count = (dot_count + 1) % 4
-                    lbl.config(text=f"v{update_info['version']} 최신 파일 패치 다운로드 중{'.' * dot_count}\n\n잠시만 기다려 주세요.")
-                    dl_win.update()
-                    time.sleep(0.3)
-
-                if dl_success:
-                    _boot_log(exe_dir, "다운로드 완료. 업데이트 적용 및 재시작...")
-                    lbl.config(text="다운로드 완료! 업데이트를 적용하고 재시작합니다...", fg="blue")
-                    dl_win.update()
-                    time.sleep(1.0)
-                    MonsterUpdater.apply_update_and_restart(temp_zip)
-                    sys.exit(0)
-                else:
-                    dl_win.destroy()
-                    messagebox.showerror("업데이트 실패", "업데이트 파일 다운로드에 실패했습니다.", parent=root_tk)
-            root_tk.destroy()
+            _boot_log(exe_dir, f"새 버전 발견: {update_info['version']}. Modern Updater 실행...")
+            from updater_gui import run_update_flow
+            run_update_flow(update_info, exe_dir)
     except Exception as update_err:
         _boot_log(exe_dir, f"업데이트 감지 중 오류 발생: {update_err}")
 
