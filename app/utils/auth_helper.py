@@ -151,17 +151,38 @@ class CafeMonsterAuthHelper:
 
     @classmethod
     def get_active_products(cls) -> set[str]:
-        """HWID에 바인딩된 활성 라이선스 및 저장된 키들을 검증하여 권한 셋을 반환합니다."""
+        """현재 실행 중인 단일 에디션(curr_prod) 전용 라이선스만 엄격히 검증하여 격리 반환합니다."""
         if cls._cached_active_products is not None:
             return cls._cached_active_products
 
-        # 1. 로컬 캐시 조회
+        curr_prod = cls.get_current_product_id()
+        
+        # 0. 무료 체험판 패키지(TRIAL)는 모든 탭이 체험판으로 실행됨
+        exe_dir = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else os.path.dirname(os.path.abspath(__file__))
+        mode_file = os.path.join(exe_dir, "mode.txt")
+        if os.path.exists(mode_file):
+            try:
+                with open(mode_file, "r", encoding="utf-8") as f:
+                    if f.read().strip().upper().startswith("TRIAL"):
+                        cls._cached_active_products = set()
+                        cls._cached_limits = {}
+                        cls._cached_exp_dates = {}
+                        cls._cached_license_types = {}
+                        return set()
+            except:
+                pass
+
+        # 1. 로컬 캐시 조회 (현재 에디션 전용 격리)
         local_cache = cls._read_local_cache()
         if local_cache is not None:
-            cls._cached_active_products = set(local_cache.get("products", []))
+            prods = set(local_cache.get("products", []))
             cls._cached_limits = local_cache.get("limits", {})
             cls._cached_exp_dates = local_cache.get("exp_dates", {})
             cls._cached_license_types = local_cache.get("license_types", {})
+            if curr_prod in prods:
+                cls._cached_active_products = {curr_prod}
+            else:
+                cls._cached_active_products = set()
             return cls._cached_active_products
 
         # 2. 서버 및 키 검증
@@ -175,8 +196,8 @@ class CafeMonsterAuthHelper:
             "Content-Type": "application/json"
         }
 
-        # 2.1 HWID에 바인딩된 활성 라이선스들 조회 (REST API 0.5초 타임아웃 제한)
-        url = f"{SUPABASE_URL.rstrip('/')}/rest/v1/licenses?bound_value=eq.{hwid}&status=eq.active&select=product_id,expire_date,collection_limit,serial_key,first_run_date,license_type"
+        # 2.1 HWID에 바인딩된 활성 라이선스 중 현재 실행 에디션(curr_prod)만 핀포인트 조회
+        url = f"{SUPABASE_URL.rstrip('/')}/rest/v1/licenses?bound_value=eq.{hwid}&product_id=eq.{curr_prod}&status=eq.active&select=product_id,expire_date,collection_limit,serial_key,first_run_date,license_type"
         try:
             res = requests.get(url, headers=headers, timeout=3.0)
             if res.status_code == 200:
@@ -197,7 +218,7 @@ class CafeMonsterAuthHelper:
                                 continue
                         except Exception:
                             pass
-                    if prod:
+                    if prod and prod == curr_prod:
                         active_prods.add(prod)
                         limits[prod] = limit
                         cls._cached_exp_dates[prod] = exp
@@ -218,11 +239,10 @@ class CafeMonsterAuthHelper:
         except Exception as e:
             logger.error(f"Failed to query active licenses by HWID: {e}")
 
-        # 2.2 저장된 키들 유효성 검사 및 바인딩 시도
+        # 2.2 저장된 키들 유효성 검사 및 바인딩 시도 (현재 에디션 키만 적용)
         saved_keys = cls.load_saved_keys()
         for key in saved_keys:
             try:
-                # 저장된 키가 어떤 product_id 용인지 먼저 조회
                 url_key = f"{SUPABASE_URL.rstrip('/')}/rest/v1/licenses?serial_key=eq.{key}&select=product_id,license_type,expire_date"
                 res_key = requests.get(url_key, headers=headers, timeout=3.0)
                 if res_key.status_code == 200:
@@ -231,8 +251,7 @@ class CafeMonsterAuthHelper:
                         prod_id = key_data[0].get("product_id")
                         l_type = key_data[0].get("license_type")
                         exp = key_data[0].get("expire_date")
-                        if prod_id and prod_id not in active_prods:
-                            # 해당 제품 ID로 바인딩 및 인증 수행
+                        if prod_id == curr_prod and prod_id not in active_prods:
                             auth_prod = MonsterAuth(
                                 product_id=prod_id,
                                 license_key=key,
