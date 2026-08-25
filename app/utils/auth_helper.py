@@ -135,6 +135,14 @@ class CafeMonsterAuthHelper:
     def clear_cache(cls):
         cls._cached_active_products = None
         cls._cached_limits = {}
+        cls._cached_exp_dates = {}
+        cls._cached_license_types = {}
+        cache_path = cls.get_cache_file_path()
+        if os.path.exists(cache_path):
+            try:
+                os.remove(cache_path)
+            except:
+                pass
         if os.path.exists(CACHE_FILE):
             try:
                 os.remove(CACHE_FILE)
@@ -485,6 +493,9 @@ class CafeMonsterAuthHelper:
             # 유효 기한 30일 체크 (1회 인증 후 30일간 자동 통과)
             updated_at = cache.get("updated_at", 0)
             if time.time() - updated_at > 30 * 24 * 3600:
+                return None
+            # 신규 스키마 검증 (exp_dates 필수: 이전 구버전 캐시 무효화 및 서버 재조회 유도)
+            if "exp_dates" not in cache or "license_types" not in cache:
                 return None
             return cache
         except Exception:

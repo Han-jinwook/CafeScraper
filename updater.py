@@ -79,48 +79,10 @@ class MonsterUpdater:
         try:
             current_exe = sys.executable
             app_dir = os.path.dirname(current_exe)
-            
             bat_path = os.path.join(app_dir, "monster_update_helper.bat")
-            
-            extracted_folder = "monster_update_temp"
-            extracted_exe_name = "CafeScraper.exe"
             
             if not os.path.isabs(update_package_path):
                 update_package_path = os.path.join(app_dir, update_package_path)
-            
-            if update_package_path.endswith('.zip'):
-                import zipfile
-                import shutil
-                logger.info("📦 임시 폴더에 압축 해제 중...")
-                temp_extract_dir = os.path.join(app_dir, "monster_update_temp")
-                if os.path.exists(temp_extract_dir):
-                    shutil.rmtree(temp_extract_dir, ignore_errors=True)
-                os.makedirs(temp_extract_dir, exist_ok=True)
-                
-                with zipfile.ZipFile(update_package_path, 'r') as zip_ref:
-                    zip_ref.extractall(temp_extract_dir)
-                os.remove(update_package_path)
-                
-                # 압축 해제된 폴더 내부 탐색
-                items = os.listdir(temp_extract_dir)
-                # 만약 폴더 하나만 들어있고 그게 _internal이 아니라면 (구버전 중첩 구조 대응)
-                if len(items) == 1 and os.path.isdir(os.path.join(temp_extract_dir, items[0])) and items[0] != "_internal":
-                    extracted_folder = os.path.join("monster_update_temp", items[0])
-                    sub_items = os.listdir(os.path.join(temp_extract_dir, items[0]))
-                    for si in sub_items:
-                        if si.endswith(".exe"):
-                            extracted_exe_name = si
-                            break
-                else:
-                    # 신규 플랫 압축 구조 (최상위에 exe와 _internal이 바로 존재)
-                    for item in items:
-                        if item.endswith(".exe"):
-                            extracted_exe_name = item
-                            break
-            
-            if not extracted_exe_name:
-                logger.error("업데이트 패키지 내 실행 파일(.exe)을 찾을 수 없습니다.")
-                return False
             
             bat_content = f"""@echo off
 taskkill /f /im "{os.path.basename(current_exe)}" > nul 2>&1
@@ -131,15 +93,15 @@ taskkill /f /im "AutoComment.exe" > nul 2>&1
 timeout /t 1 /nobreak > nul
 
 if exist "{app_dir}\\_internal" rmdir /s /q "{app_dir}\\_internal"
-robocopy "{os.path.join(app_dir, extracted_folder)}" "{app_dir}" /E /MOVE /NFL /NDL /NJH /NJS > nul 2>&1
-if exist "{os.path.join(app_dir, 'monster_update_temp')}" rmdir /s /q "{os.path.join(app_dir, 'monster_update_temp')}" > nul 2>&1
-start "" "{os.path.join(app_dir, extracted_exe_name)}"
+tar -xf "{update_package_path}" -C "{app_dir}"
+if exist "{update_package_path}" del "{update_package_path}" > nul 2>&1
+start "" "{current_exe}"
 del "%~f0"
 """
             with open(bat_path, "w", encoding="cp949") as f:
                 f.write(bat_content)
                 
-            logger.info("🔄 업데이트 헬퍼 생성 완료. 프로세스를 종료하고 업데이트를 적용합니다.")
+            logger.info("🔄 업데이트 헬퍼 생성 완료. 초고속 패치 적용 및 재시작...")
             subprocess.Popen([bat_path], shell=True)
             sys.exit(0)
             
