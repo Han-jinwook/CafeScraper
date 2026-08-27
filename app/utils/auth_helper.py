@@ -287,7 +287,7 @@ class CafeMonsterAuthHelper:
         """해당 제품의 라이선스 플랜 및 만료 기간 배지 HTML을 생성합니다."""
         active = cls.get_active_products()
         if product_id not in active:
-            return '<div style="margin-top:4px;"><span style="font-size:0.80rem; background:#fee2e2; color:#991b1b; padding:2px 8px; border-radius:4px; font-weight:600; border:1px solid #fca5a5;">🔒 무료 체험판 (50건 제한)</span></div>'
+            return '<div style="margin-top:4px;"><span style="font-size:0.80rem; background:#fee2e2; color:#991b1b; padding:2px 8px; border-radius:4px; font-weight:600; border:1px solid #fca5a5;">🔒 무료 체험판 (100건 제한)</span></div>'
         
         limit = cls._cached_limits.get(product_id)
         exp_str = cls._cached_exp_dates.get(product_id)

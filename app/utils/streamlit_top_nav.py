@@ -248,7 +248,7 @@ def render_main_top_nav(*, active: str) -> None:
                 
             display_label = label
             if prod_id and prod_id not in active_licenses:
-                display_label = f"{label} (무료체험 50건)"
+                display_label = f"{label} (무료체험 100건)"
 
             with col:
                 go = st.button(
