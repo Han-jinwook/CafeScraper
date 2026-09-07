@@ -512,7 +512,6 @@ class CafeMonsterAuthHelper:
         except Exception as e:
             return True, f"오프라인 체험판으로 시작합니다."
 
-    # --- 로컬 캐시 관리 헬퍼 ---
     @classmethod
     def _read_local_cache(cls) -> dict | None:
         cache_path = cls.get_cache_file_path()
@@ -521,13 +520,31 @@ class CafeMonsterAuthHelper:
         try:
             with open(cache_path, "r", encoding="utf-8") as f:
                 cache = json.load(f)
-            # 유효 기한 30일 체크 (1회 인증 후 30일간 자동 통과)
-            updated_at = cache.get("updated_at", 0)
-            if time.time() - updated_at > 30 * 24 * 3600:
-                return None
-            # 신규 스키마 검증 (exp_dates 필수: 이전 구버전 캐시 무효화 및 서버 재조회 유도)
+            # 1. 신규 스키마 검증 (필수 키 누락 시 무효화)
             if "exp_dates" not in cache or "license_types" not in cache:
                 return None
+            
+            # 2. 캐시 내 만료일 검사: 만약 캐시된 라이선스가 만료 상태라면,
+            #    관리자가 서버 대시보드에서 방금 연장했을 수 있으므로 캐시를 무효화하고 서버 실시간 재조회
+            curr_prod = cls.get_current_product_id()
+            exp_str = cache.get("exp_dates", {}).get(curr_prod)
+            if exp_str:
+                try:
+                    exp_clean = exp_str.replace('Z', '+00:00')
+                    exp_dt = datetime.datetime.fromisoformat(exp_clean)
+                    if exp_dt.timestamp() <= datetime.datetime.now(datetime.timezone.utc).timestamp():
+                        return None
+                except Exception:
+                    pass
+            elif curr_prod not in cache.get("products", []):
+                # 미인증 제품인 경우에도 서버 재조회 유도
+                return None
+
+            # 3. 유효 기한 24시간 체크 (하루 1회 서버와 자동 동기화)
+            updated_at = cache.get("updated_at", 0)
+            if time.time() - updated_at > 24 * 3600:
+                return None
+                
             return cache
         except Exception:
             return None
