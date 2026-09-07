@@ -17,6 +17,10 @@ class MonsterUpdater:
     CURRENT_VERSION = read_app_version()
     
     @classmethod
+    def get_current_version(cls):
+        return cls.CURRENT_VERSION or read_app_version()
+
+    @classmethod
     def _get_product_id(cls):
         try:
             app_dir = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else os.path.dirname(os.path.abspath(__file__))
