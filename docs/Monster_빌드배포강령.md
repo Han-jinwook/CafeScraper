@@ -179,10 +179,14 @@
 - **규칙**: OTA 자동 업데이트 적용 시 파이썬 내부의 무거운 압축 해제나 느린 `xcopy` 6,000개 파일 루프 복사를 전면 배제하고, 윈도우 10/11 내장 `tar.exe -xf` 명령어를 활용하여 다운로드된 ZIP을 1초 만에 원자적(Atomic)으로 직접 교체하고 즉시 새 프로세스를 시작하도록 구성합니다.
 - **사유**: 다운로드 완료 후 교체 과정에서 발생하던 15~20초간의 화면 공백 지연을 1초대로 단축하여, 사용자가 프로그램 멈춤으로 오인하고 강제 종료하는 사고를 원천 방지합니다.
 
-### 4.13. 3Monster 브랜드 일체형 Modern OTA 모달 UI 수칙 (Brand-Consistent Modern OTA UI Rule)
-- **규칙**: 흰 백지의 구형 OS 기본 팝업(`tkinter.messagebox`)을 일체 배제하고, `CustomTkinter` 기반의 브랜드 다크 모던 테마(450x240, 둥근 카드, 감각적인 블루/스카이 타이포그래피, 인디터미네이트 프로그레스바)로 제작된 전용 모달(`updater_gui.py`)을 띄워야 합니다.
-- **사유**: 텍스트 잘림 없는 완벽한 레이아웃과 생동감 있는 다운로드 진행 바, 원터치 자동 재시작 피드백을 통해 고객에게 정돈된 프리미엄 상용 솔루션의 시각적 신뢰감을 제공합니다.
+### 4.14. OTA 팝업 호출 인터페이스 무결성 및 사전 검증 수칙 (Updater Signature & UI Integrity Rule)
+- **규칙**: 자동 업데이트 감지 및 팝업 모달(`updater_gui.py`) 연동 시, 버전 조회 클래스 메서드(`MonsterUpdater.get_current_version()`) 및 팝업 인스턴스화 로직의 시그니처 무결성을 100% 보장해야 합니다. 배포 전 반드시 `from updater import MonsterUpdater; from updater_gui import ModernUpdaterWindow` 무결성 검증을 통과해야 릴리즈를 수행합니다.
+- **사유**: 업데이트 감지 성공 후 GUI 모달 생성 단계에서 메서드 미존재(`AttributeError`) 등으로 팝업이 무음 스킵(Silent Skip)되어 사용자가 업데이트 기회를 놓치는 사고를 원천 방지합니다.
+
+### 4.15. 만료 라이선스 로컬 캐시 즉시 무효화 및 실시간 갱신 수칙 (Expired License Cache-Bust & Instant Sync Rule)
+- **규칙**: 로컬 캐시(`license_cache.json`)를 읽을 때, 캐시된 라이선스의 만료일이 지난 경우(만료 상태) 캐시 유효기간(24h)과 상관없이 **캐시를 즉시 무효화하고 Supabase 서버에서 실시간 최신 만료일을 재조회**하여 갱신해야 합니다.
+- **사유**: 관리자가 대시보드에서 만료된 고객의 기간을 연장(+1달 등)했을 때, 고객 PC의 로컬 캐시가 옛날 만료일을 물고 있어 프로그램이 계속 "만료됨"으로 오인하는 문제를 완벽히 해결합니다.
 
 ---
-*Updated on 2026-08-25 by Antigravity*
+*Updated on 2026-09-07 by Antigravity*
 
