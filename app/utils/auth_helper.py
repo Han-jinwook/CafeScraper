@@ -284,10 +284,14 @@ class CafeMonsterAuthHelper:
 
     @classmethod
     def get_license_badge_html(cls, product_id: str) -> str:
-        """해당 제품의 라이선스 플랜 및 만료 기간 배지 HTML을 생성합니다."""
+        """해당 제품의 라이선스 플랜 및 만료 기간 배지 HTML 및 즉시 구매/연장 버튼을 생성합니다."""
         active = cls.get_active_products()
+        mall_url = "https://3monster.net"
+        btn_base = "text-decoration:none; display:inline-flex; align-items:center; gap:3px; font-size:0.75rem; padding:2px 9px; border-radius:4px; font-weight:700; transition:all 0.15s ease;"
+        
         if product_id not in active:
-            return '<div style="margin-top:4px;"><span style="font-size:0.80rem; background:#fee2e2; color:#991b1b; padding:2px 8px; border-radius:4px; font-weight:600; border:1px solid #fca5a5;">🔒 무료 체험판 (100건 제한)</span></div>'
+            btn_buy = f'<a href="{mall_url}" target="_blank" style="{btn_base} background:#2563eb; color:#ffffff; border:1px solid #1d4ed8;">🛒 정품 구매하기</a>'
+            return f'<div style="margin-top:4px; display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap;"><span style="font-size:0.80rem; background:#fee2e2; color:#991b1b; padding:2px 8px; border-radius:4px; font-weight:600; border:1px solid #fca5a5;">🔒 무료 체험판 (100건 제한)</span>{btn_buy}</div>'
         
         limit = cls._cached_limits.get(product_id)
         exp_str = cls._cached_exp_dates.get(product_id)
@@ -324,8 +328,16 @@ class CafeMonsterAuthHelper:
         if date_formatted and diff_days is not None:
             if diff_days >= 0:
                 badge_html += f'<span style="font-size:0.80rem; background:#e0f2fe; color:#075985; padding:2px 8px; border-radius:4px; font-weight:600; border:1px solid #7dd3fc;">📅 만료일: {date_formatted} (D-{diff_days}일)</span>'
+                btn_extend = f'<a href="{mall_url}" target="_blank" style="{btn_base} background:#4f46e5; color:#ffffff; border:1px solid #4338ca;">🛒 라이선스 연장</a>'
+                badge_html += btn_extend
             else:
                 badge_html += f'<span style="font-size:0.80rem; background:#fee2e2; color:#991b1b; padding:2px 8px; border-radius:4px; font-weight:600; border:1px solid #fca5a5;">⚠️ 만료됨 ({date_formatted})</span>'
+                btn_renew = f'<a href="{mall_url}" target="_blank" style="{btn_base} background:#dc2626; color:#ffffff; border:1px solid #b91c1c;">🚨 추가 구매 / 갱신하기</a>'
+                badge_html += btn_renew
+        else:
+            btn_extend = f'<a href="{mall_url}" target="_blank" style="{btn_base} background:#4f46e5; color:#ffffff; border:1px solid #4338ca;">🛒 라이선스 연장</a>'
+            badge_html += btn_extend
+
         badge_html += '</div>'
         return badge_html
 
