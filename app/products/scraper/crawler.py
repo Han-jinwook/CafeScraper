@@ -2697,8 +2697,8 @@ class NaverCafeCrawler:
             return None
         return int(digits)
 
-    def _scrape_manage_member_table_visits(self, *, max_pages: int, grade_label: str = "") -> List[Dict[str, Any]]:
-        """현재 멤버 관리 표에서 별명·방문수 후보 열을 읽는다. max_pages는 안전 상한(이후 '다음' 없으면 종료)."""
+    def _scrape_manage_member_table_visits(self, *, max_pages: int, grade_label: str = "", max_rows: Optional[int] = None) -> List[Dict[str, Any]]:
+        """현재 멤버 관리 표에서 별명·방문수 후보 열을 읽는다. max_pages는 안전 상한(이후 '다음' 없으면 종료). max_rows 지정 시 도달 시 즉시 종료."""
         rows_out: List[Dict[str, Any]] = []
         if not self.driver:
             return rows_out
@@ -2841,11 +2841,17 @@ class NaverCafeCrawler:
                         }
                     )
                     page_added += 1
+                    if max_rows is not None and len(rows_out) >= max_rows:
+                        self._update_status(f"⏹️ 수집 한도({max_rows:,}건)에 도달하여 수집을 안전하게 마칩니다.")
+                        return rows_out
                 except Exception:
                     continue
 
             self._update_status(f"📋 멤버 표 [{_grade}] {page}페이지: {page_added}행 (누적 {len(rows_out)})")
             self._update_status(f"__MENTOR_PROGRESS_ROWS__:{len(rows_out)}")
+            if max_rows is not None and len(rows_out) >= max_rows:
+                self._update_status(f"⏹️ 수집 한도({max_rows:,}건)에 도달하여 수집을 마칩니다.")
+                break
             if page >= max_pages:
                 self._update_status("⏹️ 멤버 표 페이지 상한(안전장치) 도달 — 수집을 멈춥니다.")
                 break
@@ -2858,10 +2864,12 @@ class NaverCafeCrawler:
         self,
         cafe_url: str,
         grades_raw: str,
+        max_rows: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         멤버 관리 > 등급별 필터(사용자 입력) 후 별명·방문수 수집.
         등급별로 표의 '다음'이 없을 때까지 페이지를 넘긴다(비정상 루프 방지 상한만 내부 적용).
+        max_rows 지정 시 해당 건수 도달 시 정상 종료.
         """
         grades = self.parse_mentor_grade_tokens(grades_raw)
         if not grades:
@@ -2889,6 +2897,8 @@ class NaverCafeCrawler:
                     "message": "사용자 요청으로 중단되었습니다.",
                     "rows": all_rows,
                 }
+            if max_rows is not None and len(all_rows) >= max_rows:
+                break
             g = str(g).strip()
             self._update_status(f"🎯 등급별 방문수: 등급 '{g}' 필터 적용 시도")
             if not self._try_select_member_grade_filter(g):
@@ -2902,15 +2912,25 @@ class NaverCafeCrawler:
             time.sleep(0.9)
             self._update_status(f"__MENTOR_PROGRESS_PHASE__:등급 '{g}' · 표 페이지 스캔 시작")
             self._update_status(f"▶ 등급 '{g}' 페이지 순회 시작")
+            remaining_for_grade = None
+            if max_rows is not None:
+                remaining_for_grade = max(0, max_rows - len(all_rows))
+                if remaining_for_grade <= 0:
+                    break
             part = self._scrape_manage_member_table_visits(
                 max_pages=int(self._MENTOR_MEMBER_LIST_PAGE_GUARD),
                 grade_label=g,
+                max_rows=remaining_for_grade,
             )
             self._update_status(f"✅ 등급 '{g}' 페이지 순회 종료: {len(part)}행")
             for r in part:
                 row = dict(r)
                 row["member_grade"] = g
                 all_rows.append(row)
+                if max_rows is not None and len(all_rows) >= max_rows:
+                    break
+            if max_rows is not None and len(all_rows) >= max_rows:
+                break
 
         if not all_rows:
             if not succeeded_filter_grades:

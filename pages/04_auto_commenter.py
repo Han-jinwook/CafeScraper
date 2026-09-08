@@ -1507,25 +1507,14 @@ with _col3:
                     elif not final_template.strip():
                         st.error("내용 없음")
                     else:
-                        has_lic, lic_limit = CafeMonsterAuthHelper.check_product_license("AutoComment")
-                        if not has_lic:
-                            used_count = CafeMonsterAuthHelper.get_trial_used_count("AutoComment")
-                            if used_count >= 50:
+                        is_limited, rem_quota = CafeMonsterAuthHelper.get_remaining_quota("AutoComment")
+                        if is_limited and rem_quota is not None and rem_quota <= 0:
+                            has_lic, lic_limit = CafeMonsterAuthHelper.check_product_license("AutoComment")
+                            if not has_lic:
                                 st.error("🚫 [체험판 한도 초과] 자동댓글러 무료체험판 한도(50건)를 모두 소진하셨습니다. 정식 라이선스를 등록해 주세요.")
-                                st.stop()
-                        elif lic_limit is not None and lic_limit > 0:
-                            try:
-                                conn_chk = sqlite3.connect(COMMENTER_DB_PATH)
-                                c_chk = conn_chk.cursor()
-                                c_chk.execute("SELECT COUNT(*) FROM commenter_targets WHERE comment_status = 'success'")
-                                row = c_chk.fetchone()
-                                conn_chk.close()
-                                db_cnt = int(row[0]) if row and row[0] is not None else 0
-                                if db_cnt >= lic_limit:
-                                    st.error(f"🚫 [라이선스 한도 초과] 본 라이선스의 수집/작업 한도({lic_limit}건)를 모두 소진하셨습니다.")
-                                    st.stop()
-                            except:
-                                pass
+                            else:
+                                st.error(f"🚫 [라이선스 한도 초과] 본 라이선스의 수집/작업 한도({lic_limit:,}건)를 모두 소진하셨습니다. 무제한 작업을 원하시면 DELUXE 플랜으로 업그레이드해 주세요.")
+                            st.stop()
                         # Piling DB 생성 및 할당
                         from app.utils.paths import generate_new_db_path
                         new_db_path = generate_new_db_path("auto_commenter")
@@ -1900,31 +1889,22 @@ with st.container(border=True, key="commenter_target_table_box"):
             "위 **타겟 수집 설정**을 저장한 뒤 **실행 제어 → 2단계**를 실행하면 수집된 글이 여기 표에 나타납니다."
         )
 
-def _check_and_increment_limits():
+def _check_and_increment_limits(count: int = 1):
     has_lic, lic_limit = CafeMonsterAuthHelper.check_product_license("AutoComment")
     if not has_lic:
         used_count = CafeMonsterAuthHelper.get_trial_used_count("AutoComment")
-        new_count = used_count + 1
+        new_count = used_count + count
         CafeMonsterAuthHelper.save_trial_used_count("AutoComment", new_count)
         if new_count >= 50:
             _commenter_reset_run_state()
             log_msg("🚫 무료체험판 작업 한도(50건)에 도달하여 댓글 작성을 안전하게 중단합니다.")
             st.rerun()
     elif lic_limit is not None and lic_limit > 0:
-        try:
-            active_db = st.session_state.get("active_db_path_commenter", COMMENTER_DB_PATH)
-            conn_chk = sqlite3.connect(active_db)
-            c_chk = conn_chk.cursor()
-            c_chk.execute("SELECT COUNT(*) FROM commenter_targets WHERE comment_status = 'success'")
-            row = c_chk.fetchone()
-            conn_chk.close()
-            db_cnt = int(row[0]) if row and row[0] is not None else 0
-            if db_cnt >= lic_limit:
-                _commenter_reset_run_state()
-                log_msg(f"🚫 라이선스 수집/작업 한도({lic_limit}건)에 도달하여 작업을 안전하게 중단합니다.")
-                st.rerun()
-        except:
-            pass
+        new_used = CafeMonsterAuthHelper.increment_license_used_count("AutoComment", count)
+        if new_used >= lic_limit:
+            _commenter_reset_run_state()
+            log_msg(f"🚫 [스탠다드 한도 {lic_limit:,}건 도달] 라이선스 작업 한도에 도달하여 작업을 안전하게 완료 및 중단합니다. 무제한 작업을 원하시면 DELUXE 플랜으로 업그레이드하세요!")
+            st.rerun()
 
 if st.session_state.get("is_running", False):
     if st.session_state.get("commenter_stop_requested"):

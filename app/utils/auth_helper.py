@@ -81,7 +81,7 @@ class CafeMonsterAuthHelper:
             except Exception as e:
                 logger.error(f"Error fetching HWID via MonsterAuth: {e}")
                 cls._hwid = "UNKNOWN_HWID"
-            return cls._hwid
+        return cls._hwid
 
     @classmethod
     def load_saved_keys(cls) -> list[str]:
@@ -106,7 +106,6 @@ class CafeMonsterAuthHelper:
                 with open(lic_file, "w", encoding="utf-8") as f:
                     for k in keys:
                         f.write(f"{k}\n")
-            # 캐시 무효화
             cls._cached_active_products = None
             cls.clear_cache()
             return True
@@ -120,8 +119,9 @@ class CafeMonsterAuthHelper:
             keys = cls.load_saved_keys()
             if key in keys:
                 keys.remove(key)
-                os.makedirs(os.path.dirname(LICENSE_FILE), exist_ok=True)
-                with open(LICENSE_FILE, "w", encoding="utf-8") as f:
+                lic_file = cls.get_license_file_path()
+                os.makedirs(os.path.dirname(lic_file), exist_ok=True)
+                with open(lic_file, "w", encoding="utf-8") as f:
                     for k in keys:
                         f.write(f"{k}\n")
             cls._cached_active_products = None
@@ -133,26 +133,30 @@ class CafeMonsterAuthHelper:
 
     @classmethod
     def clear_cache(cls):
+        """모든 제품군 디렉터리의 라이선스 캐시를 일괄 초기화합니다."""
         cls._cached_active_products = None
         cls._cached_limits = {}
         cls._cached_exp_dates = {}
         cls._cached_license_types = {}
-        cache_path = cls.get_cache_file_path()
-        if os.path.exists(cache_path):
-            try:
-                os.remove(cache_path)
-            except:
-                pass
+        
+        base_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "MarketingMonster") if sys.platform == "win32" else os.path.join(os.path.expanduser("~"), ".config", "MarketingMonster")
+        for sub in ["CafeCrawler", "EventStats", "AutoComment", "CafeScraper"]:
+            p = os.path.join(base_dir, sub, "license_cache.json")
+            if os.path.exists(p):
+                try:
+                    os.remove(p)
+                except Exception:
+                    pass
         if os.path.exists(CACHE_FILE):
             try:
                 os.remove(CACHE_FILE)
-            except:
+            except Exception:
                 pass
 
     @classmethod
-    def get_active_products(cls) -> set[str]:
-        """현재 실행 중인 단일 에디션(curr_prod) 전용 라이선스만 엄격히 검증하여 격리 반환합니다."""
-        if cls._cached_active_products is not None:
+    def get_active_products(cls, force_refresh: bool = False) -> set[str]:
+        """현재 실행 중인 단일 에디션(curr_prod) 전용 라이선스를 Supabase 실시간 우선으로 검증하여 격리 반환합니다."""
+        if not force_refresh and cls._cached_active_products is not None:
             return cls._cached_active_products
 
         curr_prod = cls.get_current_product_id()
@@ -169,26 +173,14 @@ class CafeMonsterAuthHelper:
                         cls._cached_exp_dates = {}
                         cls._cached_license_types = {}
                         return set()
-            except:
+            except Exception:
                 pass
 
-        # 1. 로컬 캐시 조회 (현재 에디션 전용 격리)
-        local_cache = cls._read_local_cache()
-        if local_cache is not None:
-            prods = set(local_cache.get("products", []))
-            cls._cached_limits = local_cache.get("limits", {})
-            cls._cached_exp_dates = local_cache.get("exp_dates", {})
-            cls._cached_license_types = local_cache.get("license_types", {})
-            if curr_prod in prods:
-                cls._cached_active_products = {curr_prod}
-            else:
-                cls._cached_active_products = set()
-            return cls._cached_active_products
-
-        # 2. 서버 및 키 검증
+        # 1. Supabase 서버 실시간 검증 (Live-First: 1.5초 타임아웃)
         hwid = cls.get_hwid()
         active_prods = set()
         limits = {}
+        server_success = False
 
         headers = {
             "apikey": SUPABASE_KEY,
@@ -196,11 +188,12 @@ class CafeMonsterAuthHelper:
             "Content-Type": "application/json"
         }
 
-        # 2.1 HWID에 바인딩된 활성 라이선스 중 현재 실행 에디션(curr_prod)만 핀포인트 조회
+        # 1.1 HWID에 바인딩된 활성 라이선스 중 현재 실행 에디션(curr_prod) 핀포인트 조회
         url = f"{SUPABASE_URL.rstrip('/')}/rest/v1/licenses?bound_value=eq.{hwid}&product_id=eq.{curr_prod}&status=eq.active&select=product_id,expire_date,collection_limit,serial_key,first_run_date,license_type"
         try:
-            res = requests.get(url, headers=headers, timeout=3.0)
+            res = requests.get(url, headers=headers, timeout=1.5)
             if res.status_code == 200:
+                server_success = True
                 data = res.json()
                 for item in data:
                     prod = item.get("product_id")
@@ -220,7 +213,8 @@ class CafeMonsterAuthHelper:
                             pass
                     if prod and prod == curr_prod:
                         active_prods.add(prod)
-                        limits[prod] = limit
+                        # 0 또는 None은 무제한(DELUXE/PREMIUM) 플랜으로 취급
+                        limits[prod] = limit if (limit is not None and limit > 0) else 0
                         cls._cached_exp_dates[prod] = exp
                         cls._cached_license_types[prod] = l_type
                         
@@ -237,61 +231,160 @@ class CafeMonsterAuthHelper:
                             except Exception as ex:
                                 logger.error(f"Failed to backfill first_run_date in get_active_products: {ex}")
         except Exception as e:
-            logger.error(f"Failed to query active licenses by HWID: {e}")
+            logger.warning(f"Live Supabase query failed (fallback to cache): {e}")
 
-        # 2.2 저장된 키들 유효성 검사 및 바인딩 시도 (현재 에디션 키만 적용)
-        saved_keys = cls.load_saved_keys()
-        for key in saved_keys:
-            try:
-                url_key = f"{SUPABASE_URL.rstrip('/')}/rest/v1/licenses?serial_key=eq.{key}&select=product_id,license_type,expire_date"
-                res_key = requests.get(url_key, headers=headers, timeout=3.0)
-                if res_key.status_code == 200:
-                    key_data = res_key.json()
-                    if key_data:
-                        prod_id = key_data[0].get("product_id")
-                        l_type = key_data[0].get("license_type")
-                        exp = key_data[0].get("expire_date")
-                        if prod_id == curr_prod and prod_id not in active_prods:
-                            auth_prod = MonsterAuth(
-                                product_id=prod_id,
-                                license_key=key,
-                                supabase_url=SUPABASE_URL,
-                                supabase_key=SUPABASE_KEY
-                            )
-                            success, _, col_limit = auth_prod.verify_license()
-                            if success:
-                                active_prods.add(prod_id)
-                                limits[prod_id] = col_limit
-                                cls._cached_license_types[prod_id] = l_type
-                                cls._cached_exp_dates[prod_id] = exp
-            except Exception as e:
-                logger.error(f"Failed to validate key {key}: {e}")
+        # 1.2 저장된 키들 유효성 검사 및 바인딩 시도 (현재 에디션 키만 적용)
+        if server_success:
+            saved_keys = cls.load_saved_keys()
+            for key in saved_keys:
+                try:
+                    url_key = f"{SUPABASE_URL.rstrip('/')}/rest/v1/licenses?serial_key=eq.{key}&select=product_id,license_type,expire_date,collection_limit"
+                    res_key = requests.get(url_key, headers=headers, timeout=1.5)
+                    if res_key.status_code == 200:
+                        key_data = res_key.json()
+                        if key_data:
+                            prod_id = key_data[0].get("product_id")
+                            l_type = key_data[0].get("license_type")
+                            exp = key_data[0].get("expire_date")
+                            c_limit = key_data[0].get("collection_limit")
+                            if prod_id == curr_prod and prod_id not in active_prods:
+                                auth_prod = MonsterAuth(
+                                    product_id=prod_id,
+                                    license_key=key,
+                                    supabase_url=SUPABASE_URL,
+                                    supabase_key=SUPABASE_KEY
+                                )
+                                success, _, col_limit = auth_prod.verify_license()
+                                if success:
+                                    active_prods.add(prod_id)
+                                    limits[prod_id] = col_limit if (col_limit is not None and col_limit > 0) else 0
+                                    cls._cached_license_types[prod_id] = l_type
+                                    cls._cached_exp_dates[prod_id] = exp
+                except Exception as e:
+                    logger.error(f"Failed to validate key {key}: {e}")
 
-        cls._cached_active_products = active_prods
-        cls._cached_limits = limits
+            cls._cached_active_products = active_prods
+            cls._cached_limits = limits
+            cls._write_local_cache(active_prods, limits)
+            return active_prods
 
-        # 로컬 캐시에 쓰기
-        cls._write_local_cache(active_prods, limits)
-        return active_prods
+        # 2. 오프라인 / 네트워크 오류 시 로컬 캐시 조회 (Fallback)
+        local_cache = cls._read_local_cache()
+        if local_cache is not None:
+            prods = set(local_cache.get("products", []))
+            cls._cached_limits = local_cache.get("limits", {})
+            cls._cached_exp_dates = local_cache.get("exp_dates", {})
+            cls._cached_license_types = local_cache.get("license_types", {})
+            if curr_prod in prods:
+                cls._cached_active_products = {curr_prod}
+            else:
+                cls._cached_active_products = set()
+            return cls._cached_active_products
+
+        cls._cached_active_products = set()
+        cls._cached_limits = {}
+        return set()
 
     @classmethod
     def check_product_license(cls, product_id: str) -> tuple[bool, int | None]:
         """특정 제품의 정식 인증 여부 및 수집 한도를 확인합니다."""
         active = cls.get_active_products()
         if product_id in active:
-            return True, cls._cached_limits.get(product_id)
+            limit = cls._cached_limits.get(product_id)
+            return True, limit
+        return False, None
+
+    # --- 정식 라이선스 사용량(누적 수집량) 연동 및 쿼터 관리 기능 ---
+    @classmethod
+    def get_license_usage_file_path(cls, product_id: str = None) -> str:
+        if not product_id:
+            product_id = cls.get_current_product_id()
+        if sys.platform == "win32":
+            p = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "MarketingMonster", product_id)
+        else:
+            p = os.path.join(os.path.expanduser("~"), ".config", "MarketingMonster", product_id)
+        os.makedirs(p, exist_ok=True)
+        return os.path.join(p, "license_usage.json")
+
+    @classmethod
+    def get_license_used_count(cls, product_id: str = None) -> int:
+        """정식 라이선스(스탠다드 등) 누적 수집 건수를 가져옵니다."""
+        if not product_id:
+            product_id = cls.get_current_product_id()
+        usage_file = cls.get_license_usage_file_path(product_id)
+        local_count = 0
+        if os.path.exists(usage_file):
+            try:
+                with open(usage_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    local_count = int(data.get(product_id, 0))
+            except Exception:
+                pass
+        return local_count
+
+    @classmethod
+    def save_license_used_count(cls, product_id: str, count: int):
+        """정식 라이선스 누적 수집 건수를 로컬 파일에 저장합니다."""
+        if not product_id:
+            product_id = cls.get_current_product_id()
+        usage_file = cls.get_license_usage_file_path(product_id)
+        data = {}
+        if os.path.exists(usage_file):
+            try:
+                with open(usage_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                pass
+        data[product_id] = count
+        try:
+            with open(usage_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    @classmethod
+    def increment_license_used_count(cls, product_id: str, count: int = 1) -> int:
+        """수집된 건수만큼 정식 라이선스 누적 사용량을 가산하고 새 누적값을 반환합니다."""
+        if not product_id:
+            product_id = cls.get_current_product_id()
+        curr = cls.get_license_used_count(product_id)
+        new_count = curr + max(0, count)
+        cls.save_license_used_count(product_id, new_count)
+        return new_count
+
+    @classmethod
+    def get_remaining_quota(cls, product_id: str = None) -> tuple[bool, int | None]:
+        """
+        (is_limited, remaining_quota) 튜플을 반환합니다.
+        - DELUXE / PREMIUM / 무제한: (False, None) -> 제한 없음
+        - STANDARD (한도 n건): (True, max(0, n - used)) -> 잔여 쿼터
+        - 체험판 (50건): (True, max(0, 50 - used))
+        """
+        if not product_id:
+            product_id = cls.get_current_product_id()
+        has_lic, limit = cls.check_product_license(product_id)
+        if not has_lic:
+            used = cls.get_trial_used_count(product_id)
+            return True, max(0, 50 - used)
+        
+        if limit is not None and limit > 0:
+            used = cls.get_license_used_count(product_id)
+            return True, max(0, limit - used)
+        
         return False, None
 
     @classmethod
     def get_license_badge_html(cls, product_id: str) -> str:
-        """해당 제품의 라이선스 플랜 및 만료 기간 배지 HTML 및 즉시 구매/연장 버튼을 생성합니다."""
+        """해당 제품의 라이선스 플랜 및 만료 기간 배지 HTML 및 즉시 구매/연장/업그레이드 버튼을 생성합니다."""
         active = cls.get_active_products()
         mall_url = "https://3monster.net"
         btn_base = "text-decoration:none; display:inline-flex; align-items:center; gap:3px; font-size:0.75rem; padding:2px 9px; border-radius:4px; font-weight:700; transition:all 0.15s ease;"
         
         if product_id not in active:
+            used_cnt = cls.get_trial_used_count(product_id)
+            rem_cnt = max(0, 50 - used_cnt)
             btn_buy = f'<a href="{mall_url}" target="_blank" style="{btn_base} background:#2563eb; color:#ffffff; border:1px solid #1d4ed8;">🛒 정품 구매하기</a>'
-            return f'<div style="margin-top:4px; display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap;"><span style="font-size:0.80rem; background:#fee2e2; color:#991b1b; padding:2px 8px; border-radius:4px; font-weight:600; border:1px solid #fca5a5;">🔒 무료 체험판 (100건 제한)</span>{btn_buy}</div>'
+            return f'<div style="margin-top:4px; display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap;"><span style="font-size:0.80rem; background:#fee2e2; color:#991b1b; padding:2px 8px; border-radius:4px; font-weight:600; border:1px solid #fca5a5;">🔒 무료 체험판 (잔여 {rem_cnt}건 / 50건)</span>{btn_buy}</div>'
         
         limit = cls._cached_limits.get(product_id)
         exp_str = cls._cached_exp_dates.get(product_id)
@@ -312,8 +405,12 @@ class CafeMonsterAuthHelper:
             except Exception:
                 pass
 
-        if limit:
-            plan_name = f"STANDARD (1개월 / {limit:,}건 제한)"
+        is_limited = False
+        if limit and limit > 0:
+            is_limited = True
+            used_cnt = cls.get_license_used_count(product_id)
+            rem_cnt = max(0, limit - used_cnt)
+            plan_name = f"STANDARD (1개월 / 잔여 {rem_cnt:,}건 / {limit:,}건)"
         elif lic_type in ["3M", "PREMIUM"] or (diff_days is not None and diff_days > 45):
             plan_name = "PREMIUM (3개월 / 무제한)"
         elif lic_type in ["6M"]:
@@ -325,6 +422,10 @@ class CafeMonsterAuthHelper:
             
         badge_html = f'<div style="margin-top:4px; display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap;"><span style="font-size:0.80rem; background:#dcfce7; color:#166534; padding:2px 8px; border-radius:4px; font-weight:600; border:1px solid #86efac;">✅ {plan_name}</span>'
         
+        if is_limited:
+            btn_upgrade = f'<a href="{mall_url}" target="_blank" style="{btn_base} background:#f59e0b; color:#ffffff; border:1px solid #d97706;">🚀 무제한 업그레이드</a>'
+            badge_html += btn_upgrade
+
         if date_formatted and diff_days is not None:
             if diff_days >= 0:
                 badge_html += f'<span style="font-size:0.80rem; background:#e0f2fe; color:#075985; padding:2px 8px; border-radius:4px; font-weight:600; border:1px solid #7dd3fc;">📅 만료일: {date_formatted} (D-{diff_days}일)</span>'
@@ -389,7 +490,6 @@ class CafeMonsterAuthHelper:
                 if res_data:
                     server_count = res_data[0].get("used_count", 0)
                 else:
-                    # 서버에 매칭되는 HWID 체험 이력이 전혀 없다면 로컬 카운트도 0으로 리셋
                     local_count = 0
         except Exception:
             pass
@@ -401,7 +501,6 @@ class CafeMonsterAuthHelper:
     @classmethod
     def save_trial_used_count(cls, product_id: str, count: int):
         """로컬 AppData 및 Supabase trial_logs 서버 테이블에 체험 수집 누적 카운트를 저장합니다."""
-        # 1. 로컬 저장
         data = {}
         try:
             if os.path.exists(TRIAL_SETTINGS_FILE):
@@ -418,7 +517,6 @@ class CafeMonsterAuthHelper:
         except Exception:
             pass
 
-        # 2. Supabase trial_logs 테이블 저장
         try:
             hwid = cls.get_hwid()
             url = f"{SUPABASE_URL.rstrip('/')}/rest/v1/trial_logs?on_conflict=hwid,product_id"
@@ -448,7 +546,7 @@ class CafeMonsterAuthHelper:
         }
         url_key = f"{SUPABASE_URL.rstrip('/')}/rest/v1/licenses?serial_key=eq.{key}&select=product_id,status,bound_value"
         try:
-            res_key = requests.get(url_key, headers=headers, timeout=1.0)
+            res_key = requests.get(url_key, headers=headers, timeout=1.5)
             if res_key.status_code != 200:
                 return False, f"서버 오류 (HTTP {res_key.status_code})"
             
@@ -476,7 +574,7 @@ class CafeMonsterAuthHelper:
                 if success:
                     cls.save_key(key)
                     cls.clear_cache()
-                    cls.get_active_products()
+                    cls.get_active_products(force_refresh=True)
                     return True, "라이선스 인증에 성공하였습니다!"
                 else:
                     return False, f"인증 실패: {msg}"
@@ -520,12 +618,9 @@ class CafeMonsterAuthHelper:
         try:
             with open(cache_path, "r", encoding="utf-8") as f:
                 cache = json.load(f)
-            # 1. 신규 스키마 검증 (필수 키 누락 시 무효화)
             if "exp_dates" not in cache or "license_types" not in cache:
                 return None
             
-            # 2. 캐시 내 만료일 검사: 만약 캐시된 라이선스가 만료 상태라면,
-            #    관리자가 서버 대시보드에서 방금 연장했을 수 있으므로 캐시를 무효화하고 서버 실시간 재조회
             curr_prod = cls.get_current_product_id()
             exp_str = cache.get("exp_dates", {}).get(curr_prod)
             if exp_str:
@@ -537,14 +632,8 @@ class CafeMonsterAuthHelper:
                 except Exception:
                     pass
             elif curr_prod not in cache.get("products", []):
-                # 미인증 제품인 경우에도 서버 재조회 유도
                 return None
 
-            # 3. 유효 기한 24시간 체크 (하루 1회 서버와 자동 동기화)
-            updated_at = cache.get("updated_at", 0)
-            if time.time() - updated_at > 24 * 3600:
-                return None
-                
             return cache
         except Exception:
             return None

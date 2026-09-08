@@ -1838,24 +1838,14 @@ def _render_cafe_main_workspace():
                 if not step2_ready:
                     st.error("먼저 1단계에서 브라우저를 열고 로그인을 완료해주세요.")
                 else:
-                    has_lic, lic_limit = CafeMonsterAuthHelper.check_product_license("CafeCrawler")
-                    if not has_lic:
-                        used_count = CafeMonsterAuthHelper.get_trial_used_count("CafeCrawler")
-                        if used_count >= 50:
+                    is_limited, rem_quota = CafeMonsterAuthHelper.get_remaining_quota("CafeCrawler")
+                    if is_limited and rem_quota is not None and rem_quota <= 0:
+                        has_lic, lic_limit = CafeMonsterAuthHelper.check_product_license("CafeCrawler")
+                        if not has_lic:
                             st.error("🚫 [체험판 한도 초과] 카페 수집기 무료체험판 한도(50건)를 모두 소진하셨습니다. 정식 라이선스를 등록해 주세요.")
-                            st.stop()
-                    elif lic_limit is not None and lic_limit > 0:
-                        try:
-                            conn_chk = sqlite3.connect(DB_PATH)
-                            c_chk = conn_chk.cursor()
-                            c_chk.execute("SELECT COUNT(*) FROM posts")
-                            db_cnt = c_chk.fetchone()[0]
-                            conn_chk.close()
-                            if db_cnt >= lic_limit:
-                                st.error(f"🚫 [라이선스 한도 초과] 본 라이선스의 수집 한도({lic_limit}건)를 모두 소진하셨습니다.")
-                                st.stop()
-                        except:
-                            pass
+                        else:
+                            st.error(f"🚫 [라이선스 한도 초과] 본 라이선스의 수집 한도({lic_limit:,}건)를 모두 소진하셨습니다. 무제한 수집을 원하시면 DELUXE 플랜으로 업그레이드해 주세요.")
+                        st.stop()
                     st.session_state.crawl_last_status_message = ""
                     collect_mode = _normalize_collect_mode(
                         st.session_state.get("collect_mode_input", config.get("collect_mode", "posts_and_comments"))
@@ -2116,30 +2106,22 @@ def _render_cafe_main_workspace():
             update_logs("♻️ 체크포인트에서 작업을 재개합니다.")
             st.rerun()
 
-    def _check_and_increment_limits():
+    def _check_and_increment_limits(count: int = 1):
         has_lic, lic_limit = CafeMonsterAuthHelper.check_product_license("CafeCrawler")
         if not has_lic:
             used_count = CafeMonsterAuthHelper.get_trial_used_count("CafeCrawler")
-            new_count = used_count + 1
+            new_count = used_count + count
             CafeMonsterAuthHelper.save_trial_used_count("CafeCrawler", new_count)
             if new_count >= 50:
                 st.session_state.crawl_running = False
                 update_logs("🚫 무료체험판 수집 한도(50건)에 도달하여 수집을 안전하게 중단합니다.")
                 st.rerun()
         elif lic_limit is not None and lic_limit > 0:
-            try:
-                active_db = st.session_state.get("active_db_path_main", DB_PATH)
-                conn_chk = sqlite3.connect(active_db)
-                c_chk = conn_chk.cursor()
-                c_chk.execute("SELECT COUNT(*) FROM posts")
-                db_cnt = c_chk.fetchone()[0]
-                conn_chk.close()
-                if db_cnt >= lic_limit:
-                    st.session_state.crawl_running = False
-                    update_logs(f"🚫 라이선스 수집 한도({lic_limit}건)에 도달하여 수집을 안전하게 중단합니다.")
-                    st.rerun()
-            except:
-                pass
+            new_used = CafeMonsterAuthHelper.increment_license_used_count("CafeCrawler", count)
+            if new_used >= lic_limit:
+                st.session_state.crawl_running = False
+                update_logs(f"🚫 [스탠다드 한도 {lic_limit:,}건 도달] 라이선스 수집 한도에 도달하여 수집을 안전하게 완료 및 중단합니다. 무제한 수집을 원하시면 DELUXE 플랜으로 업그레이드하세요!")
+                st.rerun()
 
     # 비동기처럼 동작하도록 한 건씩 처리 (중단 버튼 즉시 반영 가능)
     if st.session_state.crawl_running:

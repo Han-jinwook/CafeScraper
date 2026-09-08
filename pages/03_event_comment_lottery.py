@@ -1,3 +1,4 @@
+i# -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
@@ -447,6 +448,7 @@ def _finalize_mentor_only_run(
             st.session_state.event_last_run_message = f"조건(3): {res.get('message') or '실패'}"
         else:
             _saved = upsert_event_mentor_visits(event_db_path, _mrows)
+            _check_and_increment_limits(count=_saved)
             update_logs(
                 f"등급별 방문수: 표 {len(_mrows)}행 수집 → DB 반영 {_saved}건"
             )
@@ -566,7 +568,12 @@ def _run_mentor_only_on_main_thread(payload: dict, *, event_db_path: str) -> Non
     try:
         cr.set_status_callback(custom_mentor_callback)
         cr.set_stop_check_callback(lambda: bool(st.session_state.get("event_stop_requested", False)))
-        res = cr.scrape_mentor_visit_counts(cafe_url, grades_raw)
+        is_limited, rem_quota = CafeMonsterAuthHelper.get_remaining_quota("EventStats")
+        res = cr.scrape_mentor_visit_counts(
+            cafe_url,
+            grades_raw,
+            max_rows=rem_quota if is_limited else None,
+        )
     except Exception as e:
         err = str(e)
         res = None
@@ -2248,18 +2255,14 @@ with step_col2:
             disabled=bool(st.session_state.event_running) or (not event_step2_ready),
             key="event_start_run_btn",
         ):
-            has_lic, lic_limit = CafeMonsterAuthHelper.check_product_license("EventStats")
-            if not has_lic:
-                used_count = CafeMonsterAuthHelper.get_trial_used_count("EventStats")
-                if used_count >= 50:
+            is_limited, rem_quota = CafeMonsterAuthHelper.get_remaining_quota("EventStats")
+            if is_limited and rem_quota is not None and rem_quota <= 0:
+                has_lic, lic_limit = CafeMonsterAuthHelper.check_product_license("EventStats")
+                if not has_lic:
                     st.error("🚫 [체험판 한도 초과] 이벤트 활동 분석기 무료체험판 한도(50건)를 모두 소진하셨습니다. 정식 라이선스를 등록해 주세요.")
-                    st.stop()
-            elif lic_limit is not None and lic_limit > 0:
-                comments_cnt = get_event_comments_count(EVENT_DB_PATH)
-                posts_cnt = get_event_posts_count(EVENT_DB_PATH)
-                if (comments_cnt + posts_cnt) >= lic_limit:
-                    st.error(f"🚫 [라이선스 한도 초과] 본 라이선스의 수집 한도({lic_limit}건)를 모두 소진하셨습니다.")
-                    st.stop()
+                else:
+                    st.error(f"🚫 [라이선스 한도 초과] 본 라이선스의 수집 한도({lic_limit:,}건)를 모두 소진하셨습니다. 무제한 수집을 원하시면 DELUXE 플랜으로 업그레이드해 주세요.")
+                st.stop()
             if not st.session_state.event_crawler or not st.session_state.event_crawler.driver:
                 st.error("먼저 브라우저를 열어주세요.")
             elif not event_any_condition_enabled:
@@ -2322,11 +2325,11 @@ with step_col2:
                     st.session_state.event_analysis_signature = ""
                     st.rerun()
 
-def _check_and_increment_limits():
+def _check_and_increment_limits(count: int = 1):
     has_lic, lic_limit = CafeMonsterAuthHelper.check_product_license("EventStats")
     if not has_lic:
         used_count = CafeMonsterAuthHelper.get_trial_used_count("EventStats")
-        new_count = used_count + 1
+        new_count = used_count + count
         CafeMonsterAuthHelper.save_trial_used_count("EventStats", new_count)
         if new_count >= 50:
             st.session_state.event_running = False
@@ -2334,12 +2337,11 @@ def _check_and_increment_limits():
             update_logs("🚫 무료체험판 수집 한도(50건)에 도달하여 수집을 안전하게 중단합니다.")
             st.rerun()
     elif lic_limit is not None and lic_limit > 0:
-        comments_cnt = get_event_comments_count(EVENT_DB_PATH)
-        posts_cnt = get_event_posts_count(EVENT_DB_PATH)
-        if (comments_cnt + posts_cnt) >= lic_limit:
+        new_used = CafeMonsterAuthHelper.increment_license_used_count("EventStats", count)
+        if new_used >= lic_limit:
             st.session_state.event_running = False
             st.session_state.event_run_pending = False
-            update_logs(f"🚫 라이선스 수집 한도({lic_limit}건)에 도달하여 수집을 안전하게 중단합니다.")
+            update_logs(f"🚫 [스탠다드 한도 {lic_limit:,}건 도달] 라이선스 수집 한도에 도달하여 수집을 안전하게 완료 및 중단합니다. 무제한 수집을 원하시면 DELUXE 플랜으로 업그레이드하세요!")
             st.rerun()
 
 if st.session_state.event_running and not st.session_state.get("event_run_pending", False):
@@ -2385,12 +2387,13 @@ if st.session_state.event_run_pending and st.session_state.event_running:
     mentor_grades_raw = str(payload.get("mentor_grades_raw") or "")
     cafe_url_mentor = str(payload.get("cafe_url_mentor") or "").strip()
     _mentor_only_rt = bool(mentor_enabled_rt and not comment_enabled and not post_enabled)
+    active_db_target = str(payload.get("active_db_path") or EVENT_DB_PATH)
     if _mentor_only_rt:
         st.info(
             "⏳ **조건(3) 실행 중** — 이 앱은 수집이 끝날 때까지 멈춘 것처럼 보일 수 있습니다. "
             "진행 여부는 **크롬 멤버 관리** 탭(등급 필터·표·다음 페이지)을 보시면 됩니다."
         )
-        _run_mentor_only_on_main_thread(payload, event_db_path=EVENT_DB_PATH)
+        _run_mentor_only_on_main_thread(payload, event_db_path=active_db_target)
 
     if not _mentor_only_rt:
         prog = st.progress(max(0.0, min(1.0, float(st.session_state.get("event_progress_ratio", 0.0) or 0.0))))
@@ -2924,18 +2927,18 @@ if st.session_state.event_run_pending and st.session_state.event_running:
 
                             comments_seen_total += raw_comments_count
 
-                            ins = save_event_comments(EVENT_DB_PATH, art, filtered)
+                            ins = save_event_comments(active_db_target, art, filtered)
                             excluded_now = len(target_window_comments) - len(filtered)
                             inserted_total += ins
                             save_event_post(
-                                EVENT_DB_PATH,
+                                active_db_target,
                                 art,
                                 comments_seen=len(target_window_comments),
                                 comments_saved=ins,
                                 comments_excluded=excluded_now,
                                 author_nickname=resolved_author_nick,
                             )
-                            _check_and_increment_limits()
+                            _check_and_increment_limits(count=ins)
 
                             stable_success_streak += 1
                             if stable_success_streak >= 5:
