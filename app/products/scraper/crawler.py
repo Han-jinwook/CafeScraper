@@ -2568,76 +2568,90 @@ class NaverCafeCrawler:
                 chunks.append('"\'"')
         return "concat(" + ", ".join(chunks) + ")"
 
-    def _click_manage_member_next_page(self) -> bool:
+    def _click_manage_member_next_page(self, current_page: int = 1) -> bool:
         if not self.driver:
             return False
-        # 1) "다음" 링크 우선
-        xpaths = [
-            "//a[normalize-space()='다음']",
-            "//a[contains(normalize-space(),'다음')]",
-            "//a[contains(normalize-space(),'Next')]",
-            "//a[contains(@class,'next')]",
+        try:
+            self._switch_to_cafe_iframe()
+        except Exception:
+            pass
+
+        target_page = int(current_page) + 1
+
+        # 1) 네이버 카페 관리자 페이지 내장 JavaScript goPage(target_page) 직접 실행 (가장 확실하고 빠름)
+        try:
+            executed = self.driver.execute_script("""
+                var target = arguments[0];
+                if (typeof goPage === 'function') {
+                    goPage(target);
+                    return true;
+                }
+                if (typeof window.goPage === 'function') {
+                    window.goPage(target);
+                    return true;
+                }
+                if (parent && typeof parent.goPage === 'function') {
+                    parent.goPage(target);
+                    return true;
+                }
+                return false;
+            """, target_page)
+            if executed:
+                time.sleep(1.4 + random.uniform(0.1, 0.4))
+                return True
+        except Exception:
+            pass
+
+        # 2) 현재 보이는 숫자 페이지 링크 (2, 3, ... 20, 21, ...)
+        try:
+            num_xpaths = [
+                f"//a[normalize-space(text())='{target_page}']",
+                f"//a[contains(@href, 'goPage({target_page})')]",
+                f"//a[contains(@onclick, 'goPage({target_page})')]",
+            ]
+            for xp in num_xpaths:
+                for a in self.driver.find_elements(By.XPATH, xp):
+                    try:
+                        if a.is_displayed() and a.is_enabled():
+                            try:
+                                a.click()
+                            except Exception:
+                                self.driver.execute_script("arguments[0].click();", a)
+                            time.sleep(1.4 + random.uniform(0.1, 0.4))
+                            return True
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+
+        # 3) 다음 10/20페이지 블록 이동 버튼 (20->21, 40->41 등 블록 전환)
+        # 네이버 구형 JSP는 <a><img alt="다음"></a> 형태이거나 class="btn_next", "pgR" 등을 사용함
+        next_block_xpaths = [
+            "//a[contains(@class,'btn_next') or contains(@class,'btn-next') or contains(@class,'pgR') or contains(@class,'next') or contains(@class,'page_next')]",
+            "//a[.//img[contains(@alt,'다음') or contains(@src,'btn_next') or contains(@src,'next') or contains(@src,'pgR')]]",
+            "//img[contains(@alt,'다음') or contains(@src,'btn_next') or contains(@src,'next') or contains(@src,'pgR')]/parent::a",
+            "//a[contains(@href,'goPage') and (contains(.,'다음') or contains(@class,'next') or contains(@class,'btn'))]",
+            "//a[normalize-space()='다음' or normalize-space()='다음 >' or contains(normalize-space(),'다음')]",
+            "//button[contains(.,'다음') or contains(@class,'next') or contains(@class,'btn_next')]",
         ]
-        for xp in xpaths:
+        for xp in next_block_xpaths:
             try:
                 for b in self.driver.find_elements(By.XPATH, xp):
                     try:
                         if b.is_displayed() and b.is_enabled():
-                            b.click()
-                            time.sleep(1.6)
+                            try:
+                                b.click()
+                            except Exception:
+                                self.driver.execute_script("arguments[0].click();", b)
+                            time.sleep(1.6 + random.uniform(0.2, 0.5))
                             return True
                     except Exception:
                         continue
             except Exception:
                 continue
 
-        # 2) 숫자 페이지네이션(1,2,3...) 지원
+        # 4) 보이는 숫자 링크 중 current_page보다 큰 가장 작은 번호 클릭 (예비용)
         try:
-            current_num: Optional[int] = None
-            current_candidates = self.driver.find_elements(
-                By.XPATH,
-                (
-                    "//*[self::strong or self::span or self::a]"
-                    "[contains(@class,'on') or contains(@class,'cur') or contains(@class,'selected')]"
-                    "[normalize-space(text())!='']"
-                ),
-            )
-            for el in current_candidates:
-                try:
-                    t = (el.text or "").strip()
-                    if t.isdigit():
-                        current_num = int(t)
-                        break
-                except Exception:
-                    continue
-
-            if current_num is None:
-                # 클래스 힌트가 없으면 현재 페이지를 1로 간주하고 2를 시도
-                current_num = 1
-
-            next_num = str(current_num + 1)
-            # paginator 영역으로 보이는 곳에서만 우선 클릭 시도
-            num_candidates = self.driver.find_elements(
-                By.XPATH,
-                (
-                    "//a[normalize-space(text())=%s and "
-                    "(ancestor::*[contains(@class,'paginate') or contains(@class,'page') or contains(@class,'paging')] "
-                    "or ancestor::div or ancestor::td)]"
-                ) % self._xpath_literal_contains_arg(next_num),
-            )
-            for a in num_candidates:
-                try:
-                    if a.is_displayed() and a.is_enabled():
-                        try:
-                            a.click()
-                        except Exception:
-                            self.driver.execute_script("arguments[0].click();", a)
-                        time.sleep(1.6)
-                        return True
-                except Exception:
-                    continue
-
-            # 위에서 못 찾으면, 보이는 숫자 링크 중 가장 작은 다음 번호 클릭
             all_num_links = self.driver.find_elements(By.XPATH, "//a[normalize-space(text())!='']")
             next_link = None
             next_link_num = 10**9
@@ -2649,7 +2663,7 @@ class NaverCafeCrawler:
                     if not t.isdigit():
                         continue
                     n = int(t)
-                    if current_num < n < next_link_num:
+                    if current_page < n < next_link_num:
                         next_link_num = n
                         next_link = a
                 except Exception:
@@ -2659,10 +2673,11 @@ class NaverCafeCrawler:
                     next_link.click()
                 except Exception:
                     self.driver.execute_script("arguments[0].click();", next_link)
-                time.sleep(1.6)
+                time.sleep(1.4 + random.uniform(0.1, 0.4))
                 return True
         except Exception:
             pass
+
         return False
 
     @staticmethod
@@ -2834,7 +2849,7 @@ class NaverCafeCrawler:
             if page >= max_pages:
                 self._update_status("⏹️ 멤버 표 페이지 상한(안전장치) 도달 — 수집을 멈춥니다.")
                 break
-            if not self._click_manage_member_next_page():
+            if not self._click_manage_member_next_page(current_page=page):
                 break
 
         return rows_out
