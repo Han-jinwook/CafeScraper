@@ -188,8 +188,8 @@ class CafeMonsterAuthHelper:
             "Content-Type": "application/json"
         }
 
-        # 1.1 HWID에 바인딩된 활성 라이선스 중 현재 실행 에디션(curr_prod) 핀포인트 조회
-        url = f"{SUPABASE_URL.rstrip('/')}/rest/v1/licenses?bound_value=eq.{hwid}&product_id=eq.{curr_prod}&status=eq.active&select=product_id,expire_date,collection_limit,serial_key,first_run_date,license_type"
+        # 1.1 HWID에 바인딩된 활성 라이선스 중 현재 실행 에디션(curr_prod) 핀포인트 조회 (최신/최장 유효기간 우선 정렬)
+        url = f"{SUPABASE_URL.rstrip('/')}/rest/v1/licenses?bound_value=eq.{hwid}&product_id=eq.{curr_prod}&status=eq.active&order=expire_date.desc,created_at.desc&select=product_id,expire_date,collection_limit,serial_key,first_run_date,license_type"
         try:
             res = requests.get(url, headers=headers, timeout=1.5)
             if res.status_code == 200:
@@ -211,7 +211,7 @@ class CafeMonsterAuthHelper:
                                 continue
                         except Exception:
                             pass
-                    if prod and prod == curr_prod:
+                    if prod and prod == curr_prod and prod not in active_prods:
                         active_prods.add(prod)
                         # 0 또는 None은 무제한(DELUXE/PREMIUM) 플랜으로 취급
                         limits[prod] = limit if (limit is not None and limit > 0) else 0
