@@ -1899,9 +1899,9 @@ def _check_and_increment_limits(count: int = 1):
             _commenter_reset_run_state()
             log_msg("🚫 무료체험판 작업 한도(50건)에 도달하여 댓글 작성을 안전하게 중단합니다.")
             st.rerun()
-    elif lic_limit is not None and lic_limit > 0:
+    else:
         new_used = CafeMonsterAuthHelper.increment_license_used_count("AutoComment", count)
-        if new_used >= lic_limit:
+        if lic_limit is not None and lic_limit > 0 and new_used >= lic_limit:
             _commenter_reset_run_state()
             log_msg(f"🚫 [스탠다드 한도 {lic_limit:,}건 도달] 라이선스 작업 한도에 도달하여 작업을 안전하게 완료 및 중단합니다. 무제한 작업을 원하시면 DELUXE 플랜으로 업그레이드하세요!")
             st.rerun()

@@ -1675,7 +1675,7 @@ with _t3:
             st.toast("📂 작업 폴더를 열고 CSV 파일들을 변환했습니다.")
             
         st.markdown("<div style='height: 4px;'></div>", unsafe_allow_html=True)
-        if st.button("🧹 통계 초기화 후 작업하기", use_container_width=True, key="reset_statistics_and_db_btn"):
+        if st.button("🆕 새 작업 시작 (화면 비우기)", use_container_width=True, key="reset_statistics_and_db_btn"):
             from app.utils.paths import generate_new_db_path
             new_db_path = generate_new_db_path("cafe_data")
             st.session_state["active_db_path_main"] = str(new_db_path)
@@ -1687,8 +1687,9 @@ with _t3:
             # Initialize the new DB immediately
             init_db(str(new_db_path))
             
-            st.success("🧹 통계가 초기화되었습니다. 새 작업 환경에서 시작합니다.")
+            st.success("🆕 새 작업 환경이 준비되었습니다. (이전 수집 데이터는 작업 폴더에 안전하게 보관됨)")
             st.rerun()
+        st.caption("※ 이전 작업 내역은 작업 폴더에 파일별로 안전하게 보관되며, 새 작업을 위해 화면만 깨끗이 비웁니다.")
 col_main = st.container()
 
 
@@ -2116,9 +2117,9 @@ def _render_cafe_main_workspace():
                 st.session_state.crawl_running = False
                 update_logs("🚫 무료체험판 수집 한도(50건)에 도달하여 수집을 안전하게 중단합니다.")
                 st.rerun()
-        elif lic_limit is not None and lic_limit > 0:
+        else:
             new_used = CafeMonsterAuthHelper.increment_license_used_count("CafeCrawler", count)
-            if new_used >= lic_limit:
+            if lic_limit is not None and lic_limit > 0 and new_used >= lic_limit:
                 st.session_state.crawl_running = False
                 update_logs(f"🚫 [스탠다드 한도 {lic_limit:,}건 도달] 라이선스 수집 한도에 도달하여 수집을 안전하게 완료 및 중단합니다. 무제한 수집을 원하시면 DELUXE 플랜으로 업그레이드하세요!")
                 st.rerun()

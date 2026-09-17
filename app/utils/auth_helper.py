@@ -324,7 +324,7 @@ class CafeMonsterAuthHelper:
 
     @classmethod
     def save_license_used_count(cls, product_id: str, count: int):
-        """정식 라이선스 누적 수집 건수를 로컬 파일에 저장합니다."""
+        """정식 라이선스 누적 수집 건수를 로컬 파일 및 Supabase licenses 테이블에 동기화합니다."""
         if not product_id:
             product_id = cls.get_current_product_id()
         usage_file = cls.get_license_usage_file_path(product_id)
@@ -339,6 +339,22 @@ class CafeMonsterAuthHelper:
         try:
             with open(usage_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+        try:
+            keys = cls.load_saved_keys()
+            if keys:
+                for k in keys:
+                    url = f"{SUPABASE_URL.rstrip('/')}/rest/v1/licenses?serial_key=eq.{k}&product_id=eq.{product_id}"
+                    payload = {"used_count": count}
+                    headers = {
+                        "apikey": SUPABASE_KEY,
+                        "Authorization": f"Bearer {SUPABASE_KEY}",
+                        "Content-Type": "application/json",
+                        "Prefer": "return=minimal"
+                    }
+                    requests.patch(url, headers=headers, json=payload, timeout=1.0)
         except Exception:
             pass
 
